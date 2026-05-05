@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- JavaScriptCore compiles JS to native code at runtime; hardened runtime
+         kills processes that allocate W^X memory unless this entitlement is
+         present. Required for any embedded JSC. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- Allow loading dylibs that aren't signed by Apple or the same Team ID
+         as Grinch. On a typical macOS install this is a no-op; on systems
+         with Nix or Homebrew-managed dependencies in the link path
+         (e.g. libiconv from /nix/store), dyld will otherwise refuse to load
+         them under hardened runtime, killing the process at startup. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

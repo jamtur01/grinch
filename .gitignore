@@ -1,0 +1,5 @@
+/target
+/Grinch.app
+/build
+Cargo.lock
+.DS_Store

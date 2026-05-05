@@ -1,0 +1,71 @@
+[package]
+name = "grinch"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A tiny, fast macOS browser router inspired by Finicky and Finch"
+repository = "https://github.com/jamtur01/grinch"
+
+[[bin]]
+name = "Grinch"
+path = "src/main.rs"
+
+[dependencies]
+objc2 = "0.6.4"
+block2 = "0.6.2"
+regex = "1.12.3"
+libc = "0.2.175"
+objc2-core-services = "0.3.2"
+dispatch2 = "0.3.1"
+serde_json = "1.0.149"
+objc2-application-services = { version = "0.3.2", features = ["AXUIElement", "AXError", "libc"] }
+objc2-core-foundation = { version = "0.3.2", features = ["CFString", "CFBase", "CFDictionary", "CFNumber"] }
+
+[dependencies.objc2-foundation]
+version = "0.3.2"
+features = [
+    "objc2-core-services",
+    "NSAppleEventManager",
+    "NSAppleEventDescriptor",
+    "NSArray",
+    "NSBundle",
+    "NSDictionary",
+    "NSError",
+    "NSNotification",
+    "NSObjCRuntime",
+    "NSString",
+    "NSURL",
+    "NSValue",
+    "NSEnumerator",
+    "NSPathUtilities",
+    "NSFileManager",
+    "NSData",
+]
+
+[dependencies.objc2-app-kit]
+version = "0.3.2"
+features = [
+    "NSApplication",
+    "NSResponder",
+    "NSEvent",
+    "NSMenu",
+    "NSMenuItem",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSButton",
+    "NSControl",
+    "NSView",
+    "NSImage",
+    "NSWorkspace",
+    "NSRunningApplication",
+    "NSWindow",
+]
+
+[dependencies.objc2-javascript-core]
+version = "0.3.2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

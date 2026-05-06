@@ -18,7 +18,32 @@ file.
 
 ## Install
 
-Requires macOS 13+ and a recent Rust toolchain.
+Requires macOS 13 or later. The release build is a universal binary
+(Apple Silicon + Intel) signed and notarized with a Developer ID, so
+Gatekeeper won't warn on first launch.
+
+### From a release (recommended)
+
+Grab the latest `Grinch-vX.Y.Z.zip` from
+[Releases](https://github.com/jamtur01/grinch/releases/latest), unzip,
+and drag `Grinch.app` into `/Applications`.
+
+Or from the terminal:
+
+```sh
+ZIP=$(curl -fsSL https://api.github.com/repos/jamtur01/grinch/releases/latest \
+  | grep -oE '"browser_download_url": "[^"]*\.zip"' | cut -d'"' -f4)
+curl -fsSL "$ZIP" -o /tmp/grinch.zip
+ditto -x -k /tmp/grinch.zip /Applications
+open /Applications/Grinch.app
+```
+
+`ditto -x -k` is used instead of `unzip` so the stapled notarization
+ticket and code-signature metadata are preserved on extraction.
+
+### From source
+
+Requires a recent Rust toolchain.
 
 ```sh
 git clone https://github.com/jamtur01/grinch
@@ -26,7 +51,13 @@ cd grinch
 make run
 ```
 
-Then launch Grinch (🎄 in your menu bar), open **System Settings → Desktop &
+Pass `UNIVERSAL=1` to `make build` to produce a fat binary locally
+(needs both rustup targets: `rustup target add aarch64-apple-darwin
+x86_64-apple-darwin`).
+
+### After installing
+
+Launch Grinch (🎄 in your menu bar), open **System Settings → Desktop &
 Dock → Default web browser** and select Grinch. Edit `~/.config/grinch.js` to
 define your rules — see [`examples/grinch.example.js`](examples/grinch.example.js)
 for the full feature surface.

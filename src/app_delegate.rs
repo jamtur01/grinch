@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::OnceLock;
 
@@ -14,22 +15,38 @@ fn debug_enabled() -> bool {
 use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
+use objc2::{class, define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSMenu, NSMenuItem, NSSquareStatusItemLength,
-    NSStatusBar, NSStatusItem,
+    NSStatusBar, NSStatusItem, NSWorkspace,
 };
 use objc2_core_services::{AEEventClass, AEEventID};
 use objc2_foundation::{
     MainThreadMarker, NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSObject,
-    NSObjectProtocol, NSString,
+    NSObjectProtocol, NSString, NSURL,
 };
 
 use crate::engine::{Engine, ModifierFlags};
-use crate::loader::load_config;
+use crate::loader::{find_config_path, load_config};
 use crate::workspace::{
     current_modifier_flags, ensure_accessibility_permission, frontmost_opener, open_url, Opener,
 };
+
+// SMAppService lives in ServiceManagement.framework; not transitively pulled
+// in by any other dep so we link it explicitly. Empty extern is enough — we
+// reach the Obj-C class via the runtime.
+#[link(name = "ServiceManagement", kind = "framework")]
+extern "C" {}
+
+// SMAppServiceStatus enum (from ServiceManagement/SMAppService.h).
+// 0 = NotRegistered (omitted; falls through the not-Enabled branch).
+const SM_STATUS_ENABLED: isize = 1;
+const SM_STATUS_REQUIRES_APPROVAL: isize = 2;
+const SM_STATUS_NOT_FOUND: isize = 3;
+
+// NSControlStateValue (NSCell.h).
+const NS_CONTROL_STATE_VALUE_OFF: isize = 0;
+const NS_CONTROL_STATE_VALUE_ON: isize = 1;
 
 /// Apple Event four-char codes are u32s built from four ASCII bytes,
 /// big-endian. e.g. `'GURL'` is `0x47 0x55 0x52 0x4c` = `0x4755_524c`.
@@ -47,6 +64,12 @@ const KEY_DIRECT_OBJECT: u32 = fourcc(b"----");
 pub struct DelegateIvars {
     engine: RefCell<Option<Engine>>,
     status_item: RefCell<Option<Retained<NSStatusItem>>>,
+    // Path the loader read (or would read) — kept around so "Open Config"
+    // works even when the JS evaluation failed.
+    config_path: RefCell<Option<PathBuf>>,
+    // Held so `toggle_start_at_login` can flip the checkmark after a
+    // successful (un)register.
+    start_at_login_item: RefCell<Option<Retained<NSMenuItem>>>,
 }
 
 define_class!(
@@ -188,6 +211,18 @@ define_class!(
         fn menu_reload_config(&self, _sender: Option<&AnyObject>) {
             self.reload_engine();
         }
+
+        // Menu bar action: Open Config in the user's default editor.
+        #[unsafe(method(openConfig:))]
+        fn menu_open_config(&self, _sender: Option<&AnyObject>) {
+            self.open_config();
+        }
+
+        // Menu bar action: toggle Start at Login (SMAppService).
+        #[unsafe(method(toggleStartAtLogin:))]
+        fn menu_toggle_start_at_login(&self, _sender: Option<&AnyObject>) {
+            self.toggle_start_at_login();
+        }
     }
 );
 
@@ -198,6 +233,9 @@ impl Delegate {
     }
 
     pub fn reload_engine(&self) {
+        // Refresh the path even if loading fails — keeps "Open Config"
+        // pointed at the actual file the user wants to fix.
+        *self.ivars().config_path.borrow_mut() = find_config_path();
         let Some(loaded) = load_config() else { return };
         match Engine::new(loaded) {
             Ok(e) => {
@@ -205,6 +243,54 @@ impl Delegate {
             }
             Err(e) => eprintln!("grinch: engine init failed: {e:?}"),
         }
+    }
+
+    fn open_config(&self) {
+        let path_ref = self.ivars().config_path.borrow();
+        let Some(path) = path_ref.as_ref() else {
+            eprintln!(
+                "grinch: no config to open — create ~/.config/grinch.js or ~/.grinch.js"
+            );
+            return;
+        };
+        let path_ns = NSString::from_str(&path.to_string_lossy());
+        let url = NSURL::fileURLWithPath(&path_ns);
+        let workspace = NSWorkspace::sharedWorkspace();
+        // openURL hands the file to the user's default app for `.js`
+        // (typically a text editor); Apple has not deprecated the basic
+        // single-URL form, only the application-specific variants.
+        workspace.openURL(&url);
+    }
+
+    fn toggle_start_at_login(&self) {
+        let status = sm_status();
+        let ok = if status == SM_STATUS_ENABLED {
+            sm_unregister()
+        } else {
+            sm_register()
+        };
+        if !ok {
+            return;
+        }
+        let new_status = sm_status();
+        // RequiresApproval = the user has Login Items toggled off for
+        // Grinch in System Settings; nudge them there so the toggle has
+        // a chance to take effect.
+        if new_status == SM_STATUS_REQUIRES_APPROVAL {
+            sm_open_login_items_settings();
+        }
+        self.refresh_start_at_login_check(new_status);
+    }
+
+    fn refresh_start_at_login_check(&self, status: isize) {
+        let item_ref = self.ivars().start_at_login_item.borrow();
+        let Some(item) = item_ref.as_ref() else { return };
+        let state = if status == SM_STATUS_ENABLED {
+            NS_CONTROL_STATE_VALUE_ON
+        } else {
+            NS_CONTROL_STATE_VALUE_OFF
+        };
+        item.setState(state);
     }
 
     fn test_url(&self, raw: &str) {
@@ -283,6 +369,17 @@ impl Delegate {
         let menu = NSMenu::new(mtm);
         let me: &AnyObject = self.as_ref();
 
+        let open_config = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Open Config"),
+                Some(sel!(openConfig:)),
+                &NSString::from_str("o"),
+            )
+        };
+        unsafe { open_config.setTarget(Some(me)) };
+        menu.addItem(&open_config);
+
         let reload = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(mtm),
@@ -293,6 +390,26 @@ impl Delegate {
         };
         unsafe { reload.setTarget(Some(me)) };
         menu.addItem(&reload);
+
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+        let start_at_login = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Start at Login"),
+                Some(sel!(toggleStartAtLogin:)),
+                &NSString::from_str(""),
+            )
+        };
+        unsafe { start_at_login.setTarget(Some(me)) };
+        let initial_state = if sm_status() == SM_STATUS_ENABLED {
+            NS_CONTROL_STATE_VALUE_ON
+        } else {
+            NS_CONTROL_STATE_VALUE_OFF
+        };
+        start_at_login.setState(initial_state);
+        menu.addItem(&start_at_login);
+        *self.ivars().start_at_login_item.borrow_mut() = Some(start_at_login);
 
         menu.addItem(&NSMenuItem::separatorItem(mtm));
 
@@ -345,5 +462,67 @@ fn install_sighup_handler(delegate: &Delegate) {
     DELEGATE_PTR.store(any_ptr, Ordering::Relaxed);
     let handler = sighup_trampoline as *const () as libc::sighandler_t;
     unsafe { libc::signal(libc::SIGHUP, handler) };
+}
+
+// MARK: - SMAppService (Start at Login)
+//
+// Thin wrapper over SMAppService.mainApp. Methods are reached via the Obj-C
+// runtime (no objc2-service-management crate dep). The framework is linked
+// at the top of this file.
+
+fn sm_status() -> isize {
+    unsafe {
+        let cls = class!(SMAppService);
+        let service: *mut AnyObject = msg_send![cls, mainApp];
+        if service.is_null() {
+            return SM_STATUS_NOT_FOUND;
+        }
+        msg_send![&*service, status]
+    }
+}
+
+fn sm_register() -> bool {
+    sm_register_call(false)
+}
+
+fn sm_unregister() -> bool {
+    sm_register_call(true)
+}
+
+// `unregister` and `registerAndReturnError:` share their out-error shape, so
+// dispatch through one path to keep the unsafe surface minimal.
+fn sm_register_call(unregister: bool) -> bool {
+    unsafe {
+        let cls = class!(SMAppService);
+        let service: *mut AnyObject = msg_send![cls, mainApp];
+        if service.is_null() {
+            eprintln!("grinch: SMAppService.mainApp returned nil");
+            return false;
+        }
+        let mut error: *mut AnyObject = std::ptr::null_mut();
+        let ok: bool = if unregister {
+            msg_send![&*service, unregisterAndReturnError: &mut error]
+        } else {
+            msg_send![&*service, registerAndReturnError: &mut error]
+        };
+        if !ok {
+            let op = if unregister { "unregister" } else { "register" };
+            if error.is_null() {
+                eprintln!("grinch: SMAppService {op} failed");
+            } else {
+                let desc: *mut NSString = msg_send![&*error, localizedDescription];
+                let msg = if desc.is_null() { String::from("(no description)") } else { (*desc).to_string() };
+                eprintln!("grinch: SMAppService {op} failed: {msg}");
+            }
+        }
+        ok
+    }
+}
+
+fn sm_open_login_items_settings() {
+    unsafe {
+        let cls = class!(SMAppService);
+        let _: () = msg_send![cls, openSystemSettingsLoginItems];
+    }
 }
 

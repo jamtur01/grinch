@@ -23,6 +23,13 @@ pub struct LoadedConfig {
     pub ctx: Retained<JSContext>,
 }
 
+/// Returns the path to the config file the loader would (or did) read,
+/// regardless of whether evaluation succeeds. Used by the menu's "Open
+/// Config" action so the user can fix a broken config from inside the app.
+pub fn find_config_path() -> Option<PathBuf> {
+    config_paths().into_iter().find(|p| p.is_file())
+}
+
 pub fn load_config() -> Option<LoadedConfig> {
     let (path, source) = match read_first_existing(&config_paths()) {
         Some(found) => found,

@@ -228,13 +228,16 @@ primitives:
 `console.log/warn/error` are no-ops — JavaScriptCore has no console;
 output is discarded rather than bridged.
 
-### Reload after editing
+### Menu bar
 
-```sh
-kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)
-```
+Click the 🎄 in the menu bar:
 
-Or use the menu bar icon → **Reload Config**.
+| Item | Action |
+|---|---|
+| **Open Config** (⌘O) | Opens the active config file in your default `.js` handler (VS Code / Cursor / etc.). |
+| **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
+| **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
+| **Quit Grinch** (⌘Q) | Exit. |
 
 ## Commands
 
@@ -245,7 +248,9 @@ make test URL="https://..."         # dry-run a URL through the rules
 make clean
 ```
 
-The binary also has `--bench N <url>` for in-process resolve benchmarking.
+The binary also has `--version` (prints the crate version), `--test <url>`
+(dry-run a URL through the rules), and `--bench N <url>` (in-process resolve
+benchmarking).
 
 ## Performance
 

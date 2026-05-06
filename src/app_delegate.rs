@@ -470,10 +470,14 @@ fn install_sighup_handler(delegate: &Delegate) {
 // runtime (no objc2-service-management crate dep). The framework is linked
 // at the top of this file.
 
+// Apple's ServiceManagement/SMAppService.h declares the property as
+//   @property (class, readonly) SMAppService *mainAppService NS_SWIFT_NAME(mainApp);
+// so the Swift name `mainApp` only applies in Swift; the Obj-C runtime
+// selector is `mainAppService`.
 fn sm_status() -> isize {
     unsafe {
         let cls = class!(SMAppService);
-        let service: *mut AnyObject = msg_send![cls, mainApp];
+        let service: *mut AnyObject = msg_send![cls, mainAppService];
         if service.is_null() {
             return SM_STATUS_NOT_FOUND;
         }
@@ -494,9 +498,9 @@ fn sm_unregister() -> bool {
 fn sm_register_call(unregister: bool) -> bool {
     unsafe {
         let cls = class!(SMAppService);
-        let service: *mut AnyObject = msg_send![cls, mainApp];
+        let service: *mut AnyObject = msg_send![cls, mainAppService];
         if service.is_null() {
-            eprintln!("grinch: SMAppService.mainApp returned nil");
+            eprintln!("grinch: SMAppService.mainAppService returned nil");
             return false;
         }
         let mut error: *mut AnyObject = std::ptr::null_mut();

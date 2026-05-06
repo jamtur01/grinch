@@ -2,6 +2,11 @@ APP     = Grinch.app
 BUNDLE  = $(APP)/Contents
 BINARY  = $(BUNDLE)/MacOS/Grinch
 
+# Single source of truth for the version. Read from Cargo.toml and stamped
+# into the bundled Info.plist at build time so CFBundleShortVersionString
+# can't drift from the crate version (and therefore from the release tag).
+CARGO_VERSION := $(shell awk -F'"' '/^version =/ {print $$2; exit}' Cargo.toml)
+
 # UNIVERSAL=1 builds both aarch64 and x86_64 and fuses them with lipo so the
 # resulting bundle runs natively on Apple Silicon and Intel.
 UNIVERSAL ?= 0
@@ -74,6 +79,7 @@ endif
 	@mkdir -p $(BUNDLE)/MacOS $(BUNDLE)/Resources
 	@cp $(RELEASE_BIN) $(BINARY)
 	@cp Info.plist $(BUNDLE)/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(CARGO_VERSION)" $(BUNDLE)/Info.plist
 	@cp $(ICON_ICNS) $(BUNDLE)/Resources/grinch.icns
 ifeq ($(MACOS_CODESIGN_IDENTITY),)
 	@codesign --deep --force --sign - $(APP)

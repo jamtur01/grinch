@@ -12,6 +12,14 @@ mod workspace;
 use app_delegate::Delegate;
 
 fn main() {
+    // --version short-circuits before NSApplication setup so it works from
+    // any context (terminal, shell scripts) without needing a main-thread
+    // run loop. Version comes from Cargo.toml via Cargo's standard env.
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("grinch {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     let mtm = MainThreadMarker::new().expect("main thread");
     let app = NSApplication::sharedApplication(mtm);
 

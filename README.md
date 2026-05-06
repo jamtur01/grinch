@@ -24,22 +24,27 @@ Gatekeeper won't warn on first launch.
 
 ### From a release (recommended)
 
-Grab the latest `Grinch-vX.Y.Z.zip` from
-[Releases](https://github.com/jamtur01/grinch/releases/latest), unzip,
-and drag `Grinch.app` into `/Applications`.
+Grab the latest `Grinch-vX.Y.Z.dmg` from
+[Releases](https://github.com/jamtur01/grinch/releases/latest), open it,
+and drag `Grinch.app` onto the `Applications` shortcut shown in the DMG
+window.
 
 Or from the terminal:
 
 ```sh
-ZIP=$(curl -fsSL https://api.github.com/repos/jamtur01/grinch/releases/latest \
-  | grep -oE '"browser_download_url": "[^"]*\.zip"' | cut -d'"' -f4)
-curl -fsSL "$ZIP" -o /tmp/grinch.zip
-ditto -x -k /tmp/grinch.zip /Applications
+DMG=$(curl -fsSL https://api.github.com/repos/jamtur01/grinch/releases/latest \
+  | grep -oE '"browser_download_url": "[^"]*\.dmg"' | cut -d'"' -f4)
+curl -fsSL "$DMG" -o /tmp/grinch.dmg
+hdiutil attach -nobrowse -quiet /tmp/grinch.dmg
+ditto "/Volumes/Grinch "*/Grinch.app /Applications/Grinch.app
+hdiutil detach "/Volumes/Grinch "* -quiet
 open /Applications/Grinch.app
 ```
 
-`ditto -x -k` is used instead of `unzip` so the stapled notarization
-ticket and code-signature metadata are preserved on extraction.
+Always install from the DMG to `/Applications` directly. Running
+`Grinch.app` out of `~/Downloads` (or anywhere else) triggers Gatekeeper
+translocation, which makes the same app appear multiple times in the
+default-browser picker.
 
 ### From source
 

@@ -84,14 +84,14 @@ jobs:
           # Sanity-check the binary really is fat.
           lipo -info Grinch.app/Contents/MacOS/Grinch
 
-      - name: Notarize and staple
+      - name: Notarize and staple Grinch.app
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           MACOS_API_ISSUER_ID: ${{ secrets.MACOS_API_ISSUER_ID }}
         run: |
           set -euo pipefail
-          NOTARIZE_ZIP="$RUNNER_TEMP/notarize.zip"
+          NOTARIZE_ZIP="$RUNNER_TEMP/notarize-app.zip"
           # notarytool wants a flat archive of the bundle, not the bundle itself.
           ditto -c -k --keepParent Grinch.app "$NOTARIZE_ZIP"
 
@@ -106,14 +106,35 @@ jobs:
           xcrun stapler validate Grinch.app
           spctl --assess --type execute --verbose Grinch.app
 
+      - name: Build DMG
+        run: make dmg
+
+      - name: Notarize and staple DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          MACOS_API_ISSUER_ID: ${{ secrets.MACOS_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          # Notarize the DMG itself so Gatekeeper accepts it on download
+          # without scary warnings (Apple's recommended flow notarizes both
+          # layers — the .app's ticket is already stapled inside).
+          xcrun notarytool submit Grinch.dmg \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$MACOS_API_ISSUER_ID" \
+            --wait
+
+          xcrun stapler staple Grinch.dmg
+          xcrun stapler validate Grinch.dmg
+          spctl --assess --type install --verbose Grinch.dmg
+
       - name: Package release artifacts
         id: package
         run: |
           set -euo pipefail
-          ARTIFACT="Grinch-${{ steps.meta.outputs.tag }}.zip"
-          # ditto preserves macOS metadata (signature, stapled ticket, xattrs)
-          # that a plain `zip` would strip.
-          ditto -c -k --keepParent Grinch.app "$ARTIFACT"
+          ARTIFACT="Grinch-${{ steps.meta.outputs.tag }}.dmg"
+          mv Grinch.dmg "$ARTIFACT"
           shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
           echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
 

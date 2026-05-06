@@ -23,7 +23,10 @@ ICON_EMOJI ?= 🎄
 ICON_ICNS  = build/grinch.icns
 ICONSET    = build/grinch.iconset
 
-.PHONY: build run clean test loc icon clean-icon
+DMG       = Grinch.dmg
+DMG_STAGE = build/dmg-staging
+
+.PHONY: build run clean test loc icon clean-icon dmg
 
 LSREGISTER = /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
 
@@ -105,9 +108,33 @@ run: build
 test: build
 	$(BINARY) --test "$(URL)"
 
+# Package Grinch.app inside a UDZO disk image with the standard
+# /Applications symlink so end users get the drag-to-install layout that
+# Chrome / Edge / Firefox use. The DMG is signed with the same Developer
+# ID Application cert as the .app — DMGs use Application certs, not
+# Installer certs (those are .pkg-only). Signing here lets the workflow's
+# notarytool step staple a Gatekeeper ticket onto the .dmg itself.
+dmg: build
+	@rm -rf $(DMG_STAGE) $(DMG)
+	@mkdir -p $(DMG_STAGE)
+	@cp -R $(APP) $(DMG_STAGE)/
+	@ln -s /Applications $(DMG_STAGE)/Applications
+	@hdiutil create \
+	    -volname "Grinch $(CARGO_VERSION)" \
+	    -srcfolder $(DMG_STAGE) \
+	    -format UDZO -ov -quiet \
+	    $(DMG)
+	@rm -rf $(DMG_STAGE)
+ifneq ($(MACOS_CODESIGN_IDENTITY),)
+	@codesign --sign "$(MACOS_CODESIGN_IDENTITY)" --timestamp $(DMG)
+	@echo "Built and signed $(DMG)"
+else
+	@echo "Built $(DMG) (unsigned — set MACOS_CODESIGN_IDENTITY for distribution)"
+endif
+
 clean:
 	cargo clean
-	rm -rf $(APP) build/
+	rm -rf $(APP) $(DMG) build/
 
 # Count source lines
 loc:

@@ -178,6 +178,14 @@ fn copy_attribute(
 /// works in any process.
 pub fn current_modifier_flags() -> ModifierFlags {
     let flags = unsafe { CGEventSourceFlagsState(KCG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE) };
+    flags_from_mask(flags)
+}
+
+/// Pure decoder for CG event flag bitmasks. Pulled out of
+/// `current_modifier_flags` so the bit-position mapping is testable —
+/// transposing Option ↔ Alternate is the kind of mistake that's invisible
+/// in code review but routes URLs to the wrong browser when held.
+fn flags_from_mask(flags: u64) -> ModifierFlags {
     ModifierFlags {
         shift:   flags & KCG_EVENT_FLAG_MASK_SHIFT     != 0,
         option:  flags & KCG_EVENT_FLAG_MASK_ALTERNATE != 0,
@@ -309,5 +317,59 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
         workspace.openURLs_withApplicationAtURL_configuration_completionHandler(
             &urls, &app_url, &cfg, None,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flags_from_mask_zero_means_no_modifiers() {
+        let m = flags_from_mask(0);
+        assert!(!m.shift && !m.option && !m.command && !m.control);
+    }
+
+    #[test]
+    fn flags_from_mask_decodes_each_bit_individually() {
+        let m = flags_from_mask(KCG_EVENT_FLAG_MASK_SHIFT);
+        assert!(m.shift && !m.option && !m.command && !m.control);
+
+        let m = flags_from_mask(KCG_EVENT_FLAG_MASK_ALTERNATE);
+        assert!(!m.shift && m.option && !m.command && !m.control);
+
+        let m = flags_from_mask(KCG_EVENT_FLAG_MASK_COMMAND);
+        assert!(!m.shift && !m.option && m.command && !m.control);
+
+        let m = flags_from_mask(KCG_EVENT_FLAG_MASK_CONTROL);
+        assert!(!m.shift && !m.option && !m.command && m.control);
+    }
+
+    #[test]
+    fn flags_from_mask_decodes_combinations() {
+        let m = flags_from_mask(
+            KCG_EVENT_FLAG_MASK_SHIFT | KCG_EVENT_FLAG_MASK_COMMAND,
+        );
+        assert!(m.shift && m.command);
+        assert!(!m.option && !m.control);
+    }
+
+    #[test]
+    fn flags_from_mask_ignores_irrelevant_high_bits() {
+        // CG events carry other flag bits (caps lock, function, secondary fn)
+        // that we deliberately don't surface — they shouldn't flip our fields.
+        let unrelated = (1u64 << 16) | (1u64 << 21) | (1u64 << 23);
+        let m = flags_from_mask(unrelated);
+        assert!(!m.shift && !m.option && !m.command && !m.control);
+    }
+
+    #[test]
+    fn flags_from_mask_alternate_is_option_not_some_other_thing() {
+        // Regression guard against transposing Option (kCGEventFlagMaskAlternate,
+        // bit 19) with Control (bit 18) or Command (bit 20).
+        assert_eq!(KCG_EVENT_FLAG_MASK_ALTERNATE, 1u64 << 19);
+        assert_eq!(KCG_EVENT_FLAG_MASK_CONTROL,   1u64 << 18);
+        assert_eq!(KCG_EVENT_FLAG_MASK_COMMAND,   1u64 << 20);
+        assert_eq!(KCG_EVENT_FLAG_MASK_SHIFT,     1u64 << 17);
     }
 }

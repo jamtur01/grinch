@@ -783,15 +783,26 @@ fn parse_rule_array(
             Some(ov) if is_function(ov, function_ctor) => Target::Fn(ov.clone()),
             Some(ov) => match resolve_browser(ov, browsers) {
                 Some(b) => Target::Browser(b),
-                None => continue,
+                None => {
+                    eprintln!(
+                        "grinch: rules[{i}] has unresolvable `open` (not a string, \
+                         object, or browser key) — entry ignored"
+                    );
+                    continue;
+                }
             },
             None => {
-                // No browser specified. If there's also no url rewrite, the
-                // entry is malformed — skip. Otherwise treat as a rewrite
-                // that doesn't affect routing (target = "fall through to
-                // next rule"). We model "fall through" by NOT emitting a
-                // Rule at all; instead push a global RewriteRule. But we
-                // can't push to rewrites from here, so for simplicity skip.
+                if rewriter.is_some() {
+                    eprintln!(
+                        "grinch: rules[{i}] has `url:` but no `open:` — move it \
+                         to the top-level `rewrite:` array if you want it to \
+                         apply globally; rules entries need an `open` to route"
+                    );
+                } else {
+                    eprintln!(
+                        "grinch: rules[{i}] has neither `open` nor `url` — entry ignored"
+                    );
+                }
                 continue;
             }
         };

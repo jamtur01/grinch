@@ -102,6 +102,9 @@ struct UserFn {
 impl UserFn {
     fn new(f: Retained<JSValue>) -> Self {
         let needs_ctx = fn_needs_ctx(&f);
+        if !needs_ctx {
+            warn_if_fn_might_read_ctx(&f);
+        }
         Self { f, needs_ctx }
     }
 }
@@ -117,6 +120,34 @@ fn fn_needs_ctx(f: &JSValue) -> bool {
     };
     let len = unsafe { len_val.toUInt32() };
     len >= 2
+}
+
+/// Hint for the silent-failure case: when a fn has `length < 2` but its
+/// source mentions `ctx` or `arguments`, the user probably expected ctx
+/// to be passed. Most likely culprit is a default-param signature like
+/// `(url, ctx = {}) => …` — JS's `f.length` excludes params with defaults,
+/// so Grinch's arity sniffer treats it as url-only and the user's `ctx`
+/// reference silently sees the JS default `{}`. Emit a one-line hint so
+/// they can fix it (drop the default, or add the second arg explicitly).
+///
+/// False positives (a fn with a literal `"ctx"` or `arguments` string)
+/// are tolerable — the message is a hint, not an error.
+fn warn_if_fn_might_read_ctx(f: &JSValue) {
+    let Some(src) = (unsafe { f.toString() }) else {
+        return;
+    };
+    let src = src.to_string();
+    if !src.contains("ctx") && !src.contains("arguments") {
+        return;
+    }
+    let snippet: String = src.chars().take(80).collect::<String>().replace('\n', " ");
+    eprintln!(
+        "grinch: fn `{snippet}…` references `ctx` or `arguments` but declares \
+         fewer than 2 formal parameters — Grinch passes ctx only when the fn \
+         signature names a second arg (e.g. `(url, ctx) => …`). Default params \
+         like `(url, ctx = {{}}) => …` count as one for `f.length` and won't \
+         receive ctx. Add the second arg explicitly if you intended to read it."
+    );
 }
 
 enum Matcher {

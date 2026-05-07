@@ -151,6 +151,18 @@ pub enum EngineError {
     MissingDefault,
 }
 
+impl std::fmt::Display for EngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EngineError::MissingDefault => write!(
+                f,
+                "config has no `default` (or `defaultBrowser`) — \
+                 add e.g. `default: \"Google Chrome\"` to module.exports"
+            ),
+        }
+    }
+}
+
 impl Engine {
     pub fn new(loaded: LoadedConfig) -> Result<Self, EngineError> {
         let ctx = loaded.ctx;

@@ -241,7 +241,7 @@ impl Delegate {
             Ok(e) => {
                 *self.ivars().engine.borrow_mut() = Some(e);
             }
-            Err(e) => eprintln!("grinch: engine init failed: {e:?}"),
+            Err(e) => eprintln!("grinch: engine init failed: {e}"),
         }
     }
 

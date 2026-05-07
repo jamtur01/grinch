@@ -3,6 +3,7 @@
 // path then uses these directly — JS is only re-entered for user-written
 // `(url, ctx)` functions, which are the explicit slow path.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -63,12 +64,15 @@ pub struct ModifierFlags {
     pub control: bool,
 }
 
-pub struct Resolution {
+pub struct Resolution<'u> {
     /// `Rc<BrowserSpec>` so the resolve hot path is a refcount bump
     /// instead of cloning the inner String + Vec on every match. Callers
     /// can still treat it as `&BrowserSpec` via auto-deref.
     pub browser: Rc<BrowserSpec>,
-    pub url: String,
+    /// Borrowed from the input URL when no rewrite fired (the common case),
+    /// owned otherwise. Avoids ~one heap allocation per resolve on the
+    /// declarative-only fast path.
+    pub url: Cow<'u, str>,
 }
 
 enum Matcher {
@@ -241,13 +245,20 @@ impl Engine {
     pub fn needs_modifiers(&self) -> bool { self.needs_modifiers }
 
     /// Hot path: resolve a URL given the opener and modifier flags.
-    pub fn resolve(&self, url_string: &str, opener: &Opener, modifiers: ModifierFlags) -> Resolution {
+    pub fn resolve<'u>(
+        &self,
+        url_string: &'u str,
+        opener: &Opener,
+        modifiers: ModifierFlags,
+    ) -> Resolution<'u> {
         // Stash the opener's PID so the __grinchFetchWindowTitle block can find
         // the right process if user code accesses opener.windowTitle. Cheap
         // unconditional write; the AX call only fires on JS access.
         CURRENT_OPENER_PID.store(opener.pid, Ordering::Relaxed);
 
-        let mut current = url_string.to_string();
+        // Borrow until a rewrite fires; then own. Saves one heap allocation
+        // on every resolve that doesn't rewrite the URL.
+        let mut current: Cow<'u, str> = Cow::Borrowed(url_string);
         let mut host = quick_host(&current);
         let rc = ResolveCtx::new(
             &self.ctx,
@@ -264,7 +275,7 @@ impl Engine {
             if any_match(&rw.matchers, &current, host.as_deref(), &rc) {
                 match apply_rewrite(&rw.rewriter, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
-                        current = s;
+                        current = Cow::Owned(s);
                         host = quick_host(&current);
                     }
                     RewriteOutcome::Unchanged => {}
@@ -283,7 +294,7 @@ impl Engine {
             if let Some(rw) = &rule.rewriter {
                 match apply_rewrite(rw, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
-                        current = s;
+                        current = Cow::Owned(s);
                         host = quick_host(&current);
                     }
                     RewriteOutcome::Unchanged => {}
@@ -391,10 +402,10 @@ fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> (bool, boo
     (needs_opener, needs_modifiers)
 }
 
-fn suppressed() -> Resolution {
+fn suppressed() -> Resolution<'static> {
     Resolution {
         browser: Rc::new(BrowserSpec::empty()),
-        url: "about:blank".to_string(),
+        url: Cow::Borrowed("about:blank"),
     }
 }
 

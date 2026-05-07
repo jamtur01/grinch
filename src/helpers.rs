@@ -11,8 +11,15 @@ pub const JS_PRELUDE: &str = r##"
 //
 // Backs the URL constructor used by user code. Mutating .protocol/.hostname/etc.
 // is supported; href is rebuilt on access from the current field values.
-// Construction does only 4 defineProperty calls (href, host, search, searchParams)
-// — the rest are plain properties for cheap construction in the slow path.
+// Accessors (href, host, search, searchParams) and toString/toJSON live on
+// URL.prototype, defined once per JSContext at engine init. Construction is
+// just `parseInto(this, href)` — no per-instance defineProperty cost on the
+// slow path.
+//
+// **Note** for users iterating URL fields: prototype-defined accessors don't
+// show up in `Object.keys(url)` or get copied by `Object.assign({}, url)`.
+// The data fields (protocol, username, password, hostname, port, pathname,
+// hash) are still own-enumerable. Use `url.href` to serialise.
 (function(g) {
   if (g.URL && g.URL.__grinchPolyfill) return;
 
@@ -84,47 +91,49 @@ pub const JS_PRELUDE: &str = r##"
 
   function URL(href) {
     parseInto(this, href);
-    var self = this;
-
-    Object.defineProperty(this, "search", {
-      get: function() { return self._search; },
-      set: function(v) {
-        v = String(v);
-        if (v && v.charAt(0) !== "?") v = "?" + v;
-        self._search = v;
-        self.__sp = null;
-      },
-      enumerable: true,
-    });
-
-    Object.defineProperty(this, "host", {
-      get: function() { return self.hostname + (self.port ? ":" + self.port : ""); },
-      set: function(v) {
-        var parts = String(v).split(":");
-        self.hostname = parts[0].toLowerCase();
-        self.port = parts[1] || "";
-      },
-      enumerable: true,
-    });
-
-    Object.defineProperty(this, "href", {
-      get: function() { return rebuildHref(self); },
-      set: function(v) { parseInto(self, String(v)); },
-      enumerable: true,
-    });
-
-    Object.defineProperty(this, "searchParams", {
-      get: function() {
-        if (self.__sp) return self.__sp;
-        self.__sp = makeSearchParams(self);
-        return self.__sp;
-      },
-      enumerable: true,
-    });
-
-    this.toString = function() { return rebuildHref(self); };
-    this.toJSON   = function() { return rebuildHref(self); };
   }
+
+  // Accessors live on the prototype. Each is defined once at engine init
+  // rather than four times per `new URL()` call.
+  Object.defineProperty(URL.prototype, "search", {
+    get: function() { return this._search; },
+    set: function(v) {
+      v = String(v);
+      if (v && v.charAt(0) !== "?") v = "?" + v;
+      this._search = v;
+      this.__sp = null;
+    },
+    enumerable: true,
+  });
+
+  Object.defineProperty(URL.prototype, "host", {
+    get: function() { return this.hostname + (this.port ? ":" + this.port : ""); },
+    set: function(v) {
+      var parts = String(v).split(":");
+      this.hostname = parts[0].toLowerCase();
+      this.port = parts[1] || "";
+    },
+    enumerable: true,
+  });
+
+  Object.defineProperty(URL.prototype, "href", {
+    get: function() { return rebuildHref(this); },
+    set: function(v) { parseInto(this, String(v)); },
+    enumerable: true,
+  });
+
+  Object.defineProperty(URL.prototype, "searchParams", {
+    get: function() {
+      if (this.__sp) return this.__sp;
+      this.__sp = makeSearchParams(this);
+      return this.__sp;
+    },
+    enumerable: true,
+  });
+
+  URL.prototype.toString = function() { return rebuildHref(this); };
+  URL.prototype.toJSON   = function() { return rebuildHref(this); };
+
   URL.__grinchPolyfill = true;
   g.URL = URL;
 })(this);

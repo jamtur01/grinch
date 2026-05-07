@@ -291,6 +291,12 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     // its URL-handling path (Apple Event GURL), where --profile-directory
     // is silently ignored.
     if !spec.args.is_empty() {
+        // Per-click NSString allocs (one per static arg + the URL). Pre-caching
+        // the static-arg NSStrings on BrowserSpec was considered but rejected:
+        // wall-clock here is dominated by the openApplicationAtURL IPC (low
+        // milliseconds), and humans click links on the order of 1–100/day, so
+        // the saving (a few hundred ns × N args) doesn't show up against
+        // millisecond IPC. Not worth the duplicated args/args_ns state.
         let mut all_args: Vec<&str> = spec.args.iter().map(|s| s.as_str()).collect();
         all_args.push(url);
         let args_ns: Vec<Retained<NSString>> =

@@ -1227,6 +1227,8 @@ fn is_marker(v: &JSValue, ty: &str) -> bool {
 /// Iterate the keys of a JS object as Rust strings, returning (key, value).
 /// Values are re-fetched as JSValues so we don't lose JSValue identity (which
 /// `JSValue::toDictionary` would erase by recursively converting to NS*).
+/// The double bridge crossing is fine here — only called from `Engine::new`
+/// against the small `browsers:` map, never on the resolve hot path.
 fn iter_object(v: &JSValue) -> Vec<(String, Retained<JSValue>)> {
     let dict = match unsafe { v.toDictionary() } {
         Some(d) => d,

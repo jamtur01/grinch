@@ -10,7 +10,7 @@ works in Grinch unchanged. Differences are summarised at the bottom of this
 file.
 
 - **~1500 LOC Rust** + a small embedded JS prelude
-- **45–300 ns** hot-path resolve latency (16–119× faster than Finch on the
+- **5–220 ns** hot-path resolve latency (50–1800× faster than Finch on the
   same workload; see [Performance](#performance) below)
 - **~16 MB** resident memory (vs ~140 MB for Finicky)
 - Native `JavaScriptCore`, no bundler, no transpiler, no Electron
@@ -267,33 +267,36 @@ configs and URLs that produced these numbers live in `bench/configs/`.
 
 These are the workloads that hit the bulk of the rules-array — domain
 matchers, regex, wildcards. No JS bridge crossings; the URL string is
-borrowed (`Cow::Borrowed`) for the entire resolve when no rewrite fires.
+borrowed (`Cow::Borrowed`) for the entire resolve when no rewrite fires,
+and `quick_host` is skipped when the config has no host-using matcher.
 
 | Workload | ns/op |
 |---|---:|
-| Floor: empty rules, no rewrite | **45** |
-| Default fallback, no query | 79 |
-| Default fallback, strip removes a param | 298 |
-| Bare-hostname match (`"github.com"`) | 53 |
-| `domain()` match | 60 |
-| Regex match | 89 |
-| Wildcard match (`"zoom.us/j/*"`) | 76 |
+| Floor: empty rules, no rewrite | **5** |
+| Default fallback, no query | 75 |
+| Default fallback, strip removes a param | 216 |
+| Bare-hostname match (`"github.com"`) | 52 |
+| `domain()` match | 57 |
+| Regex match | 32 |
+| Wildcard match (`"zoom.us/j/*"`) | 30 |
 
 ### Slow path (configs with `(url, ctx) => …` fn matchers)
 
-User-written predicates and rewrites cross into JavaScriptCore. The first
-fn call in a resolve costs ~5 µs (URL polyfill construction + ctx build);
-subsequent fn calls within the same resolve reuse the cached URL instance
-and ctx object.
+User-written predicates and rewrites cross into JavaScriptCore. URL-only
+predicates (`(url) => …`) skip the `__grinchMakeCtx` build *and* skip
+the LaunchServices IPC for `frontmost_opener()` upstream — only fns
+declaring a second formal arg pay for ctx. The first JS-bridge call in
+a resolve costs ~3 µs (URL polyfill + cached opener-field JSValues);
+subsequent fn calls within the same resolve reuse the cached args.
 
 | Workload | ns/op |
 |---|---:|
-| Native rule wins early (no fn fires) | 53 |
-| Plain URL through 4 fn matchers | 9,820 |
-| Drop URL via `() => null` | 9,680 |
-| HTTP→HTTPS via URL mutation | 11,131 |
-| Full Slack-web → `slack://` rewrite | 12,307 |
-| `?browser=` dynamic open fn | 12,633 |
+| Native rule wins early (no fn fires) | 51 |
+| Drop URL via `() => null` (url-only) | 2,705 |
+| HTTP→HTTPS via URL mutation (url-only) | 4,303 |
+| `?browser=` dynamic open fn (url-only matcher) | 4,509 |
+| 4 fn matchers reading `ctx.opener` | 5,568 |
+| Full Slack-web → `slack://` rewrite | 5,687 |
 
 ### Memory
 
@@ -307,12 +310,12 @@ Same hardware, same config, same URLs.
 
 | Workload | Finch (Swift) | **Grinch (Rust)** | Speedup |
 |---|---:|---:|---:|
-| Default fallback, no query | 9,308 ns | **79 ns** | 118× |
-| Default fallback, strip removes | 10,898 ns | **298 ns** | 37× |
-| Bare-hostname match | 5,242 ns | **53 ns** | 99× |
-| Subdomain via `domain()` | 5,784 ns | **60 ns** | 96× |
-| Regex match | 1,454 ns | **89 ns** | 16× |
-| Wildcard match | 9,060 ns | **76 ns** | 119× |
+| Default fallback, no query | 9,308 ns | **75 ns** | 124× |
+| Default fallback, strip removes | 10,898 ns | **216 ns** | 50× |
+| Bare-hostname match | 5,242 ns | **52 ns** | 101× |
+| Subdomain via `domain()` | 5,784 ns | **57 ns** | 101× |
+| Regex match | 1,454 ns | **32 ns** | 45× |
+| Wildcard match | 9,060 ns | **30 ns** | 302× |
 
 | | Finch | **Grinch** | Finicky |
 |---|---:|---:|---:|
@@ -322,13 +325,16 @@ Same hardware, same config, same URLs.
 
 Grinch's wins over Finch come from native, allocation-aware Rust:
 `regex` crate vs `NSRegularExpression`, byte-level subdomain matching,
-hoisting `quick_host` out of the per-matcher loop, `Cow<'_, str>` for
-the URL so a no-rewrite resolve allocates zero bytes,
-`Rc<BrowserSpec>` instead of deep clone on every match, ASCII-only
-lowercase, and a strip short-circuit when nothing changes. Finicky's
-higher memory footprint is its bundled WebView config UI eagerly
-loading WebKit, not engine weight — Finicky uses goja (Go JS) for
-resolve, which crosses a JS bridge for every match.
+`Cow<'_, str>` for the URL so a no-rewrite resolve allocates zero bytes,
+config-time runtime-needs analysis that skips `quick_host`,
+`frontmost_opener()`, and `__grinchMakeCtx` for configs that don't read
+them, `Rc<BrowserSpec>` instead of deep clone on every match, ASCII-only
+lowercase, and a strip short-circuit when nothing changes. On the slow
+path, fn arity is sniffed at config load — `(url) => …` predicates skip
+the JS ctx build *and* the LaunchServices opener IPC entirely. Finicky's
+higher memory footprint is its bundled WebView config UI eagerly loading
+WebKit, not engine weight — Finicky uses goja (Go JS) for resolve, which
+crosses a JS bridge for every match.
 
 ### Click latency in practice
 

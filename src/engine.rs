@@ -75,13 +75,57 @@ pub struct Resolution<'u> {
     pub url: Cow<'u, str>,
 }
 
+/// User-supplied JS callback packaged with the metadata we sniff at config
+/// load.
+///
+/// **The ctx-passing contract**: Grinch supplies the second positional arg
+/// (`ctx`) only when the function declares two-or-more formal parameters
+/// (`f.length >= 2`). With `f.length` of 0 or 1, the fn is treated as
+/// url-only — Grinch skips `__grinchMakeCtx` *and* skips the LaunchServices
+/// IPC for `frontmost_opener()` / `current_modifier_flags()` upstream.
+///
+/// Patterns this contract changes:
+/// - `function() { … arguments[1] … }` — ctx slot is now always undefined.
+/// - `(...args) => args[1]…` — same.
+/// - `(url, ctx = {}) => …` — `f.length` is 1 (default params don't count),
+///   so user code sees the JS default `{}`, not Grinch's ctx.
+///
+/// The trade-off favours the common case (declarative configs that use
+/// either `(url) =>` or `(url, ctx) =>`) at the cost of these rare patterns.
+/// If you need ctx in a fn with a default param, name the param explicitly:
+/// `(url, ctx) => { ctx = ctx || {}; … }`.
+struct UserFn {
+    f: Retained<JSValue>,
+    needs_ctx: bool,
+}
+
+impl UserFn {
+    fn new(f: Retained<JSValue>) -> Self {
+        let needs_ctx = fn_needs_ctx(&f);
+        Self { f, needs_ctx }
+    }
+}
+
+/// Read `f.length` (declared formal parameter count) and apply the
+/// ctx-passing contract documented on `UserFn`.
+fn fn_needs_ctx(f: &JSValue) -> bool {
+    let key_ns = NSString::from_str("length");
+    let key_ref: &AnyObject = &key_ns;
+    let len_val = match unsafe { f.objectForKeyedSubscript(Some(key_ref)) } {
+        Some(v) => v,
+        None => return true,
+    };
+    let len = unsafe { len_val.toUInt32() };
+    len >= 2
+}
+
 enum Matcher {
     Always,
     Regex(Regex),
     Domain(Vec<String>),
     From(Vec<String>),
     Running(Vec<String>),
-    Fn(Retained<JSValue>),
+    Fn(UserFn),
 }
 
 enum Rewriter {
@@ -91,12 +135,12 @@ enum Rewriter {
         prefixes: Vec<String>,
     },
     Literal(String),
-    Fn(Retained<JSValue>),
+    Fn(UserFn),
 }
 
 enum Target {
     Browser(Rc<BrowserSpec>),
-    Fn(Retained<JSValue>),
+    Fn(UserFn),
     Suppress,
 }
 
@@ -308,9 +352,9 @@ impl Engine {
                 Target::Suppress => {
                     return suppressed();
                 }
-                Target::Fn(f) => {
-                    let Some(args) = rc.fn_args(&current) else { continue };
-                    let result = unsafe { f.callWithArguments(Some(&args)) };
+                Target::Fn(uf) => {
+                    let Some(args) = rc.fn_args(&current, uf.needs_ctx) else { continue };
+                    let result = unsafe { uf.f.callWithArguments(Some(&args)) };
                     if let Some(r) = result {
                         if !unsafe { r.isUndefined() } && !unsafe { r.isNull() } {
                             let spec = resolve_browser(&r, &self.browsers).unwrap_or_else(|| {
@@ -348,27 +392,32 @@ enum RewriteOutcome {
 /// statically inspect what a JS function reads), and Matcher::From
 /// requires opener.bundle_id specifically.
 fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> (bool, bool) {
+    // Only fns that declare a second arg can read ctx, so they're the only
+    // ones that force us to populate opener + modifiers. A url-only fn
+    // (`(url) => …`) sees `undefined` if we pass it nothing for ctx, so
+    // skipping the opener IPC is safe.
     fn matchers_need(ms: &[Matcher]) -> (bool, bool) {
         let mut o = false;
         let mut m = false;
         for matcher in ms {
             match matcher {
                 Matcher::From(_) => o = true,
-                Matcher::Fn(_) => {
+                Matcher::Fn(uf) if uf.needs_ctx => {
                     o = true;
                     m = true;
                 }
                 Matcher::Always
                 | Matcher::Regex(_)
                 | Matcher::Domain(_)
-                | Matcher::Running(_) => {}
+                | Matcher::Running(_)
+                | Matcher::Fn(_) => {}
             }
         }
         (o, m)
     }
     fn rewriter_needs(r: &Rewriter) -> (bool, bool) {
         match r {
-            Rewriter::Fn(_) => (true, true),
+            Rewriter::Fn(uf) if uf.needs_ctx => (true, true),
             _ => (false, false),
         }
     }
@@ -393,9 +442,11 @@ fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> (bool, boo
             needs_opener |= o;
             needs_modifiers |= m;
         }
-        if matches!(&rule.target, Target::Fn(_)) {
-            needs_opener = true;
-            needs_modifiers = true;
+        if let Target::Fn(uf) = &rule.target {
+            if uf.needs_ctx {
+                needs_opener = true;
+                needs_modifiers = true;
+            }
         }
     }
 
@@ -430,11 +481,19 @@ struct ResolveCtx<'a> {
     /// ctx object — built lazily on first fn call, then reused. Opener and
     /// modifiers are constant for a resolve, so this never needs invalidating.
     cached_ctx: RefCell<Option<Retained<JSValue>>>,
-    /// fn args NSArray for the current URL string. Invalidated when the URL
-    /// changes between rewrites; cached_ctx is preserved across that. The
-    /// key is `Box<str>` (not `String`) to halve the per-cache allocation
-    /// footprint — we never push to it, so the capacity field is dead weight.
-    fn_args_cache: RefCell<Option<(Box<str>, Retained<NSArray>)>>,
+    /// Cached URL polyfill instance. Built once per URL string seen during
+    /// the resolve and reused by both fn-args cache slots, so a url-only
+    /// fn matcher and a url+ctx fn matcher share one `new URL()` cost.
+    cached_url_instance: RefCell<Option<(Box<str>, Retained<JSValue>)>>,
+    /// fn args NSArray for the current URL string when the fn declares
+    /// `(url, ctx) => …`. Invalidated when the URL changes between rewrites;
+    /// cached_ctx is preserved across that. `Box<str>` (not `String`)
+    /// halves the per-cache allocation footprint — capacity is dead weight.
+    fn_args_cache_full: RefCell<Option<(Box<str>, Retained<NSArray>)>>,
+    /// fn args NSArray for url-only fns (`(url) => …`). One-element NSArray
+    /// containing just the URL instance — no ctx, so we never trigger the
+    /// `__grinchMakeCtx` path or pay the opener-IPC cost upstream.
+    fn_args_cache_url_only: RefCell<Option<(Box<str>, Retained<NSArray>)>>,
 }
 
 impl<'a> ResolveCtx<'a> {
@@ -458,7 +517,9 @@ impl<'a> ResolveCtx<'a> {
             running_cache: RefCell::new(None),
             original_url,
             cached_ctx: RefCell::new(None),
-            fn_args_cache: RefCell::new(None),
+            cached_url_instance: RefCell::new(None),
+            fn_args_cache_full: RefCell::new(None),
+            fn_args_cache_url_only: RefCell::new(None),
         }
     }
 
@@ -488,25 +549,51 @@ impl<'a> ResolveCtx<'a> {
         Some(v)
     }
 
-    /// Build the args for a user `(url, ctx) => ...` invocation. First arg is
-    /// a URL instance (Finicky-compatible — supports .href, .hostname, .protocol,
-    /// .searchParams etc.); second arg is the cached ctx object with opener
-    /// and modifiers. NSArray itself is cached while the URL string is unchanged.
-    /// Returns None if the prelude is broken — callers treat that as a fn that
-    /// doesn't match (rather than panicking).
-    fn fn_args(&self, url: &str) -> Option<Retained<NSArray>> {
-        if let Some((cached_url, args)) = self.fn_args_cache.borrow().as_ref() {
+    /// Cached URL polyfill instance for `url`. Both fn-args paths share it,
+    /// so a config that mixes url-only and url+ctx fns pays for `new URL()`
+    /// once per URL string per resolve, not once per fn call.
+    fn url_instance(&self, url: &str) -> Retained<JSValue> {
+        if let Some((cached_url, instance)) = self.cached_url_instance.borrow().as_ref() {
             if cached_url.as_ref() == url {
-                return Some(args.clone());
+                return instance.clone();
             }
         }
-        let url_instance = build_url_instance(self.url_ctor, self.ctx, url);
-        let ctx_val = self.ctx_object()?;
-        let url_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_instance) };
-        let ctx_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(ctx_val) };
-        let args = NSArray::from_retained_slice(&[url_obj, ctx_obj]);
-        *self.fn_args_cache.borrow_mut() = Some((Box::from(url), args.clone()));
-        Some(args)
+        let v = build_url_instance(self.url_ctor, self.ctx, url);
+        *self.cached_url_instance.borrow_mut() = Some((Box::from(url), v.clone()));
+        v
+    }
+
+    /// Build the args for a user fn invocation. When `needs_ctx` is true, the
+    /// args are `[urlInstance, ctxObject]` (Finicky-compatible 2-arg form);
+    /// otherwise `[urlInstance]` alone, and `__grinchMakeCtx` is never called.
+    /// Returns None if the prelude is broken — callers treat that as a fn that
+    /// doesn't match (rather than panicking).
+    fn fn_args(&self, url: &str, needs_ctx: bool) -> Option<Retained<NSArray>> {
+        if needs_ctx {
+            if let Some((cached_url, args)) = self.fn_args_cache_full.borrow().as_ref() {
+                if cached_url.as_ref() == url {
+                    return Some(args.clone());
+                }
+            }
+            let url_instance = self.url_instance(url);
+            let ctx_val = self.ctx_object()?;
+            let url_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_instance) };
+            let ctx_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(ctx_val) };
+            let args = NSArray::from_retained_slice(&[url_obj, ctx_obj]);
+            *self.fn_args_cache_full.borrow_mut() = Some((Box::from(url), args.clone()));
+            Some(args)
+        } else {
+            if let Some((cached_url, args)) = self.fn_args_cache_url_only.borrow().as_ref() {
+                if cached_url.as_ref() == url {
+                    return Some(args.clone());
+                }
+            }
+            let url_instance = self.url_instance(url);
+            let url_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_instance) };
+            let args = NSArray::from_retained_slice(&[url_obj]);
+            *self.fn_args_cache_url_only.borrow_mut() = Some((Box::from(url), args.clone()));
+            Some(args)
+        }
     }
 }
 
@@ -638,9 +725,9 @@ fn matches(m: &Matcher, url: &str, host: Option<&str>, rc: &ResolveCtx) -> bool 
             let runs = rc.running_apps();
             apps.iter().any(|a| runs.contains(a))
         }
-        Matcher::Fn(f) => {
-            let Some(args) = rc.fn_args(url) else { return false };
-            let result = unsafe { f.callWithArguments(Some(&args)) };
+        Matcher::Fn(uf) => {
+            let Some(args) = rc.fn_args(url, uf.needs_ctx) else { return false };
+            let result = unsafe { uf.f.callWithArguments(Some(&args)) };
             result.map(|v| unsafe { v.toBool() }).unwrap_or(false)
         }
     }
@@ -678,9 +765,9 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
                 RewriteOutcome::Changed(s.clone())
             }
         }
-        Rewriter::Fn(f) => {
-            let Some(args) = rc.fn_args(url) else { return RewriteOutcome::Unchanged };
-            let Some(raw) = (unsafe { f.callWithArguments(Some(&args)) }) else {
+        Rewriter::Fn(uf) => {
+            let Some(args) = rc.fn_args(url, uf.needs_ctx) else { return RewriteOutcome::Unchanged };
+            let Some(raw) = (unsafe { uf.f.callWithArguments(Some(&args)) }) else {
                 return RewriteOutcome::Unchanged;
             };
             // Normalise via __grinchRewriteResult: handles string | URL |
@@ -803,7 +890,7 @@ fn parse_rule_array(
         // a pure rewrite-on-match (no routing change) — treat as default-target.
         let target = match open_val.as_ref() {
             Some(ov) if unsafe { ov.isNull() } => Target::Suppress,
-            Some(ov) if is_function(ov, function_ctor) => Target::Fn(ov.clone()),
+            Some(ov) if is_function(ov, function_ctor) => Target::Fn(UserFn::new(ov.clone())),
             Some(ov) => match resolve_browser(ov, browsers) {
                 Some(b) => Target::Browser(b),
                 None => {
@@ -872,7 +959,7 @@ fn compile_rewriter(v: &JSValue, function_ctor: &JSValue) -> Option<Rewriter> {
         return Some(Rewriter::Drop);
     }
     if is_function(v, function_ctor) {
-        return Some(Rewriter::Fn(v.retain()));
+        return Some(Rewriter::Fn(UserFn::new(v.retain())));
     }
     if let Some(s) = js_to_string(v) {
         return Some(Rewriter::Literal(s));
@@ -962,7 +1049,7 @@ fn compile_matcher(
             }
         }
         if is_function(v, function_ctor) {
-            return Some(Matcher::Fn(v.retain()));
+            return Some(Matcher::Fn(UserFn::new(v.retain())));
         }
     }
     None

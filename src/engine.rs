@@ -492,13 +492,15 @@ impl<'a> ResolveCtx<'a> {
 /// Lazy: the JS getter on opener.windowTitle only invokes this when user code
 /// reads it, so configs that don't touch windowTitle pay nothing.
 fn install_window_title_callback(ctx: &JSContext) {
-    // Block returns +1-retained NSString*. JSC's objc bridge expects the same
-    // ABI as a method returning `id`, so a `*mut NSString` with retain count
-    // bumped is exactly right; JSC autoreleases on the JS side.
+    // Block return follows ARC's id-returning convention: autoreleased, not
+    // +1 retained. JSC's Obj-C bridge calls objc_retainAutoreleasedReturnValue
+    // on the result; pairing an autorelease here means the retain counts
+    // balance. Returning Retained::into_raw (a +1 pointer) leaks the NSString
+    // every time user code reads opener.windowTitle.
     let block = RcBlock::new(|| -> *mut NSString {
         let pid = CURRENT_OPENER_PID.load(Ordering::Relaxed);
         let title = frontmost_window_title(pid);
-        Retained::into_raw(NSString::from_str(&title))
+        Retained::autorelease_return(NSString::from_str(&title))
     });
     // SAFETY: A block is an Objective-C object (NSBlock). `&Block<F>` is
     // ABI-compatible with a block pointer, which is itself a valid `id`.

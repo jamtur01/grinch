@@ -235,7 +235,8 @@ impl Engine {
             .expect("prelude __grinchRewriteResult missing");
         let make_ctx_helper = unsafe { eval_global(&ctx, "__grinchMakeCtx") }
             .expect("prelude __grinchMakeCtx missing");
-        let url_ctor = unsafe { eval_global(&ctx, "URL") }.expect("prelude URL constructor missing");
+        let url_ctor =
+            unsafe { eval_global(&ctx, "URL") }.expect("prelude URL constructor missing");
 
         install_window_title_callback(&ctx);
 
@@ -296,12 +297,16 @@ impl Engine {
     /// bundle ID/name/path/pid) before calling resolve(). False for
     /// declarative-only configs that never reference opener — saves
     /// ~100–500 µs of LaunchServices IPC per click.
-    pub fn needs_opener(&self) -> bool { self.needs_opener }
+    pub fn needs_opener(&self) -> bool {
+        self.needs_opener
+    }
 
     /// True if AppDelegate should fetch modifier flags before calling
     /// resolve(). False for configs without any user fn matchers/rewriters
     /// (only those can read modifiers, via `ctx.modifiers`).
-    pub fn needs_modifiers(&self) -> bool { self.needs_modifiers }
+    pub fn needs_modifiers(&self) -> bool {
+        self.needs_modifiers
+    }
 
     /// Hot path: resolve a URL given the opener and modifier flags.
     pub fn resolve<'u>(
@@ -320,7 +325,11 @@ impl Engine {
         let mut current: Cow<'u, str> = Cow::Borrowed(url_string);
         // quick_host allocates a lowercased String; skip it entirely when
         // the config has no host-using matchers (regex/wildcard/fn-only).
-        let mut host = if self.needs_host { quick_host(&current) } else { None };
+        let mut host = if self.needs_host {
+            quick_host(&current)
+        } else {
+            None
+        };
         let rc = ResolveCtx::new(
             &self.ctx,
             &self.rewrite_result_helper,
@@ -338,7 +347,11 @@ impl Engine {
                 match apply_rewrite(&rw.rewriter, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
                         current = Cow::Owned(s);
-                        host = if self.needs_host { quick_host(&current) } else { None };
+                        host = if self.needs_host {
+                            quick_host(&current)
+                        } else {
+                            None
+                        };
                     }
                     RewriteOutcome::Unchanged => {}
                     RewriteOutcome::Drop => return suppressed(),
@@ -357,7 +370,11 @@ impl Engine {
                 match apply_rewrite(rw, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
                         current = Cow::Owned(s);
-                        host = if self.needs_host { quick_host(&current) } else { None };
+                        host = if self.needs_host {
+                            quick_host(&current)
+                        } else {
+                            None
+                        };
                     }
                     RewriteOutcome::Unchanged => {}
                     RewriteOutcome::Drop => return suppressed(),
@@ -365,13 +382,18 @@ impl Engine {
             }
             match &rule.target {
                 Target::Browser(b) => {
-                    return Resolution { browser: Rc::clone(b), url: current };
+                    return Resolution {
+                        browser: Rc::clone(b),
+                        url: current,
+                    };
                 }
                 Target::Suppress => {
                     return suppressed();
                 }
                 Target::Fn(uf) => {
-                    let Some(args) = rc.fn_args(&current, uf.needs_ctx) else { continue };
+                    let Some(args) = rc.fn_args(&current, uf.needs_ctx) else {
+                        continue;
+                    };
                     let result = unsafe { uf.f.callWithArguments(Some(&args)) };
                     if let Some(r) = result {
                         if !unsafe { r.isUndefined() } && !unsafe { r.isNull() } {
@@ -380,7 +402,10 @@ impl Engine {
                                     js_to_string(&r).unwrap_or_default(),
                                 ))
                             });
-                            return Resolution { browser: spec, url: current };
+                            return Resolution {
+                                browser: spec,
+                                url: current,
+                            };
                         }
                     }
                 }
@@ -434,10 +459,7 @@ fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> RuntimeNee
                     n.modifiers = true;
                 }
                 Matcher::Domain(_) => n.host = true,
-                Matcher::Always
-                | Matcher::Regex(_)
-                | Matcher::Running(_)
-                | Matcher::Fn(_) => {}
+                Matcher::Always | Matcher::Regex(_) | Matcher::Running(_) | Matcher::Fn(_) => {}
             }
         }
     }
@@ -450,7 +472,11 @@ fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> RuntimeNee
         }
     }
 
-    let mut n = RuntimeNeeds { opener: false, modifiers: false, host: false };
+    let mut n = RuntimeNeeds {
+        opener: false,
+        modifiers: false,
+        host: false,
+    };
 
     for rw in rewrites {
         matchers_need(&rw.matchers, &mut n);
@@ -755,7 +781,9 @@ fn matches(m: &Matcher, url: &str, host: Option<&str>, rc: &ResolveCtx) -> bool 
             apps.iter().any(|a| runs.contains(a))
         }
         Matcher::Fn(uf) => {
-            let Some(args) = rc.fn_args(url, uf.needs_ctx) else { return false };
+            let Some(args) = rc.fn_args(url, uf.needs_ctx) else {
+                return false;
+            };
             let result = unsafe { uf.f.callWithArguments(Some(&args)) };
             result.map(|v| unsafe { v.toBool() }).unwrap_or(false)
         }
@@ -772,9 +800,7 @@ fn host_matches(host: &str, pattern: &str) -> bool {
     }
     let hb = host.as_bytes();
     let pb = pattern.as_bytes();
-    hb.len() > pb.len() + 1
-        && hb[hb.len() - pb.len() - 1] == b'.'
-        && hb.ends_with(pb)
+    hb.len() > pb.len() + 1 && hb[hb.len() - pb.len() - 1] == b'.' && hb.ends_with(pb)
 }
 
 /// Apply a rewriter. Returns Changed(new_url) when the URL was rewritten,
@@ -795,7 +821,9 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
             }
         }
         Rewriter::Fn(uf) => {
-            let Some(args) = rc.fn_args(url, uf.needs_ctx) else { return RewriteOutcome::Unchanged };
+            let Some(args) = rc.fn_args(url, uf.needs_ctx) else {
+                return RewriteOutcome::Unchanged;
+            };
             let Some(raw) = (unsafe { uf.f.callWithArguments(Some(&args)) }) else {
                 return RewriteOutcome::Unchanged;
             };
@@ -804,7 +832,10 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
             // or JS null.
             let raw_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(raw) };
             let helper_args = NSArray::from_retained_slice(&[raw_obj]);
-            let Some(normalised) = (unsafe { rc.rewrite_result_helper.callWithArguments(Some(&helper_args)) }) else {
+            let Some(normalised) = (unsafe {
+                rc.rewrite_result_helper
+                    .callWithArguments(Some(&helper_args))
+            }) else {
                 return RewriteOutcome::Unchanged;
             };
             if unsafe { normalised.isNull() } || unsafe { normalised.isUndefined() } {
@@ -844,7 +875,9 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
         .unwrap_or_default();
     let bundle_id = resolve_browser_identifier(&raw_id);
 
-    let mut args = key(v, "args").map(|a| js_array_to_strings(&a)).unwrap_or_default();
+    let mut args = key(v, "args")
+        .map(|a| js_array_to_strings(&a))
+        .unwrap_or_default();
     let mut creates_new_instance = false;
 
     // Chromium-family `profile` field: expand to --profile-directory=<dir>.
@@ -870,7 +903,12 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
         .map(|b| unsafe { b.toBool() })
         .unwrap_or(false);
 
-    BrowserSpec { bundle_id, args, open_in_background, creates_new_instance }
+    BrowserSpec {
+        bundle_id,
+        args,
+        open_in_background,
+        creates_new_instance,
+    }
 }
 
 fn resolve_browser(
@@ -904,7 +942,9 @@ fn parse_rule_array(
     let count = js_array_len(arr);
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
-        let Some(item) = js_array_at(arr, i) else { continue };
+        let Some(item) = js_array_at(arr, i) else {
+            continue;
+        };
         let match_val = key(&item, "match");
         // `open` (Grinch) and `browser` (Finicky) are aliases.
         let open_val = key(&item, "open").or_else(|| key(&item, "browser"));
@@ -912,7 +952,9 @@ fn parse_rule_array(
         let matchers = compile_matchers(match_val.as_deref(), regexp_ctor, function_ctor);
 
         // Optional per-rule rewriter (combined entry).
-        let rewriter = url_val.as_ref().and_then(|uv| compile_rewriter(uv, function_ctor));
+        let rewriter = url_val
+            .as_ref()
+            .and_then(|uv| compile_rewriter(uv, function_ctor));
 
         // Target: `open: null` → suppress; fn → Fn; resolvable browser → Browser.
         // If `open`/`browser` is absent but a `url` rewrite IS present, that's
@@ -938,14 +980,16 @@ fn parse_rule_array(
                          apply globally; rules entries need an `open` to route"
                     );
                 } else {
-                    eprintln!(
-                        "grinch: rules[{i}] has neither `open` nor `url` — entry ignored"
-                    );
+                    eprintln!("grinch: rules[{i}] has neither `open` nor `url` — entry ignored");
                 }
                 continue;
             }
         };
-        out.push(Rule { matchers, rewriter, target });
+        out.push(Rule {
+            matchers,
+            rewriter,
+            target,
+        });
     }
     out
 }
@@ -957,7 +1001,9 @@ fn parse_rewrite_array(arr: &JSValue, function_ctor: &JSValue) -> Vec<RewriteRul
     let count = js_array_len(arr);
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
-        let Some(item) = js_array_at(arr, i) else { continue };
+        let Some(item) = js_array_at(arr, i) else {
+            continue;
+        };
 
         // Bare strip(...) marker (no match field) — treat as "always run".
         if is_marker(&item, "strip") {
@@ -977,7 +1023,9 @@ fn parse_rewrite_array(arr: &JSValue, function_ctor: &JSValue) -> Vec<RewriteRul
         // /literal/ regex is accepted.
         let matchers = compile_matchers(match_val.as_deref(), function_ctor, function_ctor);
         let Some(uv) = url_val else { continue };
-        let Some(rewriter) = compile_rewriter(&uv, function_ctor) else { continue };
+        let Some(rewriter) = compile_rewriter(&uv, function_ctor) else {
+            continue;
+        };
         out.push(RewriteRule { matchers, rewriter });
     }
     out
@@ -1022,11 +1070,7 @@ fn compile_matchers(
         .unwrap_or_default()
 }
 
-fn compile_matcher(
-    v: &JSValue,
-    regexp_ctor: &JSValue,
-    function_ctor: &JSValue,
-) -> Option<Matcher> {
+fn compile_matcher(v: &JSValue, regexp_ctor: &JSValue, function_ctor: &JSValue) -> Option<Matcher> {
     // String → either a wildcard pattern (if it contains * or /) or a bare
     // hostname shorthand for a domain-and-subdomain match.
     if unsafe { v.isString() } {
@@ -1150,7 +1194,10 @@ fn compile_wildcard(pattern: &str) -> Option<Regex> {
     // Step 6: anchor.
     let anchored = format!("^{work}$");
 
-    RegexBuilder::new(&anchored).case_insensitive(true).build().ok()
+    RegexBuilder::new(&anchored)
+        .case_insensitive(true)
+        .build()
+        .ok()
 }
 
 fn pattern_has_protocol_prefix(pat: &str) -> bool {
@@ -1195,7 +1242,11 @@ pub(crate) fn quick_host(url: &str) -> Option<String> {
     if s.starts_with('[') {
         if let Some(end) = s.find(']') {
             let host = &s[..end + 1];
-            return if host.len() <= 2 { None } else { Some(host.to_ascii_lowercase()) };
+            return if host.len() <= 2 {
+                None
+            } else {
+                Some(host.to_ascii_lowercase())
+            };
         }
         return None;
     }
@@ -1353,7 +1404,9 @@ fn is_marker(v: &JSValue, ty: &str) -> bool {
     if !unsafe { v.isObject() } {
         return false;
     }
-    let Some(t) = key(v, "__type") else { return false };
+    let Some(t) = key(v, "__type") else {
+        return false;
+    };
     js_to_string(&t).as_deref() == Some(ty)
 }
 
@@ -1372,7 +1425,9 @@ fn iter_object(v: &JSValue) -> Vec<(String, Retained<JSValue>)> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let any_key = keys.objectAtIndex(i);
-        let Ok(s) = any_key.downcast::<NSString>() else { continue };
+        let Ok(s) = any_key.downcast::<NSString>() else {
+            continue;
+        };
         let name = s.to_string();
         if let Some(val) = key(v, &name) {
             out.push((name, val));
@@ -1389,9 +1444,18 @@ mod tests {
 
     #[test]
     fn quick_host_basic() {
-        assert_eq!(quick_host("http://example.com/path"), Some("example.com".into()));
-        assert_eq!(quick_host("https://example.com:443/"), Some("example.com".into()));
-        assert_eq!(quick_host("ftp://files.example/x"), Some("files.example".into()));
+        assert_eq!(
+            quick_host("http://example.com/path"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            quick_host("https://example.com:443/"),
+            Some("example.com".into())
+        );
+        assert_eq!(
+            quick_host("ftp://files.example/x"),
+            Some("files.example".into())
+        );
     }
 
     #[test]
@@ -1408,13 +1472,22 @@ mod tests {
 
     #[test]
     fn quick_host_lowercases_ascii() {
-        assert_eq!(quick_host("HTTP://Example.COM/"), Some("example.com".into()));
+        assert_eq!(
+            quick_host("HTTP://Example.COM/"),
+            Some("example.com".into())
+        );
     }
 
     #[test]
     fn quick_host_query_and_fragment() {
-        assert_eq!(quick_host("https://x.example?a=b"), Some("x.example".into()));
-        assert_eq!(quick_host("https://x.example#frag"), Some("x.example".into()));
+        assert_eq!(
+            quick_host("https://x.example?a=b"),
+            Some("x.example".into())
+        );
+        assert_eq!(
+            quick_host("https://x.example#frag"),
+            Some("x.example".into())
+        );
     }
 
     #[test]
@@ -1427,10 +1500,7 @@ mod tests {
             quick_host("http://[2001:db8::1]:443/"),
             Some("[2001:db8::1]".into()),
         );
-        assert_eq!(
-            quick_host("http://user@[::1]:80/"),
-            Some("[::1]".into()),
-        );
+        assert_eq!(quick_host("http://user@[::1]:80/"), Some("[::1]".into()),);
     }
 
     #[test]
@@ -1466,11 +1536,7 @@ mod tests {
 
     #[test]
     fn strip_params_exact_match() {
-        let r = strip_params(
-            "https://x/?utm_source=a&q=1",
-            &strset(["utm_source"]),
-            &[],
-        );
+        let r = strip_params("https://x/?utm_source=a&q=1", &strset(["utm_source"]), &[]);
         assert_eq!(r.as_deref(), Some("https://x/?q=1"));
     }
 
@@ -1493,21 +1559,13 @@ mod tests {
 
     #[test]
     fn strip_params_preserves_fragment() {
-        let r = strip_params(
-            "https://x/?utm=1&q=ok#anchor",
-            &strset(["utm"]),
-            &[],
-        );
+        let r = strip_params("https://x/?utm=1&q=ok#anchor", &strset(["utm"]), &[]);
         assert_eq!(r.as_deref(), Some("https://x/?q=ok#anchor"));
     }
 
     #[test]
     fn strip_params_when_only_param_is_stripped() {
-        let r = strip_params(
-            "https://x/?utm=1#frag",
-            &strset(["utm"]),
-            &[],
-        );
+        let r = strip_params("https://x/?utm=1#frag", &strset(["utm"]), &[]);
         assert_eq!(r.as_deref(), Some("https://x/#frag"));
     }
 
@@ -1547,7 +1605,10 @@ mod tests {
         // The Finicky-style protocol prefix is auto-prepended.
         assert!(matches_pat("zoom.us/j/*", "https://zoom.us/j/123"));
         assert!(matches_pat("zoom.us/j/*", "zoom.us/j/123"));
-        assert!(!matches_pat("zoom.us/j/*", "https://other.com/zoom.us/j/123"));
+        assert!(!matches_pat(
+            "zoom.us/j/*",
+            "https://other.com/zoom.us/j/123"
+        ));
     }
 
     #[test]
@@ -1562,7 +1623,10 @@ mod tests {
         assert!(matches_pat("slack:*", "slack://channel?team=foo"));
         assert!(matches_pat("mailto:*", "mailto:a@b.example"));
         // http: pattern shouldn't match https URLs.
-        assert!(!matches_pat("http://example.com/*", "https://example.com/x"));
+        assert!(!matches_pat(
+            "http://example.com/*",
+            "https://example.com/x"
+        ));
     }
 
     #[test]
@@ -1597,7 +1661,11 @@ mod tests {
     fn analyse_needs_empty() {
         assert_eq!(
             analyse_runtime_needs(&[], &[]),
-            RuntimeNeeds { opener: false, modifiers: false, host: false },
+            RuntimeNeeds {
+                opener: false,
+                modifiers: false,
+                host: false
+            },
         );
     }
 
@@ -1609,7 +1677,11 @@ mod tests {
         ];
         assert_eq!(
             analyse_runtime_needs(&[], &rules),
-            RuntimeNeeds { opener: false, modifiers: false, host: false },
+            RuntimeNeeds {
+                opener: false,
+                modifiers: false,
+                host: false
+            },
         );
     }
 
@@ -1618,7 +1690,11 @@ mod tests {
         let rules = vec![rule_with_matchers(vec![Matcher::Domain(vec!["x".into()])])];
         assert_eq!(
             analyse_runtime_needs(&[], &rules),
-            RuntimeNeeds { opener: false, modifiers: false, host: true },
+            RuntimeNeeds {
+                opener: false,
+                modifiers: false,
+                host: true
+            },
         );
     }
 
@@ -1627,7 +1703,11 @@ mod tests {
         let rules = vec![rule_with_matchers(vec![Matcher::From(vec!["x".into()])])];
         assert_eq!(
             analyse_runtime_needs(&[], &rules),
-            RuntimeNeeds { opener: true, modifiers: false, host: false },
+            RuntimeNeeds {
+                opener: true,
+                modifiers: false,
+                host: false
+            },
         );
     }
 }

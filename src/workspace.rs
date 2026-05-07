@@ -60,15 +60,26 @@ pub fn frontmost_opener() -> Opener {
     let Some(app) = workspace.frontmostApplication() else {
         return Opener::default();
     };
-    let bundle_id = app.bundleIdentifier().map(|s| s.to_string()).unwrap_or_default();
-    let name = app.localizedName().map(|s| s.to_string()).unwrap_or_default();
+    let bundle_id = app
+        .bundleIdentifier()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let name = app
+        .localizedName()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     let path = app
         .executableURL()
         .and_then(|u| u.path())
         .map(|s| s.to_string())
         .unwrap_or_default();
     let pid = app.processIdentifier();
-    Opener { bundle_id, name, path, pid }
+    Opener {
+        bundle_id,
+        name,
+        path,
+        pid,
+    }
 }
 
 /// Check whether Grinch.app has been granted Accessibility permission, and
@@ -187,10 +198,10 @@ pub fn current_modifier_flags() -> ModifierFlags {
 /// in code review but routes URLs to the wrong browser when held.
 fn flags_from_mask(flags: u64) -> ModifierFlags {
     ModifierFlags {
-        shift:   flags & KCG_EVENT_FLAG_MASK_SHIFT     != 0,
-        option:  flags & KCG_EVENT_FLAG_MASK_ALTERNATE != 0,
-        command: flags & KCG_EVENT_FLAG_MASK_COMMAND   != 0,
-        control: flags & KCG_EVENT_FLAG_MASK_CONTROL   != 0,
+        shift: flags & KCG_EVENT_FLAG_MASK_SHIFT != 0,
+        option: flags & KCG_EVENT_FLAG_MASK_ALTERNATE != 0,
+        command: flags & KCG_EVENT_FLAG_MASK_COMMAND != 0,
+        control: flags & KCG_EVENT_FLAG_MASK_CONTROL != 0,
     }
 }
 
@@ -199,10 +210,11 @@ fn flags_from_mask(flags: u64) -> ModifierFlags {
 /// to a canonical bundle ID. Returns the input unchanged if no app is found —
 /// the caller decides whether to warn or fall back.
 ///
-/// Result is cached: LaunchServices calls (URLForApplicationWithBundleIdentifier
-/// + fullPathForApplication) are ~50µs each and dominate the slow path when
-/// dynamic `open` fns return browser identifiers per click. Cache lookup
-/// is a single HashMap probe under a Mutex.
+/// Result is cached: LaunchServices calls
+/// (URLForApplicationWithBundleIdentifier + fullPathForApplication) are
+/// ~50µs each and dominate the slow path when dynamic `open` fns return
+/// browser identifiers per click. Cache lookup is a single HashMap probe
+/// under a Mutex.
 pub fn resolve_browser_identifier(name: &str) -> String {
     static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
         std::sync::OnceLock::new();
@@ -228,7 +240,10 @@ fn resolve_browser_identifier_uncached(name: &str) -> String {
 
     // Already a bundle ID? URLForApplicationWithBundleIdentifier returns Some
     // when an app with that ID is installed.
-    if workspace.URLForApplicationWithBundleIdentifier(&name_ns).is_some() {
+    if workspace
+        .URLForApplicationWithBundleIdentifier(&name_ns)
+        .is_some()
+    {
         return name.to_string();
     }
 
@@ -347,9 +362,7 @@ mod tests {
 
     #[test]
     fn flags_from_mask_decodes_combinations() {
-        let m = flags_from_mask(
-            KCG_EVENT_FLAG_MASK_SHIFT | KCG_EVENT_FLAG_MASK_COMMAND,
-        );
+        let m = flags_from_mask(KCG_EVENT_FLAG_MASK_SHIFT | KCG_EVENT_FLAG_MASK_COMMAND);
         assert!(m.shift && m.command);
         assert!(!m.option && !m.control);
     }
@@ -368,8 +381,8 @@ mod tests {
         // Regression guard against transposing Option (kCGEventFlagMaskAlternate,
         // bit 19) with Control (bit 18) or Command (bit 20).
         assert_eq!(KCG_EVENT_FLAG_MASK_ALTERNATE, 1u64 << 19);
-        assert_eq!(KCG_EVENT_FLAG_MASK_CONTROL,   1u64 << 18);
-        assert_eq!(KCG_EVENT_FLAG_MASK_COMMAND,   1u64 << 20);
-        assert_eq!(KCG_EVENT_FLAG_MASK_SHIFT,     1u64 << 17);
+        assert_eq!(KCG_EVENT_FLAG_MASK_CONTROL, 1u64 << 18);
+        assert_eq!(KCG_EVENT_FLAG_MASK_COMMAND, 1u64 << 20);
+        assert_eq!(KCG_EVENT_FLAG_MASK_SHIFT, 1u64 << 17);
     }
 }

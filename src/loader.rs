@@ -34,9 +34,7 @@ pub fn load_config() -> Option<LoadedConfig> {
     let (path, source) = match read_first_existing(&config_paths()) {
         Some(found) => found,
         None => {
-            eprintln!(
-                "grinch: no config at ~/.grinch.js or ~/.config/grinch.js — create one"
-            );
+            eprintln!("grinch: no config at ~/.grinch.js or ~/.config/grinch.js — create one");
             return None;
         }
     };
@@ -106,7 +104,9 @@ fn eval(ctx: &JSContext, script: &str) -> Option<Retained<JSValue>> {
 }
 
 fn config_paths() -> Vec<PathBuf> {
-    let Ok(home) = std::env::var("HOME") else { return vec![] };
+    let Ok(home) = std::env::var("HOME") else {
+        return vec![];
+    };
     let home = PathBuf::from(home);
     vec![home.join(".grinch.js"), home.join(".config/grinch.js")]
 }
@@ -119,4 +119,3 @@ fn read_first_existing(paths: &[PathBuf]) -> Option<(PathBuf, String)> {
     }
     None
 }
-

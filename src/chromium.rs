@@ -21,20 +21,23 @@ use std::sync::OnceLock;
 /// Both `is_chromium` (recognise the bundle) and `data_dir` (find Local State)
 /// consult this table; adding a browser in one place picks it up in both.
 const CHROMIUM_FAMILY: &[(&str, &str)] = &[
-    ("com.google.Chrome",            "Google/Chrome"),
-    ("com.google.Chrome.canary",     "Google/Chrome Canary"),
-    ("com.google.Chrome.beta",       "Google/Chrome Beta"),
-    ("com.google.Chrome.dev",        "Google/Chrome Dev"),
-    ("com.brave.Browser",            "BraveSoftware/Brave-Browser"),
-    ("com.brave.Browser.beta",       "BraveSoftware/Brave-Browser-Beta"),
-    ("com.brave.Browser.nightly",    "BraveSoftware/Brave-Browser-Nightly"),
-    ("com.microsoft.edgemac",        "Microsoft Edge"),
-    ("com.microsoft.edgemac.Beta",   "Microsoft Edge Beta"),
-    ("com.microsoft.edgemac.Dev",    "Microsoft Edge Dev"),
-    ("com.vivaldi.Vivaldi",          "Vivaldi"),
-    ("org.chromium.Chromium",        "Chromium"),
-    ("company.thebrowser.Browser",   "Arc/User Data"), // Arc
-    ("com.operasoftware.Opera",      "com.operasoftware.Opera"),
+    ("com.google.Chrome", "Google/Chrome"),
+    ("com.google.Chrome.canary", "Google/Chrome Canary"),
+    ("com.google.Chrome.beta", "Google/Chrome Beta"),
+    ("com.google.Chrome.dev", "Google/Chrome Dev"),
+    ("com.brave.Browser", "BraveSoftware/Brave-Browser"),
+    ("com.brave.Browser.beta", "BraveSoftware/Brave-Browser-Beta"),
+    (
+        "com.brave.Browser.nightly",
+        "BraveSoftware/Brave-Browser-Nightly",
+    ),
+    ("com.microsoft.edgemac", "Microsoft Edge"),
+    ("com.microsoft.edgemac.Beta", "Microsoft Edge Beta"),
+    ("com.microsoft.edgemac.Dev", "Microsoft Edge Dev"),
+    ("com.vivaldi.Vivaldi", "Vivaldi"),
+    ("org.chromium.Chromium", "Chromium"),
+    ("company.thebrowser.Browser", "Arc/User Data"), // Arc
+    ("com.operasoftware.Opera", "com.operasoftware.Opera"),
 ];
 
 pub fn is_chromium(bundle_id: &str) -> bool {

@@ -253,9 +253,7 @@ impl Delegate {
     fn open_config(&self) {
         let path_ref = self.ivars().config_path.borrow();
         let Some(path) = path_ref.as_ref() else {
-            eprintln!(
-                "grinch: no config to open — create ~/.config/grinch.js or ~/.grinch.js"
-            );
+            eprintln!("grinch: no config to open — create ~/.config/grinch.js or ~/.grinch.js");
             return;
         };
         let path_ns = NSString::from_str(&path.to_string_lossy());
@@ -289,7 +287,9 @@ impl Delegate {
 
     fn refresh_start_at_login_check(&self, status: isize) {
         let item_ref = self.ivars().start_at_login_item.borrow();
-        let Some(item) = item_ref.as_ref() else { return };
+        let Some(item) = item_ref.as_ref() else {
+            return;
+        };
         let state = if status == SM_STATUS_ENABLED {
             NS_CONTROL_STATE_VALUE_ON
         } else {
@@ -353,9 +353,7 @@ impl Delegate {
         // (~100–500 µs of LS IPC) and current_modifier_flags() (~100 ns)
         // on top, when the engine's needs_opener / needs_modifiers flags
         // demand them.
-        println!(
-            "Note:      synthetic Opener (pid=0); does not include LaunchServices IPC"
-        );
+        println!("Note:      synthetic Opener (pid=0); does not include LaunchServices IPC");
     }
 
     fn setup_menu_bar(&self) {
@@ -520,7 +518,11 @@ fn sm_register_call(unregister: bool) -> bool {
                 eprintln!("grinch: SMAppService {op} failed");
             } else {
                 let desc: *mut NSString = msg_send![&*error, localizedDescription];
-                let msg = if desc.is_null() { String::from("(no description)") } else { (*desc).to_string() };
+                let msg = if desc.is_null() {
+                    String::from("(no description)")
+                } else {
+                    (*desc).to_string()
+                };
                 eprintln!("grinch: SMAppService {op} failed: {msg}");
             }
         }
@@ -534,4 +536,3 @@ fn sm_open_login_items_settings() {
         let _: () = msg_send![cls, openSystemSettingsLoginItems];
     }
 }
-

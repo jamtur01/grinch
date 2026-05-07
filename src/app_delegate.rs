@@ -99,6 +99,11 @@ define_class!(
             }
             let engine_ref = self.ivars().engine.borrow();
             let Some(engine) = engine_ref.as_ref() else { return };
+            // Opener and modifiers are read once per batch, not per-URL.
+            // openURLs: groups URLs from the same originating event (one
+            // click, one drop, one open-with), so they share an opener and
+            // modifier state by intent. Per-URL re-reads would also race
+            // against the user releasing the key while the batch resolves.
             let opener = if engine.needs_opener() { frontmost_opener() } else { Opener::default() };
             let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
             for i in 0..count {

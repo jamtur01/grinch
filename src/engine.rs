@@ -1019,6 +1019,8 @@ fn pattern_has_protocol_prefix(pat: &str) -> bool {
 
 /// Extract hostname from a URL string without a full URL parser. Returns
 /// lowercased hostname or None. Handles `http(s)://`, `//`, `scheme:host`.
+/// Bracketed IPv6 literals (`[::1]`, `[::1]:8080`) are returned with their
+/// brackets intact, which is also what `domain()` matchers compare against.
 /// Hostnames are ASCII per the URL spec, so we use `to_ascii_lowercase` —
 /// faster than the Unicode-aware `to_lowercase` and good enough.
 #[inline]
@@ -1032,6 +1034,16 @@ pub(crate) fn quick_host(url: &str) -> Option<String> {
     }
     if let Some(at) = s.rfind('@') {
         s = &s[at + 1..];
+    }
+    // IPv6 literal: keep [..] intact, strip only a trailing :port. Doing
+    // rfind(':') unconditionally would slice into the address itself
+    // (`[::1]` → `[:`).
+    if s.starts_with('[') {
+        if let Some(end) = s.find(']') {
+            let host = &s[..end + 1];
+            return if host.len() <= 2 { None } else { Some(host.to_ascii_lowercase()) };
+        }
+        return None;
     }
     if let Some(colon) = s.rfind(':') {
         s = &s[..colon];

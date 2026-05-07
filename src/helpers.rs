@@ -246,6 +246,11 @@ var __grinchModule = { exports: {} };
 "##;
 
 // Wrap user source so module/exports are scoped locally and don't pollute globals.
+//
+// The `{` and the user source share line 1 deliberately: any `\n` between
+// them would push every line of user code down by one in JSC's source map,
+// so an error on user line 5 would be reported as line 6. JS doesn't care
+// whether the brace is on its own line.
 pub fn wrap_user_config(src: &str) -> String {
-    format!("(function(module, exports) {{\n{src}\n}})(__grinchModule, __grinchModule.exports);")
+    format!("(function(module, exports) {{ {src}\n}})(__grinchModule, __grinchModule.exports);")
 }

@@ -25,6 +25,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+          # Full history + all tags so scripts/release-notes.sh can diff
+          # against the previous tag.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Resolve tag and verify Cargo.toml version
         id: meta
@@ -138,12 +142,25 @@ jobs:
           shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
           echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
 
+      - name: Generate release notes from git log
+        id: notes
+        run: |
+          set -euo pipefail
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          ./scripts/release-notes.sh auto "${{ steps.meta.outputs.tag }}" \
+              > "$NOTES_FILE"
+          echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+          # Echo to the run log so it's visible without downloading the file.
+          echo "--- generated notes ---"
+          cat "$NOTES_FILE"
+          echo "--- end ---"
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Grinch ${{ steps.meta.outputs.tag }}
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
           fail_on_unmatched_files: true
           files: |
             ${{ steps.package.outputs.artifact }}

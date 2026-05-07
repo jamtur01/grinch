@@ -1054,7 +1054,9 @@ fn pattern_has_protocol_prefix(pat: &str) -> bool {
 // MARK: - URL utilities (hot-path inline parsing)
 
 /// Extract hostname from a URL string without a full URL parser. Returns
-/// lowercased hostname or None. Handles `http(s)://`, `//`, `scheme:host`.
+/// lowercased hostname or None. Handles fully-qualified URLs (`http(s)://`,
+/// `scheme://host`); protocol-relative `//host` forms aren't supported
+/// because LaunchServices only delivers absolute URLs to URL handlers.
 /// Bracketed IPv6 literals (`[::1]`, `[::1]:8080`) are returned with their
 /// brackets intact, which is also what `domain()` matchers compare against.
 /// Hostnames are ASCII per the URL spec, so we use `to_ascii_lowercase` —
@@ -1242,4 +1244,238 @@ fn iter_object(v: &JSValue) -> Vec<(String, Retained<JSValue>)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------- quick_host --------
+
+    #[test]
+    fn quick_host_basic() {
+        assert_eq!(quick_host("http://example.com/path"), Some("example.com".into()));
+        assert_eq!(quick_host("https://example.com:443/"), Some("example.com".into()));
+        assert_eq!(quick_host("ftp://files.example/x"), Some("files.example".into()));
+    }
+
+    #[test]
+    fn quick_host_strips_userinfo() {
+        assert_eq!(
+            quick_host("https://user:pw@host.example/x"),
+            Some("host.example".into()),
+        );
+        assert_eq!(
+            quick_host("https://user@host.example/x"),
+            Some("host.example".into()),
+        );
+    }
+
+    #[test]
+    fn quick_host_lowercases_ascii() {
+        assert_eq!(quick_host("HTTP://Example.COM/"), Some("example.com".into()));
+    }
+
+    #[test]
+    fn quick_host_query_and_fragment() {
+        assert_eq!(quick_host("https://x.example?a=b"), Some("x.example".into()));
+        assert_eq!(quick_host("https://x.example#frag"), Some("x.example".into()));
+    }
+
+    #[test]
+    fn quick_host_handles_ipv6_literals() {
+        // Regression: the rfind(':') stripper used to chop the colons inside
+        // the brackets, returning "[:" for any [::1]-style URL.
+        assert_eq!(quick_host("http://[::1]/"), Some("[::1]".into()));
+        assert_eq!(quick_host("http://[::1]:8080/path"), Some("[::1]".into()));
+        assert_eq!(
+            quick_host("http://[2001:db8::1]:443/"),
+            Some("[2001:db8::1]".into()),
+        );
+        assert_eq!(
+            quick_host("http://user@[::1]:80/"),
+            Some("[::1]".into()),
+        );
+    }
+
+    #[test]
+    fn quick_host_empty_or_garbage() {
+        assert_eq!(quick_host(""), None);
+        assert_eq!(quick_host("file:///etc/hosts"), None); // empty host
+        assert_eq!(quick_host("http://"), None);
+    }
+
+    // -------- host_matches --------
+
+    #[test]
+    fn host_matches_exact_and_subdomain() {
+        assert!(host_matches("github.com", "github.com"));
+        assert!(host_matches("api.github.com", "github.com"));
+        assert!(host_matches("a.b.github.com", "github.com"));
+    }
+
+    #[test]
+    fn host_matches_rejects_prefix_collisions() {
+        // "notgithub.com" must NOT match pattern "github.com" — the previous
+        // implementation needed a literal dot before the suffix.
+        assert!(!host_matches("notgithub.com", "github.com"));
+        assert!(!host_matches("github.com.evil", "github.com"));
+        assert!(!host_matches("", "github.com"));
+    }
+
+    // -------- strip_params --------
+
+    fn strset<const N: usize>(items: [&str; N]) -> HashSet<String> {
+        items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn strip_params_exact_match() {
+        let r = strip_params(
+            "https://x/?utm_source=a&q=1",
+            &strset(["utm_source"]),
+            &[],
+        );
+        assert_eq!(r.as_deref(), Some("https://x/?q=1"));
+    }
+
+    #[test]
+    fn strip_params_prefix_wildcard() {
+        let r = strip_params(
+            "https://x/?utm_a=1&utm_b=2&keep=ok",
+            &strset([]),
+            &["utm_".to_string()],
+        );
+        assert_eq!(r.as_deref(), Some("https://x/?keep=ok"));
+    }
+
+    #[test]
+    fn strip_params_returns_none_when_unchanged() {
+        // Caller relies on None to skip the rebuild allocation.
+        assert!(strip_params("https://x/?q=1", &strset(["missing"]), &[]).is_none());
+        assert!(strip_params("https://x", &strset(["utm_source"]), &[]).is_none());
+    }
+
+    #[test]
+    fn strip_params_preserves_fragment() {
+        let r = strip_params(
+            "https://x/?utm=1&q=ok#anchor",
+            &strset(["utm"]),
+            &[],
+        );
+        assert_eq!(r.as_deref(), Some("https://x/?q=ok#anchor"));
+    }
+
+    #[test]
+    fn strip_params_when_only_param_is_stripped() {
+        let r = strip_params(
+            "https://x/?utm=1#frag",
+            &strset(["utm"]),
+            &[],
+        );
+        assert_eq!(r.as_deref(), Some("https://x/#frag"));
+    }
+
+    #[test]
+    fn strip_params_handles_value_less_keys() {
+        // `?a&b=1` — `a` has no `=`. Stripping `a` leaves `b=1`.
+        let r = strip_params("https://x/?a&b=1", &strset(["a"]), &[]);
+        assert_eq!(r.as_deref(), Some("https://x/?b=1"));
+    }
+
+    // -------- pattern_has_protocol_prefix --------
+
+    #[test]
+    fn pattern_has_protocol_prefix_recognises_schemes() {
+        assert!(pattern_has_protocol_prefix("slack:"));
+        assert!(pattern_has_protocol_prefix("https://x"));
+        assert!(pattern_has_protocol_prefix("custom_scheme:foo"));
+    }
+
+    #[test]
+    fn pattern_has_protocol_prefix_rejects_non_schemes() {
+        assert!(!pattern_has_protocol_prefix("slack"));
+        assert!(!pattern_has_protocol_prefix(""));
+        assert!(!pattern_has_protocol_prefix(":nocolon-prefix"));
+        assert!(!pattern_has_protocol_prefix("zoom.us/j/*"));
+    }
+
+    // -------- compile_wildcard --------
+
+    fn matches_pat(pat: &str, url: &str) -> bool {
+        let re = compile_wildcard(pat).unwrap_or_else(|| panic!("compile failed: {pat}"));
+        re.is_match(url)
+    }
+
+    #[test]
+    fn wildcard_bare_hostname_pattern() {
+        // The Finicky-style protocol prefix is auto-prepended.
+        assert!(matches_pat("zoom.us/j/*", "https://zoom.us/j/123"));
+        assert!(matches_pat("zoom.us/j/*", "zoom.us/j/123"));
+        assert!(!matches_pat("zoom.us/j/*", "https://other.com/zoom.us/j/123"));
+    }
+
+    #[test]
+    fn wildcard_subdomain_star() {
+        assert!(matches_pat("*.zoom.us/j/*", "https://x.zoom.us/j/y"));
+        // Bare zoom.us shouldn't match the *. variant.
+        assert!(!matches_pat("*.zoom.us/j/*", "https://zoom.us/j/y"));
+    }
+
+    #[test]
+    fn wildcard_protocol_anchored() {
+        assert!(matches_pat("slack:*", "slack://channel?team=foo"));
+        assert!(matches_pat("mailto:*", "mailto:a@b.example"));
+        // http: pattern shouldn't match https URLs.
+        assert!(!matches_pat("http://example.com/*", "https://example.com/x"));
+    }
+
+    #[test]
+    fn wildcard_escaped_asterisk_is_literal() {
+        // \* must match a literal *, not act as a wildcard.
+        assert!(matches_pat(r"foo\*bar", "foo*bar"));
+        assert!(!matches_pat(r"foo\*bar", "fooXbar"));
+    }
+
+    #[test]
+    fn wildcard_match_all() {
+        assert!(matches_pat("*", "https://anything.example/at/all"));
+        assert!(matches_pat("*", ""));
+    }
+
+    #[test]
+    fn wildcard_case_insensitive() {
+        assert!(matches_pat("zoom.us/j/*", "HTTPS://ZOOM.US/J/abc"));
+    }
+
+    // -------- analyse_runtime_needs --------
+
+    fn rule_with_matchers(ms: Vec<Matcher>) -> Rule {
+        Rule {
+            matchers: ms,
+            rewriter: None,
+            target: Target::Suppress,
+        }
+    }
+
+    #[test]
+    fn analyse_needs_empty() {
+        assert_eq!(analyse_runtime_needs(&[], &[]), (false, false));
+    }
+
+    #[test]
+    fn analyse_needs_declarative_only_is_false() {
+        let rules = vec![
+            rule_with_matchers(vec![Matcher::Always]),
+            rule_with_matchers(vec![Matcher::Domain(vec!["x".into()])]),
+            rule_with_matchers(vec![Matcher::Running(vec!["app".into()])]),
+        ];
+        assert_eq!(analyse_runtime_needs(&[], &rules), (false, false));
+    }
+
+    #[test]
+    fn analyse_needs_from_requires_opener_only() {
+        let rules = vec![rule_with_matchers(vec![Matcher::From(vec!["x".into()])])];
+        assert_eq!(analyse_runtime_needs(&[], &rules), (true, false));
+    }
 }

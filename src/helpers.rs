@@ -182,24 +182,30 @@ function strip() {
 // User code that needs the *current* URL should read it from the first
 // argument (a URL instance), which is rebuilt per fn call.
 //
-// opener.windowTitle is a getter (lazy): only fetched when user code reads
-// it. The fetch is a ~5ms XPC call into the opener app via the Accessibility
-// API, so we never pay for it unless a rule's matcher actually accesses it.
+// opener.windowTitle is a getter on Opener.prototype (lazy): the fetch is a
+// ~5 ms XPC call into the opener app via the Accessibility API, so we never
+// pay for it unless a rule's matcher actually reads ctx.opener.windowTitle.
+// Defining it on the prototype rather than per-instance avoids a
+// per-resolve Object.defineProperty call.
+function __grinchOpener(bundleId, name, path) {
+  this.bundleId = bundleId;
+  this.name = name;
+  this.path = path;
+}
+Object.defineProperty(__grinchOpener.prototype, "windowTitle", {
+  get: function() {
+    // Installed by Rust at engine init; calls back into workspace::frontmost_window_title.
+    return (typeof __grinchFetchWindowTitle === "function") ? __grinchFetchWindowTitle() : "";
+  },
+  enumerable: true,
+});
+
 function __grinchMakeCtx(url, openerBundleId, openerName, openerPath, shift, option, command, control) {
-  var modifiers = { shift: shift, option: option, command: command, control: control };
-  var opener = { bundleId: openerBundleId, name: openerName, path: openerPath };
-  Object.defineProperty(opener, "windowTitle", {
-    get: function() {
-      // Installed by Rust at engine init; calls back into workspace::frontmost_window_title.
-      return (typeof __grinchFetchWindowTitle === "function") ? __grinchFetchWindowTitle() : "";
-    },
-    enumerable: true,
-  });
   return {
     url: url,
     originalUrl: url,
-    opener: opener,
-    modifiers: modifiers,
+    opener: new __grinchOpener(openerBundleId, openerName, openerPath),
+    modifiers: { shift: shift, option: option, command: command, control: control },
   };
 }
 

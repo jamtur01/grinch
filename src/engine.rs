@@ -192,6 +192,14 @@ pub struct Engine {
     /// fns can read ctx.modifiers). AppDelegate skips
     /// current_modifier_flags() when this is false.
     needs_modifiers: bool,
+    /// Cached JSValue strings for opener fields (bundleId / name / path).
+    /// Most clicks come from the same handful of openers (Mail, Slack,
+    /// Outlook…), and the JSC bridge crossing for NSString::from_str +
+    /// JSValue::valueWithObject is ~500 ns per call. Caching by Rust string
+    /// turns repeated builds into a refcount bump on the cached `Retained`.
+    /// Reset implicitly when Engine is rebuilt on config reload — the
+    /// JSContext goes with it, taking the cached JSValues along.
+    opener_str_cache: RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
 }
 
 #[derive(Debug)]
@@ -274,6 +282,7 @@ impl Engine {
             url_ctor,
             needs_opener,
             needs_modifiers,
+            opener_str_cache: RefCell::new(std::collections::HashMap::new()),
         })
     }
 
@@ -309,6 +318,7 @@ impl Engine {
             &self.rewrite_result_helper,
             &self.make_ctx_helper,
             &self.url_ctor,
+            &self.opener_str_cache,
             opener,
             modifiers,
             url_string,
@@ -467,6 +477,9 @@ struct ResolveCtx<'a> {
     rewrite_result_helper: &'a JSValue,
     make_ctx_helper: &'a JSValue,
     url_ctor: &'a JSValue,
+    /// Cached opener-field JSValues (bundleId/name/path → cached
+    /// `Retained<JSValue>`). Lives on Engine; we only borrow it.
+    opener_str_cache: &'a RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
     opener: &'a Opener,
     modifiers: ModifierFlags,
     /// Per-resolve cache for `running()` matchers. Built lazily on first
@@ -503,6 +516,7 @@ impl<'a> ResolveCtx<'a> {
         rewrite_result_helper: &'a JSValue,
         make_ctx_helper: &'a JSValue,
         url_ctor: &'a JSValue,
+        opener_str_cache: &'a RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
         opener: &'a Opener,
         modifiers: ModifierFlags,
         original_url: &'a str,
@@ -512,6 +526,7 @@ impl<'a> ResolveCtx<'a> {
             rewrite_result_helper,
             make_ctx_helper,
             url_ctor,
+            opener_str_cache,
             opener,
             modifiers,
             running_cache: RefCell::new(None),
@@ -541,6 +556,7 @@ impl<'a> ResolveCtx<'a> {
         let v = build_ctx_object(
             self.ctx,
             self.make_ctx_helper,
+            self.opener_str_cache,
             self.original_url,
             self.opener,
             self.modifiers,
@@ -666,14 +682,18 @@ fn build_url_instance(url_ctor: &JSValue, ctx: &JSContext, url: &str) -> Retaine
 fn build_ctx_object(
     ctx: &JSContext,
     helper: &JSValue,
+    opener_str_cache: &RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
     url: &str,
     opener: &Opener,
     m: ModifierFlags,
 ) -> Option<Retained<JSValue>> {
+    // URL changes per resolve (or per rewrite); not worth caching across
+    // resolves. Opener fields stabilise — same Mail / Slack / Outlook over
+    // and over — so they go through the engine's cache.
     let url_v = js_string(ctx, url);
-    let opener_id_v = js_string(ctx, &opener.bundle_id);
-    let opener_name_v = js_string(ctx, &opener.name);
-    let opener_path_v = js_string(ctx, &opener.path);
+    let opener_id_v = cached_js_string(ctx, opener_str_cache, &opener.bundle_id);
+    let opener_name_v = cached_js_string(ctx, opener_str_cache, &opener.name);
+    let opener_path_v = cached_js_string(ctx, opener_str_cache, &opener.path);
     let shift_v = js_bool(ctx, m.shift);
     let option_v = js_bool(ctx, m.option);
     let command_v = js_bool(ctx, m.command);
@@ -1281,6 +1301,23 @@ fn js_string(ctx: &JSContext, s: &str) -> Retained<JSValue> {
     let any: &AnyObject = &ns;
     unsafe { JSValue::valueWithObject_inContext(Some(any), Some(ctx)) }
         .expect("valueWithObject returned null")
+}
+
+/// Cached `js_string` keyed by the Rust `&str`. Cache hit returns a
+/// refcount bump; miss allocates the JSValue and stores it. Used for
+/// strings that repeat across resolves (opener fields), not per-call
+/// inputs (URL).
+fn cached_js_string(
+    ctx: &JSContext,
+    cache: &RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
+    s: &str,
+) -> Retained<JSValue> {
+    if let Some(v) = cache.borrow().get(s) {
+        return v.clone();
+    }
+    let v = js_string(ctx, s);
+    cache.borrow_mut().insert(s.to_string(), v.clone());
+    v
 }
 
 fn js_bool(ctx: &JSContext, b: bool) -> Retained<JSValue> {

@@ -192,6 +192,11 @@ pub struct Engine {
     /// fns can read ctx.modifiers). AppDelegate skips
     /// current_modifier_flags() when this is false.
     needs_modifiers: bool,
+    /// True if any rule uses `domain()` or a bare-hostname matcher. When
+    /// false, `quick_host` (lowercased hostname extract) is skipped on every
+    /// resolve — saves ~30-50 ns for configs that route purely on regex /
+    /// wildcard / fn matchers.
+    needs_host: bool,
     /// Cached JSValue strings for opener fields (bundleId / name / path).
     /// Most clicks come from the same handful of openers (Mail, Slack,
     /// Outlook…), and the JSC bridge crossing for NSString::from_str +
@@ -269,7 +274,7 @@ impl Engine {
             .map(|arr| parse_rule_array(&arr, &browsers, &regexp_ctor, &function_ctor))
             .unwrap_or_default();
 
-        let (needs_opener, needs_modifiers) = analyse_runtime_needs(&rewrites, &rules);
+        let needs = analyse_runtime_needs(&rewrites, &rules);
 
         Ok(Self {
             default_browser,
@@ -280,8 +285,9 @@ impl Engine {
             rewrite_result_helper,
             make_ctx_helper,
             url_ctor,
-            needs_opener,
-            needs_modifiers,
+            needs_opener: needs.opener,
+            needs_modifiers: needs.modifiers,
+            needs_host: needs.host,
             opener_str_cache: RefCell::new(std::collections::HashMap::new()),
         })
     }
@@ -312,7 +318,9 @@ impl Engine {
         // Borrow until a rewrite fires; then own. Saves one heap allocation
         // on every resolve that doesn't rewrite the URL.
         let mut current: Cow<'u, str> = Cow::Borrowed(url_string);
-        let mut host = quick_host(&current);
+        // quick_host allocates a lowercased String; skip it entirely when
+        // the config has no host-using matchers (regex/wildcard/fn-only).
+        let mut host = if self.needs_host { quick_host(&current) } else { None };
         let rc = ResolveCtx::new(
             &self.ctx,
             &self.rewrite_result_helper,
@@ -330,7 +338,7 @@ impl Engine {
                 match apply_rewrite(&rw.rewriter, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
                         current = Cow::Owned(s);
-                        host = quick_host(&current);
+                        host = if self.needs_host { quick_host(&current) } else { None };
                     }
                     RewriteOutcome::Unchanged => {}
                     RewriteOutcome::Drop => return suppressed(),
@@ -349,7 +357,7 @@ impl Engine {
                 match apply_rewrite(rw, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
                         current = Cow::Owned(s);
-                        host = quick_host(&current);
+                        host = if self.needs_host { quick_host(&current) } else { None };
                     }
                     RewriteOutcome::Unchanged => {}
                     RewriteOutcome::Drop => return suppressed(),
@@ -401,66 +409,67 @@ enum RewriteOutcome {
 /// calling resolve(). Conservative: any fn variant counts (we can't
 /// statically inspect what a JS function reads), and Matcher::From
 /// requires opener.bundle_id specifically.
-fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> (bool, bool) {
+#[derive(Debug, PartialEq, Eq)]
+struct RuntimeNeeds {
+    opener: bool,
+    modifiers: bool,
+    host: bool,
+}
+
+fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> RuntimeNeeds {
     // Only fns that declare a second arg can read ctx, so they're the only
     // ones that force us to populate opener + modifiers. A url-only fn
     // (`(url) => …`) sees `undefined` if we pass it nothing for ctx, so
     // skipping the opener IPC is safe.
-    fn matchers_need(ms: &[Matcher]) -> (bool, bool) {
-        let mut o = false;
-        let mut m = false;
+    //
+    // `host` is needed only by Matcher::Domain (the bare-hostname / domain()
+    // path). Regex/wildcard matchers regex against the full URL string and
+    // never look at the host slot.
+    fn matchers_need(ms: &[Matcher], n: &mut RuntimeNeeds) {
         for matcher in ms {
             match matcher {
-                Matcher::From(_) => o = true,
+                Matcher::From(_) => n.opener = true,
                 Matcher::Fn(uf) if uf.needs_ctx => {
-                    o = true;
-                    m = true;
+                    n.opener = true;
+                    n.modifiers = true;
                 }
+                Matcher::Domain(_) => n.host = true,
                 Matcher::Always
                 | Matcher::Regex(_)
-                | Matcher::Domain(_)
                 | Matcher::Running(_)
                 | Matcher::Fn(_) => {}
             }
         }
-        (o, m)
     }
-    fn rewriter_needs(r: &Rewriter) -> (bool, bool) {
-        match r {
-            Rewriter::Fn(uf) if uf.needs_ctx => (true, true),
-            _ => (false, false),
-        }
-    }
-
-    let mut needs_opener = false;
-    let mut needs_modifiers = false;
-
-    for rw in rewrites {
-        let (o, m) = matchers_need(&rw.matchers);
-        needs_opener |= o;
-        needs_modifiers |= m;
-        let (o, m) = rewriter_needs(&rw.rewriter);
-        needs_opener |= o;
-        needs_modifiers |= m;
-    }
-    for rule in rules {
-        let (o, m) = matchers_need(&rule.matchers);
-        needs_opener |= o;
-        needs_modifiers |= m;
-        if let Some(rw) = &rule.rewriter {
-            let (o, m) = rewriter_needs(rw);
-            needs_opener |= o;
-            needs_modifiers |= m;
-        }
-        if let Target::Fn(uf) = &rule.target {
+    fn rewriter_needs(r: &Rewriter, n: &mut RuntimeNeeds) {
+        if let Rewriter::Fn(uf) = r {
             if uf.needs_ctx {
-                needs_opener = true;
-                needs_modifiers = true;
+                n.opener = true;
+                n.modifiers = true;
             }
         }
     }
 
-    (needs_opener, needs_modifiers)
+    let mut n = RuntimeNeeds { opener: false, modifiers: false, host: false };
+
+    for rw in rewrites {
+        matchers_need(&rw.matchers, &mut n);
+        rewriter_needs(&rw.rewriter, &mut n);
+    }
+    for rule in rules {
+        matchers_need(&rule.matchers, &mut n);
+        if let Some(rw) = &rule.rewriter {
+            rewriter_needs(rw, &mut n);
+        }
+        if let Target::Fn(uf) = &rule.target {
+            if uf.needs_ctx {
+                n.opener = true;
+                n.modifiers = true;
+            }
+        }
+    }
+
+    n
 }
 
 fn suppressed() -> Resolution<'static> {
@@ -1586,22 +1595,39 @@ mod tests {
 
     #[test]
     fn analyse_needs_empty() {
-        assert_eq!(analyse_runtime_needs(&[], &[]), (false, false));
+        assert_eq!(
+            analyse_runtime_needs(&[], &[]),
+            RuntimeNeeds { opener: false, modifiers: false, host: false },
+        );
     }
 
     #[test]
-    fn analyse_needs_declarative_only_is_false() {
+    fn analyse_needs_declarative_only() {
         let rules = vec![
             rule_with_matchers(vec![Matcher::Always]),
-            rule_with_matchers(vec![Matcher::Domain(vec!["x".into()])]),
             rule_with_matchers(vec![Matcher::Running(vec!["app".into()])]),
         ];
-        assert_eq!(analyse_runtime_needs(&[], &rules), (false, false));
+        assert_eq!(
+            analyse_runtime_needs(&[], &rules),
+            RuntimeNeeds { opener: false, modifiers: false, host: false },
+        );
+    }
+
+    #[test]
+    fn analyse_needs_domain_sets_host_only() {
+        let rules = vec![rule_with_matchers(vec![Matcher::Domain(vec!["x".into()])])];
+        assert_eq!(
+            analyse_runtime_needs(&[], &rules),
+            RuntimeNeeds { opener: false, modifiers: false, host: true },
+        );
     }
 
     #[test]
     fn analyse_needs_from_requires_opener_only() {
         let rules = vec![rule_with_matchers(vec![Matcher::From(vec!["x".into()])])];
-        assert_eq!(analyse_runtime_needs(&[], &rules), (true, false));
+        assert_eq!(
+            analyse_runtime_needs(&[], &rules),
+            RuntimeNeeds { opener: true, modifiers: false, host: false },
+        );
     }
 }

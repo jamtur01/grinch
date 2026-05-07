@@ -113,11 +113,11 @@ struct RewriteRule {
 ///
 /// **Thread safety**: `Engine` is intentionally not `Send` or `Sync`. It uses
 /// `RefCell` and `Rc` for cheap interior mutability and refcount bumps
-/// (see `running_cache`, `default_browser`, `Rule.target`). The engine is
-/// only ever exercised on the main run loop (Apple Event dispatch is
-/// main-thread-only on macOS), and `CURRENT_OPENER_PID` likewise assumes
-/// a single in-flight resolve. Don't try to call `.resolve()` from a
-/// background thread — it'll fail to compile.
+/// (see `default_browser`, `Rule.target`). The engine is only ever
+/// exercised on the main run loop (Apple Event dispatch is main-thread-only
+/// on macOS), and `CURRENT_OPENER_PID` likewise assumes a single in-flight
+/// resolve. Don't try to call `.resolve()` from a background thread — it'll
+/// fail to compile.
 pub struct Engine {
     default_browser: Rc<BrowserSpec>,
     browsers: std::collections::HashMap<String, Rc<BrowserSpec>>,
@@ -135,7 +135,6 @@ pub struct Engine {
     /// Cached `URL` constructor — used to build URL instances for the first
     /// arg of user fn predicates/rewrites (Finicky-compatible signature).
     url_ctor: Retained<JSValue>,
-    running_cache: RefCell<Option<HashSet<String>>>,
     /// True if any rule reads opener (via `from()` matcher or any user fn
     /// predicate/rewrite/target — fns might dereference ctx.opener).
     /// AppDelegate skips frontmost_opener() when this is false, saving 4
@@ -213,7 +212,6 @@ impl Engine {
             rewrite_result_helper,
             make_ctx_helper,
             url_ctor,
-            running_cache: RefCell::new(None),
             needs_opener,
             needs_modifiers,
         })
@@ -244,7 +242,6 @@ impl Engine {
             &self.rewrite_result_helper,
             &self.make_ctx_helper,
             &self.url_ctor,
-            &self.running_cache,
             opener,
             modifiers,
             url_string,
@@ -398,7 +395,11 @@ struct ResolveCtx<'a> {
     url_ctor: &'a JSValue,
     opener: &'a Opener,
     modifiers: ModifierFlags,
-    running_cache: &'a RefCell<Option<HashSet<String>>>,
+    /// Per-resolve cache for `running()` matchers. Built lazily on first
+    /// `running_apps()` access, dropped at end of resolve. Lifetime-of-Engine
+    /// caching looked tempting but goes stale — apps start/quit between
+    /// clicks and `running()` would lie until the next config reload.
+    running_cache: RefCell<Option<HashSet<String>>>,
     /// URL passed to resolve() — exposed to user fns as `ctx.url` /
     /// `ctx.originalUrl`. Stays constant for the entire resolve even if
     /// rewrites fire; user code reads the *current* URL via the first arg.
@@ -420,7 +421,6 @@ impl<'a> ResolveCtx<'a> {
         rewrite_result_helper: &'a JSValue,
         make_ctx_helper: &'a JSValue,
         url_ctor: &'a JSValue,
-        running_cache: &'a RefCell<Option<HashSet<String>>>,
         opener: &'a Opener,
         modifiers: ModifierFlags,
         original_url: &'a str,
@@ -432,7 +432,7 @@ impl<'a> ResolveCtx<'a> {
             url_ctor,
             opener,
             modifiers,
-            running_cache,
+            running_cache: RefCell::new(None),
             original_url,
             cached_ctx: RefCell::new(None),
             fn_args_cache: RefCell::new(None),

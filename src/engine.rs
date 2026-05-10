@@ -1161,6 +1161,39 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
 
 /// Parse a JS browser spec (string | object). Resolves app names to bundle
 /// IDs; expands the `profile` shorthand for Chromium-family browsers.
+/// Translate a (bundle_id, profile-name) pair into the launch args the
+/// browser actually understands:
+///
+///   - Chromium family → `["--profile-directory=<dir>"]`, where `<dir>`
+///     is the on-disk directory key. The user can supply either the
+///     directory ("Profile 10") or the display name ("Work"); we resolve
+///     through Local State.
+///   - Firefox family  → `["-P", "<name>"]`. Firefox's profile name is
+///     end-to-end the same string the user wrote; we just validate it's
+///     known so an unrecognised name doesn't silently open the profile-
+///     manager UI.
+///   - Anything else   → `None` (caller logs a warning).
+///
+/// Returns `Some(args)` on a recognised family, `None` otherwise. The
+/// caller is responsible for setting `creates_new_instance: true` when
+/// using the returned args — without that, an already-running browser
+/// instance would route the URL into its current window and ignore the
+/// profile flag.
+fn expand_profile_args(bundle_id: &str, profile: &str) -> Option<Vec<String>> {
+    if profile.is_empty() {
+        return None;
+    }
+    if crate::chromium::is_chromium(bundle_id) {
+        let dir = crate::chromium::resolve_profile_dir(bundle_id, profile);
+        return Some(vec![format!("--profile-directory={dir}")]);
+    }
+    if crate::firefox::is_firefox(bundle_id) {
+        let name = crate::firefox::resolve_profile_name(bundle_id, profile);
+        return Some(vec!["-P".to_string(), name]);
+    }
+    None
+}
+
 fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
     if unsafe { v.isString() } {
         let s = js_to_string(v).unwrap_or_default();
@@ -1176,21 +1209,18 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
                 let (name, rest) = s.split_at(idx);
                 let profile = &rest[1..]; // skip the ':' itself
                 let bundle_id = resolve_browser_identifier(name);
-                if !profile.is_empty() && crate::chromium::is_chromium(&bundle_id) {
-                    let dir = crate::chromium::resolve_profile_dir(&bundle_id, profile);
+                if let Some(args) = expand_profile_args(&bundle_id, profile) {
                     return BrowserSpec {
                         bundle_id,
-                        args: vec![format!("--profile-directory={dir}")],
+                        args,
                         open_in_background: false,
                         creates_new_instance: true,
                     };
                 }
-                // Non-Chromium with a profile suffix: warn and fall back
-                // to the bare name (matches the object-form behaviour).
                 if !profile.is_empty() {
                     eprintln!(
-                        "grinch: ignoring `:profile` shorthand for non-Chromium browser \
-                         {bundle_id} (input was {s:?})"
+                        "grinch: ignoring `:profile` shorthand for unrecognised browser \
+                         family {bundle_id} (input was {s:?}; supported: Chromium, Firefox)"
                     );
                 }
                 return BrowserSpec::from_bundle_id(bundle_id);
@@ -1239,21 +1269,19 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
         .unwrap_or_default();
     let mut creates_new_instance = false;
 
-    // Chromium-family `profile` field: expand to --profile-directory=<dir>.
-    // `profile` may be either the on-disk directory name ("Profile 10") or
-    // the user-facing display name ("Convergint") — we resolve through
-    // Chrome's Local State to make both work.
+    // `profile` field: expand to launch args appropriate for the browser
+    // family — `--profile-directory=<dir>` for Chromium, `-P <name>` for
+    // Firefox. Forces `creates_new_instance` so an already-running
+    // browser doesn't route the URL into its current window and ignore
+    // the profile flag.
     if let Some(profile) = key(v, "profile").and_then(|p| js_to_string(&p)) {
-        if !profile.is_empty() && crate::chromium::is_chromium(&bundle_id) {
-            let dir = crate::chromium::resolve_profile_dir(&bundle_id, &profile);
-            args.push(format!("--profile-directory={dir}"));
-            // When a profile is requested we MUST spawn a new application
-            // instance — without this, an already-running Chrome routes the
-            // URL into its active window and ignores the profile flag.
+        if let Some(profile_args) = expand_profile_args(&bundle_id, &profile) {
+            args.extend(profile_args);
             creates_new_instance = true;
         } else if !profile.is_empty() {
             eprintln!(
-                "grinch: ignoring `profile` for non-Chromium browser {bundle_id} (profile = {profile})"
+                "grinch: ignoring `profile` for unrecognised browser family \
+                 {bundle_id} (profile = {profile}; supported: Chromium, Firefox)"
             );
         }
     }
@@ -3162,6 +3190,29 @@ mod integration_tests {
     fn browser_spec_string_with_no_colon_unchanged() {
         let e = build_engine(r#"module.exports = { default: "com.google.Chrome" };"#);
         assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn parse_browser_jsval_firefox_profile_resolves_via_p_flag() {
+        // Firefox-family bundle with a profile string should produce
+        // `-P <name>` args, not `--profile-directory=…`. We can't easily
+        // observe the args without a real BrowserSpec accessor, but we
+        // can at least check the engine accepts the config without
+        // erroring (Firefox profile validation logs to stderr if the
+        // name is unknown but doesn't fail the load).
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "org.mozilla.firefox", profile: "Work" },
+            };"#,
+        );
+        // Bundle ID survives unchanged.
+        assert_eq!(resolve(&e, "https://x/").0, "org.mozilla.firefox");
+    }
+
+    #[test]
+    fn parse_browser_jsval_firefox_profile_via_shorthand_string() {
+        let e = build_engine(r#"module.exports = { default: "org.mozilla.firefox:Work" };"#);
+        assert_eq!(resolve(&e, "https://x/").0, "org.mozilla.firefox");
     }
 
     #[test]

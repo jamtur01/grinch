@@ -113,9 +113,9 @@ A browser is one of:
 |---|---|
 | `"Google Chrome"` | App display name; Grinch resolves to bundle ID at config-load |
 | `"com.google.Chrome"` | Bundle ID (any reverse-DNS string is treated as one) |
-| `"Google Chrome:Work"` | `Name:Profile` shorthand (Finicky-compatible) — splits on the first `:`, expands the suffix to `--profile-directory=Work` for Chromium-family browsers. Only applied to literal config strings; fn-returned strings are treated opaquely |
+| `"Google Chrome:Work"` | `Name:Profile` shorthand (Finicky-compatible) — splits on the first `:`, expands the suffix to `--profile-directory=Work` (Chromium) or `-P Work` (Firefox). Only applied to literal config strings; fn-returned strings are treated opaquely |
 | `{ name: "..." }` | Same as a bare string |
-| `{ name: "Google Chrome", profile: "Work" }` | Chromium profile shorthand — expanded to `--profile-directory=Work` for Chromium-family bundle IDs |
+| `{ name: "Google Chrome", profile: "Work" }` | Profile shorthand — expanded to `--profile-directory=Work` (Chromium-family) or `-P Work` (Firefox-family) |
 | `{ name: "...", args: ["--incognito"] }` | Bundle ID + extra launch args |
 | `{ name: "...", openInBackground: true }` | Don't activate (keep focus where it is) |
 | `{ name: "/Applications/Foo.app", appType: "path" }` | Path to an `.app` bundle — Grinch reads `CFBundleIdentifier` directly. Useful for browsers outside `/Applications` or not registered with LaunchServices |
@@ -124,9 +124,14 @@ A browser is one of:
 | `(url, ctx) => "..."` | Dynamic — return any of the above. Works for `defaultBrowser` too (Finicky-compatible): a fn default is invoked at resolve time when no rule matched |
 | `null` | Suppress: do nothing |
 
-The `profile` shorthand is auto-expanded for: Chrome, Brave, Edge, Vivaldi,
-Arc, Opera, Chromium. For other apps it's silently dropped with a load-time
-warning.
+The `profile` shorthand is auto-expanded for the Chromium family (Chrome,
+Brave, Edge, Vivaldi, Arc, Opera, Chromium) and the Firefox family
+(Firefox, Firefox Developer Edition, Firefox Nightly, Waterfox, LibreWolf).
+Chromium profiles can be referenced by either their on-disk directory
+("Profile 10") or their display name ("Work") — Grinch resolves through
+Chrome's `Local State`. Firefox profiles use the name from `profiles.ini`;
+unknown names log a warning naming the known profiles. Other browsers'
+`profile` is silently dropped with a load-time warning.
 
 You can predefine browsers in a top-level `browsers` map:
 

@@ -5,6 +5,7 @@ use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 mod app_delegate;
 mod chromium;
 mod engine;
+mod firefox;
 mod helpers;
 mod loader;
 mod workspace;

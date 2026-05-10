@@ -25,10 +25,13 @@ const browsers = {
   // { name: "Google Chrome", profile: "Work" }.
   workShort: "Google Chrome:Work",
 
-  // Chromium `profile` shorthand → --profile-directory=<name>. Recognised for
-  // Chrome, Brave, Edge, Vivaldi, Arc, Opera, Chromium.
+  // `profile` shorthand. Chromium-family expands to --profile-directory=<dir>;
+  // Firefox-family expands to -P <name>. Recognised for Chrome, Brave, Edge,
+  // Vivaldi, Arc, Opera, Chromium (Chromium family) and Firefox, Firefox
+  // Developer Edition, Firefox Nightly, Waterfox, LibreWolf (Firefox family).
   personal: { name: "Google Chrome", profile: "Personal" },
   work: { name: "Google Chrome", profile: "Work" },
+  firefoxWork: { name: "org.mozilla.firefox", profile: "Work" },
 
   // Custom launch args.
   incognito: { name: "Google Chrome", args: ["--incognito"] },

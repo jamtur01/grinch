@@ -1742,3 +1742,658 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    //! End-to-end tests that build a real `Engine` from a JS config string,
+    //! then exercise `resolve()` with synthetic openers and modifiers. The
+    //! fixture (`build_engine`) creates a fresh `JSContext` per test so
+    //! parallel test execution doesn't share JS-side state.
+    //!
+    //! These tests cover the parse + resolve pipeline (matchers, rewriters,
+    //! targets, browser specs, ctx semantics, URL polyfill, fn-arity skip)
+    //! that the pure-Rust unit tests in `mod tests` above can't reach
+    //! without a JSC fixture.
+    use super::*;
+    use crate::helpers::{wrap_user_config, JS_PRELUDE};
+    use crate::loader::LoadedConfig;
+    use crate::workspace::Opener;
+
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSString;
+    use objc2_javascript_core::JSContext;
+
+    /// Build an `Engine` from a JS config source. Each call gets its own
+    /// `JSContext` (and its own JavaScriptCore VM) so two parallel tests
+    /// can't see each other's globals. Panics on any JSC error — caller's
+    /// job to keep the synthetic config valid.
+    fn build_engine(user_src: &str) -> Engine {
+        let ctx: Retained<JSContext> = unsafe { JSContext::new() };
+
+        let prelude_ns = NSString::from_str(JS_PRELUDE);
+        unsafe { ctx.evaluateScript(Some(&prelude_ns)) }.expect("prelude evaluation returned null");
+
+        let wrapped = wrap_user_config(user_src);
+        let wrapped_ns = NSString::from_str(&wrapped);
+        unsafe { ctx.evaluateScript(Some(&wrapped_ns)) }
+            .expect("user config evaluation returned null");
+
+        let module_key = NSString::from_str("__grinchModule");
+        let module_ref: &AnyObject = &module_key;
+        let module = unsafe { ctx.objectForKeyedSubscript(Some(module_ref)) }
+            .expect("__grinchModule missing from global");
+        let exports_key = NSString::from_str("exports");
+        let exports_ref: &AnyObject = &exports_key;
+        let exports = unsafe { module.objectForKeyedSubscript(Some(exports_ref)) }
+            .expect("__grinchModule.exports missing");
+
+        Engine::new(LoadedConfig { exports, ctx }).expect("engine init failed")
+    }
+
+    /// Synthetic opener for tests. `pid = 0` short-circuits any AX/IPC
+    /// lookups (see `frontmost_window_title`) so tests stay hermetic.
+    fn opener(bundle_id: &str, name: &str) -> Opener {
+        Opener {
+            bundle_id: bundle_id.to_string(),
+            name: name.to_string(),
+            path: String::new(),
+            pid: 0,
+        }
+    }
+
+    /// Resolve and return `(browser_bundle_id, final_url)` so tests can
+    /// assert on plain strings.
+    fn resolve(engine: &Engine, url: &str) -> (String, String) {
+        let res = engine.resolve(url, &Opener::default(), ModifierFlags::default());
+        (res.browser.bundle_id.clone(), res.url.into_owned())
+    }
+
+    fn resolve_with(
+        engine: &Engine,
+        url: &str,
+        opener: &Opener,
+        modifiers: ModifierFlags,
+    ) -> (String, String) {
+        let res = engine.resolve(url, opener, modifiers);
+        (res.browser.bundle_id.clone(), res.url.into_owned())
+    }
+
+    // ---------- Engine end-to-end ----------
+
+    #[test]
+    fn default_browser_fires_when_no_rules() {
+        let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
+        let (browser, url) = resolve(&e, "https://example.com/");
+        assert_eq!(browser, "com.apple.Safari");
+        assert_eq!(url, "https://example.com/");
+    }
+
+    #[test]
+    fn defaultbrowser_alias_works() {
+        // Finicky-style key name should be accepted as well.
+        let e = build_engine(r#"module.exports = { defaultBrowser: "com.apple.Safari" };"#);
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn handlers_alias_for_rules() {
+        // Finicky's `handlers` should be accepted as a synonym for `rules`.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                handlers: [{ match: "x", open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn first_matching_rule_wins() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [
+                    { match: "github.com", open: "com.google.Chrome" },
+                    { match: "github.com", open: "com.apple.Mail" },
+                ],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn falls_through_to_default_when_no_rule_matches() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: "github.com", open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://example.com/").0, "com.apple.Safari");
+    }
+
+    // ---------- compile_matcher per variant ----------
+
+    #[test]
+    fn matcher_bare_hostname_matches_subdomain() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: "github.com", open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        assert_eq!(
+            resolve(&e, "https://api.github.com/").0,
+            "com.google.Chrome"
+        );
+        assert_eq!(resolve(&e, "https://other.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_domain_helper_handles_multiple_hosts() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: domain("github.com", "gitlab.com"),
+                          open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://x.gitlab.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://other.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_regex_against_full_url() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: /github\.com\/(paymentology|tutuka)\//,
+                          open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(
+            resolve(&e, "https://github.com/paymentology/grinch").0,
+            "com.google.Chrome"
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_wildcard_with_implicit_protocol_prefix() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: "zoom.us/j/*", open: "us.zoom.xos" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://zoom.us/j/123").0, "us.zoom.xos");
+        assert_eq!(resolve(&e, "zoom.us/j/123").0, "us.zoom.xos");
+        assert_eq!(resolve(&e, "https://other.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_from_reads_opener_bundle_id() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: from("com.tinyspeck.slackmacgap"),
+                          open: "com.google.Chrome" }],
+            };"#,
+        );
+        let slack = opener("com.tinyspeck.slackmacgap", "Slack");
+        let (browser, _) = resolve_with(&e, "https://x/", &slack, ModifierFlags::default());
+        assert_eq!(browser, "com.google.Chrome");
+
+        let mail = opener("com.apple.Mail", "Mail");
+        let (browser, _) = resolve_with(&e, "https://x/", &mail, ModifierFlags::default());
+        assert_eq!(browser, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_array_is_or() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: ["github.com", "gitlab.com"],
+                          open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://gitlab.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://other.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_fn_url_only() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: (url) => url.searchParams.get("browser") === "chrome",
+                          open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(
+            resolve(&e, "https://x/?browser=chrome").0,
+            "com.google.Chrome"
+        );
+        assert_eq!(
+            resolve(&e, "https://x/?browser=other").0,
+            "com.apple.Safari"
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_fn_with_ctx_reads_opener_and_modifiers() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url, ctx) =>
+                        ctx.opener.bundleId === "com.outlook.X" && ctx.modifiers.shift,
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        let outlook = opener("com.outlook.X", "Outlook");
+        let no_shift = ModifierFlags::default();
+        let with_shift = ModifierFlags {
+            shift: true,
+            ..ModifierFlags::default()
+        };
+        assert_eq!(
+            resolve_with(&e, "https://x/", &outlook, no_shift).0,
+            "com.apple.Safari",
+        );
+        assert_eq!(
+            resolve_with(&e, "https://x/", &outlook, with_shift).0,
+            "com.google.Chrome",
+        );
+    }
+
+    // ---------- compile_rewriter per variant ----------
+
+    #[test]
+    fn rewriter_strip_removes_named_params() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [strip("utm_source", "utm_medium", "fbclid")],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://x/?utm_source=a&q=1&fbclid=xyz");
+        assert_eq!(url, "https://x/?q=1");
+    }
+
+    #[test]
+    fn rewriter_strip_prefix_wildcard() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [strip("utm_*")],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://x/?utm_a=1&utm_b=2&keep=ok");
+        assert_eq!(url, "https://x/?keep=ok");
+    }
+
+    #[test]
+    fn rewriter_literal_string_replaces_url() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{ match: "old.example.com/*",
+                            url: "https://new.example.com/" }],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://old.example.com/path");
+        assert_eq!(url, "https://new.example.com/");
+    }
+
+    #[test]
+    fn rewriter_fn_returning_string() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{ match: "*.medium.com/*",
+                            url: (url) => "https://scribe.rip" + url.pathname }],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://x.medium.com/some-article");
+        assert_eq!(url, "https://scribe.rip/some-article");
+    }
+
+    #[test]
+    fn rewriter_fn_returning_url_instance_via_mutation() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{
+                    match: (url) => url.protocol === "http:",
+                    url: (url) => { url.protocol = "https:"; return url; },
+                }],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "http://example.com/path");
+        assert_eq!(url, "https://example.com/path");
+    }
+
+    #[test]
+    fn rewriter_fn_returning_legacy_object_concatenates_fields() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{
+                    match: "*.slack.com/archives/*",
+                    url: (url) => ({ protocol: "slack", host: "channel",
+                                     pathname: "", search: "team=foo" }),
+                }],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://acme.slack.com/archives/C0/p1");
+        assert_eq!(url, "slack://channel?team=foo");
+    }
+
+    #[test]
+    fn rewriter_fn_returning_null_drops_url() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{ match: (url) => url.hostname === "tracking.example.com",
+                            url: () => null }],
+            };"#,
+        );
+        let (browser, url) = resolve(&e, "https://tracking.example.com/pixel");
+        assert_eq!(browser, ""); // suppress
+        assert_eq!(url, "about:blank");
+    }
+
+    #[test]
+    fn rewriter_chain_applies_in_order() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [
+                    strip("utm_source"),
+                    {
+                        match: (url) => url.protocol === "http:",
+                        url: (url) => { url.protocol = "https:"; return url; },
+                    },
+                ],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "http://example.com/?utm_source=a&q=1");
+        assert_eq!(url, "https://example.com/?q=1");
+    }
+
+    // ---------- Targets ----------
+
+    #[test]
+    fn target_null_suppresses() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: "tracking.com", open: null }],
+            };"#,
+        );
+        let (browser, url) = resolve(&e, "https://tracking.com/pixel");
+        assert_eq!(browser, "");
+        assert_eq!(url, "about:blank");
+    }
+
+    #[test]
+    fn target_fn_returning_string() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: (url) => true, open: (url) => "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn target_fn_returning_browser_object() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: (url) => true,
+                          open: (url) => ({ name: "com.google.Chrome",
+                                            args: ["--incognito"] }) }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn target_browser_key_lookup_against_browsers_map() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                browsers: { work: { name: "com.google.Chrome", args: ["--guest"] } },
+                rules: [{ match: "x.com", open: "work" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x.com/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn target_browser_alias_finicky_browser_field() {
+        // Finicky uses `browser:` where Grinch uses `open:` — should accept both.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: "x.com", browser: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x.com/").0, "com.google.Chrome");
+    }
+
+    // ---------- Combined entries ----------
+
+    #[test]
+    fn combined_match_url_open_rewrites_then_routes() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: "itunes.apple.com/app/*",
+                    url: (url) => "https://apps.apple.com" + url.pathname,
+                    open: "com.apple.AppStore",
+                }],
+            };"#,
+        );
+        let (browser, url) = resolve(&e, "https://itunes.apple.com/app/123");
+        assert_eq!(browser, "com.apple.AppStore");
+        assert_eq!(url, "https://apps.apple.com/app/123");
+    }
+
+    // ---------- ctx semantics ----------
+
+    #[test]
+    fn ctx_url_pinned_to_input_after_global_rewrite() {
+        // ctx.url stays as the original input even when global rewrites have
+        // mutated the URL — by design, so handlers can branch on the click.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{ match: (url) => true,
+                            url: (url) => "https://rewritten.com/" }],
+                rules: [{
+                    match: (url, ctx) => ctx.url === "https://original.com/",
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        let (browser, url) = resolve(&e, "https://original.com/");
+        assert_eq!(browser, "com.google.Chrome");
+        assert_eq!(url, "https://rewritten.com/");
+    }
+
+    #[test]
+    fn ctx_originalurl_aliases_url() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url, ctx) => ctx.url === ctx.originalUrl,
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    // ---------- UserFn arity contract ----------
+
+    #[test]
+    fn arity_url_only_clears_runtime_needs() {
+        // A url-only matcher must NOT mark needs_opener / needs_modifiers,
+        // so AppDelegate skips frontmost_opener() and current_modifier_flags()
+        // entirely on real clicks.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: (url) => url.hostname === "x",
+                          open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert!(!e.needs_opener());
+        assert!(!e.needs_modifiers());
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn arity_with_ctx_marks_runtime_needs() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url, ctx) => ctx.opener.bundleId === "x",
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert!(e.needs_opener());
+        assert!(e.needs_modifiers());
+    }
+
+    #[test]
+    fn arity_zero_treated_as_url_only() {
+        // `() => null` is length 0 — Grinch's contract is `length >= 2 → ctx`,
+        // so length 0 is treated as url-only too.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{ match: "x", url: () => null }],
+            };"#,
+        );
+        assert!(!e.needs_opener());
+        let (browser, url) = resolve(&e, "https://x");
+        assert_eq!(browser, "");
+        assert_eq!(url, "about:blank");
+    }
+
+    #[test]
+    fn arity_default_param_is_treated_as_url_only_per_contract() {
+        // (url, ctx = {}) — JS's `f.length` excludes default-param slots, so
+        // it reads as 1, and Grinch's contract treats it as url-only. The
+        // user's default `{}` kicks in. Documented footgun; this test pins
+        // the behaviour so we notice if it ever changes.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url, ctx = {}) => (ctx.opener && ctx.opener.bundleId) === "x",
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert!(!e.needs_opener());
+        // Even with a "real" opener, the matcher sees ctx = {} (its default),
+        // so `ctx.opener` is undefined and the rule never fires.
+        let real = opener("x", "X");
+        assert_eq!(
+            resolve_with(&e, "https://x/", &real, ModifierFlags::default()).0,
+            "com.apple.Safari",
+        );
+    }
+
+    // ---------- URL polyfill ----------
+
+    #[test]
+    fn polyfill_url_round_trips_full_href() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{ match: (url) => true, url: (url) => url.href }],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://user:pw@example.com:8443/path?q=1#frag");
+        assert_eq!(url, "https://user:pw@example.com:8443/path?q=1#frag");
+    }
+
+    #[test]
+    fn polyfill_searchparams_set_and_delete_propagate() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{
+                    match: (url) => true,
+                    url: (url) => {
+                        url.searchParams.delete("utm_source");
+                        url.searchParams.set("added", "1");
+                        return url;
+                    },
+                }],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://x/?utm_source=a&q=1");
+        // searchParams iteration order is implementation-defined for `set`
+        // on a brand-new key, so check the components rather than full eq.
+        assert!(!url.contains("utm_source"));
+        assert!(url.contains("q=1"));
+        assert!(url.contains("added=1"));
+    }
+
+    #[test]
+    fn polyfill_hostname_setter_propagates_to_href() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{ match: (url) => true,
+                            url: (url) => { url.hostname = "moved.com"; return url; } }],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://original.com/path");
+        assert_eq!(url, "https://moved.com/path");
+    }
+
+    // ---------- Parse-side warnings ----------
+
+    #[test]
+    fn parse_browser_jsval_handles_args_and_openinbackground() {
+        // Object form with both fields. We can't directly read BrowserSpec,
+        // but we can verify it routes correctly and the engine accepted it.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.spotify.client", openInBackground: true,
+                           args: ["--no-fork"] },
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.spotify.client");
+    }
+
+    #[test]
+    fn parse_browser_jsval_accepts_id_alias_for_bundleid() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: { id: "com.google.Chrome" },
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+}

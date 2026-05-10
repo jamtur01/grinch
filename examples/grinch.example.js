@@ -271,5 +271,27 @@ module.exports = {
       url: () => null,
       open: null,
     },
+
+    // Shorteners (bit.ly, t.co, lnkd.in, …): Grinch can't follow redirects
+    // from inside resolve() — that's a network round-trip and resolve() is
+    // sync by design (see "Performance" in the README). Two practical
+    // options:
+    //
+    // 1. Accept it: route shorteners to a sensible default, knowing you
+    //    can't decide on the *real* destination's host until after the
+    //    browser opens it.
+    {
+      match: domain("bit.ly", "t.co", "lnkd.in", "ow.ly", "buff.ly", "tinyurl.com"),
+      open: browsers.personal,
+    },
+    //
+    // 2. Pre-expand outside Grinch: the companion script
+    //    `examples/expand-shortener.sh` follows redirects via curl and
+    //    re-opens the final URL through `open(1)`, so Grinch sees the
+    //    expanded form and routes it through your normal rules.
+    //
+    //    Hook the script into your usual launcher (Raycast hotkey, Alfred
+    //    workflow, Hammerspoon binding, Shortcuts.app Quick Action, etc.).
+    //    See the script's header comment for setup notes.
   ],
 };

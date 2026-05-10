@@ -244,6 +244,56 @@ Click the 🎄 in the menu bar:
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
 | **Quit Grinch** (⌘Q) | Exit. |
 
+## Working with URL shorteners
+
+Grinch's resolve loop is synchronous on purpose, so it can't follow
+redirects from inside a rule (`await fetch()` doesn't run; see
+[Differences from Finicky](#differences-from-finicky)). For shortener
+hosts (`bit.ly`, `t.co`, `lnkd.in`, `ow.ly`, …) you have two practical
+options.
+
+### Option 1: route shorteners to a sensible default
+
+Just send them to whichever browser you'd usually open links in. The
+final destination's host won't be visible to your match rules, but the
+browser opens normally and you don't pay any extra latency.
+
+```js
+{
+  match: domain("bit.ly", "t.co", "lnkd.in", "ow.ly", "buff.ly", "tinyurl.com"),
+  open: browsers.personal,
+}
+```
+
+### Option 2: pre-expand outside Grinch
+
+The companion script
+[`examples/expand-shortener.sh`](examples/expand-shortener.sh) follows
+the redirect chain with `curl --location --head` (capped at 5 s) and
+then re-opens the final URL through `open(1)`. Grinch sees the
+expanded form and routes it through your normal rules — the shortener
+host never reaches your `match:` logic.
+
+```sh
+chmod +x examples/expand-shortener.sh
+examples/expand-shortener.sh "https://bit.ly/3GyNJpL"
+```
+
+Hook it into whichever launcher you already use:
+
+- **Raycast / Alfred**: bind to a hotkey, paste the URL from the
+  clipboard, run the script.
+- **Hammerspoon**: register a `hs.urlevent` handler and shell out to
+  the script with the URL as the argument.
+- **Shortcuts.app**: wrap as a Quick Action that takes URLs from the
+  share sheet and runs `expand-shortener.sh "$1"`.
+- **Plain terminal**: `examples/expand-shortener.sh "$(pbpaste)"` after
+  copying.
+
+The trade-off is that shortener clicks now pay a network round-trip
+(50–500 ms typical), but the expansion happens *outside* Grinch's
+hot path so the rest of your routing stays in the microsecond range.
+
 ## Commands
 
 ```sh
@@ -381,7 +431,8 @@ adjust:
    syntax doesn't parse.
 2. **No `await fetch()`.** The resolve hot path is sync. The Finicky
    `shortenerExpander` pattern can't run; resolve a shortener separately
-   if you need it.
+   if you need it — see [Working with URL shorteners](#working-with-url-shorteners)
+   below.
 3. **No `finicky.*` namespace.** Grinch doesn't ship `finicky.matchHostnames`,
    `finicky.getModifierKeys`, `finicky.isAppRunning`, `finicky.notify`,
    `finicky.getBattery`, `finicky.getPowerInfo`, or `finicky.getSystemInfo`.

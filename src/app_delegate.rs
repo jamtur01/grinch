@@ -367,7 +367,11 @@ impl Delegate {
             path: String::new(),
             pid: 0,
         };
-        for _ in 0..(n / 10).min(1_000) {
+        // Warmup: min(n / 10, 1000) iterations to JIT-warm the JS bridge
+        // and populate per-resolve caches before timing. Capped at 1000 so
+        // a 1M-iter run doesn't spend 100k iters warming.
+        let warmup = (n / 10).min(1_000);
+        for _ in 0..warmup {
             let _ = engine.resolve(url, &opener, ModifierFlags::default());
         }
         let start = std::time::Instant::now();
@@ -529,9 +533,16 @@ extern "C" fn reload_on_main(_ctx: *mut c_void) {
 }
 
 fn install_sighup_handler(delegate: &Delegate) {
+    // Idempotency: if called twice (e.g., a future refactor that reloads
+    // the delegate without restarting the process), don't open a second
+    // pipe + reader thread, which would leak fds and double-handle SIGHUP.
+    static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let ptr: *const Delegate = delegate;
     let any_ptr: *mut AnyObject = ptr as *mut AnyObject;
     DELEGATE_PTR.store(any_ptr, Ordering::Relaxed);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
 
     let mut fds: [libc::c_int; 2] = [-1; 2];
     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {

@@ -1237,6 +1237,14 @@ fn matches(m: &Matcher, url: &str, host: Option<&str>, rc: &ResolveCtx) -> bool 
 /// than allocating a `.{pattern}` string per call.
 #[inline]
 fn host_matches(host: &str, pattern: &str) -> bool {
+    // Empty pattern would otherwise match every host with a trailing dot
+    // (`"x."` ends_with `""` is true, and `hb.len() > 0 + 1` for any
+    // 2+-char host). A user passing `domain("")` — or whose JS computed
+    // an empty hostname before reaching the matcher — shouldn't get a
+    // global wildcard out of it.
+    if pattern.is_empty() {
+        return false;
+    }
     if host == pattern {
         return true;
     }
@@ -1682,8 +1690,8 @@ fn parse_options_block(opts: &JSValue) -> OptionsConfig {
             }
             other if !KNOWN.contains(&other) => {
                 eprintln!(
-                    "grinch: unknown options.{other} — accepted keys are urlShorteners, \
-                     logRequests, checkForUpdates, keepRunning, hideIcon"
+                    "grinch: unknown options.{other} — accepted keys are {}",
+                    KNOWN.join(", ")
                 );
             }
             // Known but inert keys: accept silently.
@@ -1935,7 +1943,12 @@ fn compile_strip(v: &JSValue) -> Option<Rewriter> {
 /// get an optional `(?:https?:|...)?(?://)?` prefix so e.g. `"zoom.us/j/*"`
 /// matches both bare and protocol-prefixed URLs.
 fn compile_wildcard(pattern: &str) -> Option<Regex> {
-    const PLACEHOLDER: char = '\u{0000}';
+    // Private-use codepoint as the "this `*` was escaped" sentinel.
+    // Previously U+0000 (NUL), which is a valid char in JS strings — a
+    // pattern containing a literal NUL would have been misinterpreted as
+    // a `\*`. Unicode private-use characters (U+E000..U+F8FF) are
+    // guaranteed not to appear in real-world host patterns.
+    const PLACEHOLDER: char = '\u{E000}';
 
     // Step 1: replace escaped asterisks with a sentinel.
     let mut work = pattern.replace("\\*", &PLACEHOLDER.to_string());
@@ -2376,6 +2389,17 @@ mod tests {
         assert!(!host_matches("notgithub.com", "github.com"));
         assert!(!host_matches("github.com.evil", "github.com"));
         assert!(!host_matches("", "github.com"));
+    }
+
+    #[test]
+    fn host_matches_empty_pattern_is_not_a_wildcard() {
+        // An empty pattern would otherwise match any 2+-char host with a
+        // trailing dot (`"x." ends_with ""` is true). Reject explicitly so
+        // a config that passed `domain("")` doesn't get a global wildcard.
+        assert!(!host_matches("github.com", ""));
+        assert!(!host_matches("a.b.example", ""));
+        assert!(!host_matches("x.", ""));
+        assert!(!host_matches("", ""));
     }
 
     // -------- strip_params --------

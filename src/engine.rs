@@ -3056,6 +3056,86 @@ mod integration_tests {
     // ---------- URL polyfill ----------
 
     #[test]
+    fn legacy_url_string_returns_href() {
+        // url.urlString is the v3 alias for url.href. Shim warns and
+        // returns the same value.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url) => url.urlString === url.href,
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/path").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn legacy_url_url_returns_legacy_object_shape() {
+        // url.url returns a plain LegacyURLObject. Verify the shape.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url) => {
+                        var u = url.url;
+                        return u.protocol === "https"
+                            && u.hostname === "github.com"
+                            && u.pathname === "/x"
+                            && u.search === "q=1"
+                            && u.hash === "frag";
+                    },
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(
+            resolve(&e, "https://github.com/x?q=1#frag").0,
+            "com.google.Chrome",
+        );
+    }
+
+    #[test]
+    fn legacy_url_opener_throws_with_helpful_message() {
+        // url.opener throws — shouldn't silently return undefined or the
+        // wrong thing. The matcher catches and inspects the message.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url) => {
+                        try { url.opener; return false; }
+                        catch (e) { return e.message.indexOf("ctx.opener") !== -1; }
+                    },
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn legacy_url_keys_throws_with_helpful_message() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url) => {
+                        try { url.keys; return false; }
+                        catch (e) {
+                            return e.message.indexOf("ctx.modifiers") !== -1
+                                && e.message.indexOf("getModifierKeys") !== -1;
+                        }
+                    },
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    #[test]
     fn polyfill_url_round_trips_full_href() {
         let e = build_engine(
             r#"module.exports = {

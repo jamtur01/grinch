@@ -480,11 +480,23 @@ match is a refcount bump, not a `String + Vec<String>` deep clone.
 ## Differences from Finicky
 
 Grinch tracks **Finicky v4** (the current line, with `defaultBrowser` /
-`handlers` / `rewrite`). Finicky v3 configs (which used `urlShorteners`,
-`finicky.matchDomains`, `url.url`, `url.urlString`, `url.opener`,
-`url.keys`, etc.) are not supported — port them to v4 syntax first using
-[Finicky's migration guide](https://github.com/johnste/finicky/wiki/Migration-guide),
-then read the list below for what Grinch handles differently.
+`handlers` / `rewrite`). Finicky v3 configs are best ported through
+[Finicky's migration guide](https://github.com/johnste/finicky/wiki/Migration-guide)
+first, but for the most common v3 leftovers Grinch ships compatibility
+shims:
+
+- `url.urlString` and `url.url` warn-and-return — `urlString` returns
+  `url.href`; `url.url` returns the legacy `{protocol, hostname, …}`
+  object. Both log a one-line `console.warn` pointing at the v4
+  equivalent.
+- `url.opener` and `url.keys` throw with helpful messages directing
+  to `ctx.opener` and `ctx.modifiers` / `finicky.getModifierKeys()`
+  respectively. (Throwing rather than warn-and-returning, because
+  silently returning the wrong thing here would cause subtle
+  misroutes — a `url.opener.bundleId === "x"` check on a wrong shape
+  would always be false.)
+
+If you're porting a Finicky v4 config, these are the places you'll need
 
 If you're porting a Finicky v4 config, these are the places you'll need
 to adjust:

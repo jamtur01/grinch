@@ -189,6 +189,65 @@ pub const JS_PRELUDE: &str = r##"
   URL.prototype.toString = function() { return rebuildHref(this); };
   URL.prototype.toJSON   = function() { return rebuildHref(this); };
 
+  // ---- Finicky v3 → v4 deprecation shims ----
+  //
+  // Configs forward-ported from very-old Finicky might still reach for
+  // these properties. Better to surface a useful message than to throw
+  // a bare TypeError. `urlString` and `url` warn-and-return (graceful
+  // continuation); `opener` and `keys` throw because they live on a
+  // different object now and silently returning the wrong thing would
+  // cause subtle misroutes.
+  Object.defineProperty(URL.prototype, "urlString", {
+    get: function() {
+      console.warn("url.urlString is deprecated since Finicky v4 — use url.href instead");
+      return rebuildHref(this);
+    },
+    enumerable: false,
+  });
+  Object.defineProperty(URL.prototype, "url", {
+    get: function() {
+      console.warn(
+        "url.url is deprecated since Finicky v4 — read individual fields " +
+        "(url.protocol / .hostname / .pathname / .search / .hash) directly"
+      );
+      var proto = this.protocol || "";
+      if (proto.charAt(proto.length - 1) === ":") proto = proto.slice(0, -1);
+      var port = this.port ? parseInt(this.port, 10) : 0;
+      return {
+        protocol: proto,
+        username: this.username || "",
+        password: this.password || "",
+        host: this.hostname + (this.port ? ":" + this.port : ""),
+        hostname: this.hostname || "",
+        port: port,
+        pathname: this.pathname || "",
+        search: this._search ? this._search.slice(1) : "",
+        hash: this.hash ? this.hash.slice(1) : "",
+      };
+    },
+    enumerable: false,
+  });
+  Object.defineProperty(URL.prototype, "opener", {
+    get: function() {
+      throw new Error(
+        "url.opener was moved to ctx.opener in Finicky v4. Read it from " +
+        "the second argument of your matcher fn: (url, ctx) => ctx.opener?.bundleId"
+      );
+    },
+    enumerable: false,
+  });
+  Object.defineProperty(URL.prototype, "keys", {
+    get: function() {
+      throw new Error(
+        "url.keys was removed in Finicky v4. Read modifier state from " +
+        "ctx.modifiers (inside a fn matcher) or finicky.getModifierKeys() " +
+        "(anywhere). Both return { shift, option, command, control, " +
+        "capsLock, fn, function }."
+      );
+    },
+    enumerable: false,
+  });
+
   URL.__grinchPolyfill = true;
   g.URL = URL;
 })(this);
@@ -515,6 +574,16 @@ pub fn preprocess_es_module_syntax(src: &str) -> Result<String, String> {
     Ok(out)
 }
 
+// Wrap user source so module/exports are scoped locally and don't pollute globals.
+//
+// The `{` and the user source share line 1 deliberately: any `\n` between
+// them would push every line of user code down by one in JSC's source map,
+// so an error on user line 5 would be reported as line 6. JS doesn't care
+// whether the brace is on its own line.
+pub fn wrap_user_config(src: &str) -> String {
+    format!("(function(module, exports) {{ {src}\n}})(__grinchModule, __grinchModule.exports);")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,14 +634,4 @@ mod tests {
         let out = preprocess_es_module_syntax(src).unwrap();
         assert!(out.contains(r#""export default"#));
     }
-}
-
-// Wrap user source so module/exports are scoped locally and don't pollute globals.
-//
-// The `{` and the user source share line 1 deliberately: any `\n` between
-// them would push every line of user code down by one in JSC's source map,
-// so an error on user line 5 would be reported as line 6. JS doesn't care
-// whether the brace is on its own line.
-pub fn wrap_user_config(src: &str) -> String {
-    format!("(function(module, exports) {{ {src}\n}})(__grinchModule, __grinchModule.exports);")
 }

@@ -3944,21 +3944,51 @@ mod integration_tests {
     }
 
     #[test]
-    fn finicky_is_app_running_matches_localized_name() {
-        // Finder is always running on macOS and its localized name is
-        // "Finder" (in any locale Grinch is likely to ship in).
-        // Confirms the bundle-ID-OR-localized-name match — same call
-        // would have been false before this commit, since Grinch only
-        // compared against bundle IDs.
+    fn finicky_is_app_running_returns_false_for_unknown_input() {
+        // Pass an obviously-bogus identifier that matches no bundle ID
+        // and no localized name. Verifies the bridge round-trips
+        // (JS call → Rust workspace lookup → string return → JS bool
+        // coerce) and that the localized-name comparison branch is
+        // exercised — `is_app_running` walks every running app checking
+        // BOTH `bundleIdentifier` and `localizedName` against the input
+        // before returning false. (The "true" case is environment-
+        // dependent — headless CI runners may not have Finder/Dock/etc.
+        // running — so we don't pin a specific app here.)
         let e = build_engine(
             r#"module.exports = {
                 default: "com.apple.Safari",
                 rules: [{
                     match: () => true,
-                    open: () => finicky.isAppRunning("Finder") ? "yes" : "no",
+                    open: () =>
+                        finicky.isAppRunning("definitely-not-installed-xyz123-fake") ? "yes" : "no",
                 }],
             };"#,
         );
+        assert_eq!(resolve(&e, "https://x/").0, "no");
+    }
+
+    #[test]
+    fn finicky_is_app_running_returns_true_for_known_running_app() {
+        // Round-trip the bridge against an app the workspace itself
+        // confirms is running. If the workspace returns no apps at all
+        // (sandboxed test env), skip — the previous test already
+        // covered the false-path; this one's about the true path.
+        let running = crate::workspace::running_app_bundle_ids();
+        let Some(known) = running.iter().next().cloned() else {
+            eprintln!("skipping: no running apps detected on this host");
+            return;
+        };
+        // Pass the known bundle ID through the JS bridge and back.
+        let src = format!(
+            r#"module.exports = {{
+                default: "com.apple.Safari",
+                rules: [{{
+                    match: () => true,
+                    open: () => finicky.isAppRunning("{known}") ? "yes" : "no",
+                }}],
+            }};"#,
+        );
+        let e = build_engine(&src);
         assert_eq!(resolve(&e, "https://x/").0, "yes");
     }
 

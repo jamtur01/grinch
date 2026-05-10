@@ -245,6 +245,12 @@ pub struct Engine {
     needs_host: bool,
     /// Parsed `options` block — the few keys Grinch actually acts on.
     options: OptionsConfig,
+    /// Per-resolve JSONL log file. `None` when `options.logRequests` is
+    /// off, otherwise a lazy-opened append writer at
+    /// `~/Library/Logs/Grinch/Grinch_<engine-init-timestamp>.log`. The
+    /// file is created on first write so a flag-on-but-no-traffic engine
+    /// doesn't litter empty files.
+    log_writer: RefCell<Option<LogWriter>>,
     /// Cached JSValue strings for opener fields (bundleId / name / path).
     /// Most clicks come from the same handful of openers (Mail, Slack,
     /// Outlook…), and the JSC bridge crossing for NSString::from_str +
@@ -362,6 +368,15 @@ impl Engine {
             needs_modifiers: needs.modifiers,
             needs_host: needs.host,
             options,
+            log_writer: RefCell::new(if options.log_requests {
+                Some(LogWriter {
+                    path: log_file_path(),
+                    file: None,
+                    failed: false,
+                })
+            } else {
+                None
+            }),
             opener_str_cache: RefCell::new(std::collections::HashMap::new()),
         })
     }
@@ -388,6 +403,22 @@ impl Engine {
     /// most macOS background apps surface this setting.
     pub fn hide_icon(&self) -> bool {
         self.options.hide_icon
+    }
+
+    /// If `options.logRequests` is enabled, append a JSONL entry for this
+    /// resolve to the log file. Inlined and short-circuiting on a plain
+    /// bool field so non-logging configs pay one branch + nothing else.
+    /// (Was previously checking `log_writer.borrow().is_some()`, which
+    /// added ~3 ns of RefCell-borrow overhead on the floor workload.)
+    #[inline]
+    fn finish<'u>(&self, input_url: &str, opener: &Opener, res: Resolution<'u>) -> Resolution<'u> {
+        if self.options.log_requests {
+            let entry = format_log_entry(input_url, opener, &res);
+            if let Some(w) = self.log_writer.borrow_mut().as_mut() {
+                w.write(&entry);
+            }
+        }
+        res
     }
 
     /// Hot path: resolve a URL given the opener and modifier flags.
@@ -436,7 +467,7 @@ impl Engine {
                         };
                     }
                     RewriteOutcome::Unchanged => {}
-                    RewriteOutcome::Drop => return suppressed(),
+                    RewriteOutcome::Drop => return self.finish(url_string, opener, suppressed()),
                 }
             }
         }
@@ -459,18 +490,22 @@ impl Engine {
                         };
                     }
                     RewriteOutcome::Unchanged => {}
-                    RewriteOutcome::Drop => return suppressed(),
+                    RewriteOutcome::Drop => return self.finish(url_string, opener, suppressed()),
                 }
             }
             match &rule.target {
                 Target::Browser(b) => {
-                    return Resolution {
-                        browser: Rc::clone(b),
-                        url: current,
-                    };
+                    return self.finish(
+                        url_string,
+                        opener,
+                        Resolution {
+                            browser: Rc::clone(b),
+                            url: current,
+                        },
+                    );
                 }
                 Target::Suppress => {
-                    return suppressed();
+                    return self.finish(url_string, opener, suppressed());
                 }
                 Target::Fn(uf) => {
                     let Some(args) = rc.fn_args(&current, uf.needs_ctx) else {
@@ -487,10 +522,14 @@ impl Engine {
                                         js_to_string(&r).unwrap_or_default(),
                                     ))
                                 });
-                            return Resolution {
-                                browser: spec,
-                                url: current,
-                            };
+                            return self.finish(
+                                url_string,
+                                opener,
+                                Resolution {
+                                    browser: spec,
+                                    url: current,
+                                },
+                            );
                         }
                     }
                 }
@@ -502,12 +541,12 @@ impl Engine {
         // the same machinery as a Target::Fn rule would. Fall back to a
         // suppressed-style empty spec if the fn returns null/undefined or
         // its return doesn't resolve to a browser — better than panicking.
-        match &self.default_browser {
+        let res = match &self.default_browser {
             DefaultBrowser::Static(b) => Resolution {
                 browser: Rc::clone(b),
                 url: current,
             },
-            DefaultBrowser::Fn(uf) => {
+            DefaultBrowser::Fn(uf) => 'fn_default: {
                 if let Some(args) = rc.fn_args(&current, uf.needs_ctx) {
                     if let Some(r) = unsafe { uf.f.callWithArguments(Some(&args)) } {
                         if !unsafe { r.isUndefined() } && !unsafe { r.isNull() } {
@@ -517,7 +556,7 @@ impl Engine {
                                         js_to_string(&r).unwrap_or_default(),
                                     ))
                                 });
-                            return Resolution {
+                            break 'fn_default Resolution {
                                 browser: spec,
                                 url: current,
                             };
@@ -525,10 +564,12 @@ impl Engine {
                     }
                 }
                 // Fn returned null/undefined or args build failed — same
-                // semantics as `open: null` (suppress).
+                // semantics as `open: null` (suppress). Resolution<'static>
+                // coerces to Resolution<'u> via covariance.
                 suppressed()
             }
-        }
+        };
+        self.finish(url_string, opener, res)
     }
 }
 
@@ -1341,6 +1382,131 @@ pub struct OptionsConfig {
     /// hide or re-show the icon mid-session (consistent with most macOS
     /// background apps that surface this kind of toggle).
     pub hide_icon: bool,
+    /// Whether to write a per-resolve JSONL log to
+    /// `~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Each line is one
+    /// resolve: input URL, final URL after rewrites, target browser,
+    /// opener bundle ID, and a Unix timestamp. Mirrors Finicky's
+    /// `options.logRequests` semantics.
+    pub log_requests: bool,
+}
+
+/// Per-resolve JSONL log writer used when `options.logRequests` is on.
+/// Opens the destination file lazily on first `write` so an engine that
+/// never resolves doesn't create an empty log file. After a write
+/// failure the writer marks itself failed and stops trying — better
+/// than spamming stderr per resolve.
+struct LogWriter {
+    path: std::path::PathBuf,
+    file: Option<std::fs::File>,
+    failed: bool,
+}
+
+impl LogWriter {
+    fn write(&mut self, line: &str) {
+        use std::io::Write;
+        if self.failed {
+            return;
+        }
+        if self.file.is_none() {
+            match Self::open(&self.path) {
+                Ok(f) => self.file = Some(f),
+                Err(e) => {
+                    eprintln!(
+                        "grinch: couldn't open log file {}: {e} — disabling \
+                         options.logRequests for this session",
+                        self.path.display()
+                    );
+                    self.failed = true;
+                    return;
+                }
+            }
+        }
+        if let Some(f) = self.file.as_mut() {
+            if let Err(e) = writeln!(f, "{line}") {
+                eprintln!(
+                    "grinch: write to {} failed: {e} — disabling \
+                     options.logRequests for this session",
+                    self.path.display()
+                );
+                self.failed = true;
+                self.file = None;
+            }
+        }
+    }
+
+    fn open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+    }
+}
+
+/// One JSONL entry per resolve. Format:
+/// `{"ts": <unix-seconds-with-millis>, "url": "<input>", "final":
+/// "<rewritten>", "browser": "<bundle-id>", "args": [...], "opener":
+/// "<opener-bundle-id>"}`. Empty `browser` (== suppressed) and empty
+/// `opener` (== unknown source app) are emitted as-is so callers can
+/// distinguish the two cases at parse time.
+fn format_log_entry(input_url: &str, opener: &Opener, res: &Resolution<'_>) -> String {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let entry = serde_json::json!({
+        "ts": ts,
+        "url": input_url,
+        "final": res.url.as_ref(),
+        "browser": res.browser.bundle_id,
+        "args": res.browser.args,
+        "opener": opener.bundle_id,
+    });
+    entry.to_string()
+}
+
+/// Build a per-launch log path under `~/Library/Logs/Grinch/`. Falls back
+/// to `/tmp/Grinch_<ts>.log` if `$HOME` isn't set (rare on macOS but
+/// possible under sandboxed test runners). Filename uses an ISO-style
+/// timestamp with colons replaced by dashes for filesystem safety.
+fn log_file_path() -> std::path::PathBuf {
+    let stem = format!("Grinch_{}.log", iso_timestamp_for_filename());
+    let base = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join("Library/Logs/Grinch"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
+    base.join(stem)
+}
+
+/// Format the current local time as `YYYY-MM-DDTHH-MM-SS` for use in
+/// log filenames. Avoids colons (which some macOS Finder pickers
+/// remap) and keeps things human-readable.
+fn iso_timestamp_for_filename() -> String {
+    use std::ffi::CStr;
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as libc::time_t)
+        .unwrap_or(0);
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::localtime_r(&secs, &mut tm);
+    }
+    let mut buf = [0i8; 64];
+    let n = unsafe {
+        libc::strftime(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%Y-%m-%dT%H-%M-%S".as_ptr(),
+            &tm,
+        )
+    };
+    if n == 0 {
+        return secs.to_string();
+    }
+    unsafe { CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Parse Finicky v4's `options` block. The five known keys are accepted
@@ -1349,7 +1515,7 @@ pub struct OptionsConfig {
 /// | Key | Grinch behaviour |
 /// |---|---|
 /// | `urlShorteners` | silently ignored — Finicky's hard-coded list isn't user-configurable there either; Grinch expects external expansion (see `examples/expand-shortener.sh`) |
-/// | `logRequests`   | silently ignored — Grinch uses `GRINCH_DEBUG=1` for trace logs to stderr |
+/// | `logRequests`   | **honoured** — writes per-resolve JSONL to `~/Library/Logs/Grinch/Grinch_<timestamp>.log` |
 /// | `checkForUpdates` | silently ignored — Grinch doesn't poll for updates |
 /// | `keepRunning`   | silently ignored — Grinch is always resident |
 /// | `hideIcon`      | **honoured** — propagated through `OptionsConfig` to AppDelegate, which skips menu-bar status item creation when set |
@@ -1368,6 +1534,9 @@ fn parse_options_block(opts: &JSValue) -> OptionsConfig {
         match k.as_str() {
             "hideIcon" => {
                 out.hide_icon = unsafe { v.toBool() };
+            }
+            "logRequests" => {
+                out.log_requests = unsafe { v.toBool() };
             }
             other if !KNOWN.contains(&other) => {
                 eprintln!(
@@ -2288,7 +2457,11 @@ mod integration_tests {
                 default: "com.apple.Safari",
                 options: {
                     urlShorteners: ["bit.ly", "t.co"],
-                    logRequests: true,
+                    logRequests: false, // tested for real in
+                                        // options_log_requests_writes_jsonl_per_resolve;
+                                        // false here to avoid creating a log
+                                        // file at whatever HOME the parallel
+                                        // test runner happens to have set
                     checkForUpdates: false,
                     keepRunning: true,
                     hideIcon: false,
@@ -2321,6 +2494,106 @@ mod integration_tests {
             };"#,
         );
         assert!(!e.hide_icon());
+    }
+
+    /// HOME is process-global. The two log tests serialise via this
+    /// mutex so neither sees the other's HOME mid-engine-init. Other
+    /// integration tests don't read HOME from inside Engine::new (no
+    /// log_requests) so they don't need the lock.
+    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run `f` with HOME pointed at `home` for its duration, holding the
+    /// shared HOME_LOCK. The Engine's log writer is lazy and opens the
+    /// file on first write, so HOME must still point at the test tmpdir
+    /// when resolves happen — hence holding the lock around the whole
+    /// engine-and-resolves block, not just the construction call.
+    fn with_home<R>(home: &std::path::Path, f: impl FnOnce() -> R) -> R {
+        let _guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", home);
+        }
+        let out = f();
+        unsafe {
+            match prev {
+                Some(h) => std::env::set_var("HOME", h),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+        out
+    }
+
+    /// Build a guaranteed-unique tmp-dir path. Per-test pid+name+counter
+    /// to avoid cross-test pollution if a previous run left junk behind
+    /// or another parallel test happens to compose the same path.
+    fn unique_tmp(name: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("grinch-{}-{}-{}", name, std::process::id(), n))
+    }
+
+    #[test]
+    fn options_log_requests_writes_jsonl_per_resolve() {
+        let tmp = unique_tmp("log-on");
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        with_home(&tmp, || {
+            let e = build_engine(
+                r#"module.exports = {
+                    default: "com.apple.Safari",
+                    options: { logRequests: true },
+                    rules: [{ match: "github.com", open: "com.google.Chrome" }],
+                };"#,
+            );
+            assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+            assert_eq!(resolve(&e, "https://example.com/").0, "com.apple.Safari");
+        });
+
+        let log_dir = tmp.join("Library/Logs/Grinch");
+        let entries: Vec<_> = std::fs::read_dir(&log_dir)
+            .unwrap_or_else(|e| panic!("expected log dir at {}: {e}", log_dir.display()))
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(entries.len(), 1, "expected exactly one log file");
+        let body = std::fs::read_to_string(entries[0].path()).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2, "expected two log lines, got: {body}");
+        assert!(lines[0].contains(r#""url":"https://github.com/""#));
+        assert!(lines[0].contains(r#""browser":"com.google.Chrome""#));
+        assert!(lines[1].contains(r#""url":"https://example.com/""#));
+        assert!(lines[1].contains(r#""browser":"com.apple.Safari""#));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn options_log_requests_off_writes_nothing() {
+        let tmp = unique_tmp("log-off");
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        with_home(&tmp, || {
+            let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
+            let _ = resolve(&e, "https://x/");
+        });
+
+        let log_dir = tmp.join("Library/Logs/Grinch");
+        if log_dir.exists() {
+            // Debug: dump what's there so we can see what actually got
+            // written if this fails again.
+            let listing: Vec<_> = std::fs::read_dir(&log_dir)
+                .map(|d| {
+                    d.filter_map(|r| r.ok())
+                        .map(|e| e.path().display().to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            panic!(
+                "log dir was created with logRequests off (path: {}, contents: {:?})",
+                log_dir.display(),
+                listing,
+            );
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

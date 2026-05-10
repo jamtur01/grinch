@@ -97,15 +97,24 @@ module.exports = {
 Finicky-style aliases are accepted everywhere: `defaultBrowser`, `handlers`,
 `browser` work identically to `default`, `rules`, `open`.
 
-The `options` block accepts Finicky v4's five keys without erroring so
-ported configs don't have to delete them. Most are inert in Grinch:
-`urlShorteners` (expects [external expansion](#working-with-url-shorteners)),
-`logRequests` (use `GRINCH_DEBUG=1`), `checkForUpdates` (Grinch doesn't
-poll), `keepRunning` (Grinch is always resident). The one that's wired
-up is `hideIcon: true`, which skips the menu-bar status item entirely
-at app launch — useful when you don't want the 🎄 in your menu bar.
-Reloads don't toggle the icon mid-session; restart Grinch to apply
-changes. Unknown keys log a one-line warning.
+The `options` block accepts Finicky v4's five keys. Two are wired up:
+
+- **`hideIcon: true`** — skip the menu-bar status item at app launch.
+  Useful when you don't want the 🎄 in your menu bar. Reloads don't
+  toggle the icon mid-session; restart Grinch to apply.
+- **`logRequests: true`** — write a JSONL trace to
+  `~/Library/Logs/Grinch/Grinch_<timestamp>.log` with one line per
+  resolve: `{"ts": <unix-secs>, "url": "<input>", "final":
+  "<after-rewrites>", "browser": "<bundle-id>", "args": [...],
+  "opener": "<bundle-id>"}`. The file is opened lazily on the first
+  resolve and appended to thereafter; one file per app launch.
+  Useful for figuring out *why* a particular click went where it did
+  without enabling the broader `GRINCH_DEBUG=1` stderr trace.
+
+The other three are inert: `urlShorteners` (expects
+[external expansion](#working-with-url-shorteners)), `checkForUpdates`
+(Grinch doesn't poll), `keepRunning` (Grinch is always resident).
+Unknown keys log a one-line warning.
 
 ### Browser specs
 

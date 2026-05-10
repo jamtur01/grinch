@@ -264,6 +264,12 @@ pub struct Engine {
     /// Reset implicitly when Engine is rebuilt on config reload — the
     /// JSContext goes with it, taking the cached JSValues along.
     opener_str_cache: RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
+    /// Cached `true` / `false` `JSValue`s — referenced by every ctx
+    /// build (six modifier flags). Each `js_bool(ctx, b)` is a JSC bridge
+    /// crossing of ~100-300 ns; replacing them with refcount-bumped
+    /// clones of these cached values saves up to ~2 µs per ctx build.
+    js_true: Retained<JSValue>,
+    js_false: Retained<JSValue>,
 }
 
 #[derive(Debug)]
@@ -368,6 +374,12 @@ impl Engine {
             needs.host = true;
         }
 
+        // Cache true/false JSValues — every ctx build (slow path) reads
+        // six modifier flags through these. Pre-built here so the hot
+        // path is a refcount bump, not a fresh JSC bridge crossing.
+        let js_true = js_bool(&ctx, true);
+        let js_false = js_bool(&ctx, false);
+
         Ok(Self {
             default_browser,
             browsers,
@@ -391,6 +403,8 @@ impl Engine {
                 None
             }),
             opener_str_cache: RefCell::new(std::collections::HashMap::new()),
+            js_true,
+            js_false,
         })
     }
 
@@ -490,6 +504,8 @@ impl Engine {
             &self.make_ctx_helper,
             &self.url_ctor,
             &self.opener_str_cache,
+            &self.js_true,
+            &self.js_false,
             opener,
             modifiers,
             url_string,
@@ -701,6 +717,11 @@ struct ResolveCtx<'a> {
     /// Cached opener-field JSValues (bundleId/name/path → cached
     /// `Retained<JSValue>`). Lives on Engine; we only borrow it.
     opener_str_cache: &'a RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
+    /// Pre-built `true` / `false` JSValues borrowed from Engine. Reused for
+    /// every modifier flag in `build_ctx_object` so we never pay the
+    /// `js_bool` JSC bridge cost on the slow path.
+    js_true: &'a Retained<JSValue>,
+    js_false: &'a Retained<JSValue>,
     opener: &'a Opener,
     modifiers: ModifierFlags,
     /// Per-resolve cache for `running()` matchers. Built lazily on first
@@ -738,6 +759,8 @@ impl<'a> ResolveCtx<'a> {
         make_ctx_helper: &'a JSValue,
         url_ctor: &'a JSValue,
         opener_str_cache: &'a RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
+        js_true: &'a Retained<JSValue>,
+        js_false: &'a Retained<JSValue>,
         opener: &'a Opener,
         modifiers: ModifierFlags,
         original_url: &'a str,
@@ -748,6 +771,8 @@ impl<'a> ResolveCtx<'a> {
             make_ctx_helper,
             url_ctor,
             opener_str_cache,
+            js_true,
+            js_false,
             opener,
             modifiers,
             running_cache: RefCell::new(None),
@@ -778,6 +803,8 @@ impl<'a> ResolveCtx<'a> {
             self.ctx,
             self.make_ctx_helper,
             self.opener_str_cache,
+            self.js_true,
+            self.js_false,
             self.original_url,
             self.opener,
             self.modifiers,
@@ -1075,38 +1102,43 @@ fn build_url_instance(url_ctor: &JSValue, ctx: &JSContext, url: &str) -> Retaine
         .expect("JSContext can't evaluate `({})` — context is broken")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_ctx_object(
     ctx: &JSContext,
     helper: &JSValue,
     opener_str_cache: &RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
+    js_true: &Retained<JSValue>,
+    js_false: &Retained<JSValue>,
     url: &str,
     opener: &Opener,
     m: ModifierFlags,
 ) -> Option<Retained<JSValue>> {
     // URL changes per resolve (or per rewrite); not worth caching across
-    // resolves. Opener fields stabilise — same Mail / Slack / Outlook over
-    // and over — so they go through the engine's cache.
+    // resolves. Opener fields stabilise (same Mail / Slack / Outlook over
+    // and over) → engine's opener_str_cache. Modifier flags are bools and
+    // we hold a single cached Retained<JSValue> per truth value on the
+    // Engine — clones here are refcount bumps, not JSC bridge crossings.
+    let bool_v = |b: bool| -> Retained<JSValue> {
+        if b { js_true.clone() } else { js_false.clone() }
+    };
     let url_v = js_string(ctx, url);
     let opener_id_v = cached_js_string(ctx, opener_str_cache, &opener.bundle_id);
     let opener_name_v = cached_js_string(ctx, opener_str_cache, &opener.name);
     let opener_path_v = cached_js_string(ctx, opener_str_cache, &opener.path);
-    let shift_v = js_bool(ctx, m.shift);
-    let option_v = js_bool(ctx, m.option);
-    let command_v = js_bool(ctx, m.command);
-    let control_v = js_bool(ctx, m.control);
-    let caps_lock_v = js_bool(ctx, m.caps_lock);
-    let function_v = js_bool(ctx, m.function);
-    let args_objs: Vec<Retained<AnyObject>> = vec![
+    // Fixed-size array (was a heap-allocated Vec<Retained<AnyObject>>).
+    // NSArray::from_retained_slice takes a `&[Retained<T>]` so the array
+    // coerces cleanly; no allocation between us and JSC's NSArray copy.
+    let args_objs: [Retained<AnyObject>; 10] = [
         unsafe { Retained::cast_unchecked(url_v) },
         unsafe { Retained::cast_unchecked(opener_id_v) },
         unsafe { Retained::cast_unchecked(opener_name_v) },
         unsafe { Retained::cast_unchecked(opener_path_v) },
-        unsafe { Retained::cast_unchecked(shift_v) },
-        unsafe { Retained::cast_unchecked(option_v) },
-        unsafe { Retained::cast_unchecked(command_v) },
-        unsafe { Retained::cast_unchecked(control_v) },
-        unsafe { Retained::cast_unchecked(caps_lock_v) },
-        unsafe { Retained::cast_unchecked(function_v) },
+        unsafe { Retained::cast_unchecked(bool_v(m.shift)) },
+        unsafe { Retained::cast_unchecked(bool_v(m.option)) },
+        unsafe { Retained::cast_unchecked(bool_v(m.command)) },
+        unsafe { Retained::cast_unchecked(bool_v(m.control)) },
+        unsafe { Retained::cast_unchecked(bool_v(m.caps_lock)) },
+        unsafe { Retained::cast_unchecked(bool_v(m.function)) },
     ];
     let args = NSArray::from_retained_slice(&args_objs);
     let result = unsafe { helper.callWithArguments(Some(&args)) };

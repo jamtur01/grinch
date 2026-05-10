@@ -281,6 +281,13 @@ pub struct Engine {
 #[derive(Debug)]
 pub enum EngineError {
     MissingDefault,
+    /// One of the prelude globals (`RegExp`, `Function`, `URL`, or a
+    /// `__grinch*` helper) was missing or null when the engine tried to
+    /// look it up. Almost always caused by user config that overwrites
+    /// or deletes the global before exporting.
+    PreludeBroken {
+        global: &'static str,
+    },
 }
 
 impl std::fmt::Display for EngineError {
@@ -291,6 +298,12 @@ impl std::fmt::Display for EngineError {
                 "config has no `default` (or `defaultBrowser`) — \
                  add e.g. `default: \"Google Chrome\"` to module.exports"
             ),
+            EngineError::PreludeBroken { global } => write!(
+                f,
+                "prelude global `{global}` is missing or null — your config \
+                 likely overwrote or deleted it. Remove the assignment and \
+                 reload."
+            ),
         }
     }
 }
@@ -300,14 +313,21 @@ impl Engine {
         let ctx = loaded.ctx;
         let exports = loaded.exports;
 
-        let regexp_ctor = unsafe { eval_global(&ctx, "RegExp") }.expect("RegExp ctor");
-        let function_ctor = unsafe { eval_global(&ctx, "Function") }.expect("Function ctor");
-        let rewrite_result_helper = unsafe { eval_global(&ctx, "__grinchRewriteResult") }
-            .expect("prelude __grinchRewriteResult missing");
-        let make_ctx_helper = unsafe { eval_global(&ctx, "__grinchMakeCtx") }
-            .expect("prelude __grinchMakeCtx missing");
-        let url_ctor =
-            unsafe { eval_global(&ctx, "URL") }.expect("prelude URL constructor missing");
+        // Prelude lookups — turn missing / null / undefined globals into
+        // config-load errors rather than letting the engine wander off
+        // with a broken constructor in hand. A user config that does
+        // e.g. `RegExp = null;` before `module.exports = …` doesn't
+        // currently crash init (eval_global returns Some(null-JSValue),
+        // not None), but it produces opaque downstream throws like
+        // "TypeError: null is not an object" on every regex matcher.
+        // Failing fast here surfaces the real problem at reload time
+        // and lets the previous engine stay in place via the existing
+        // `match Engine::new {Err => log; keep prev}` path in AppDelegate.
+        let regexp_ctor = require_global(&ctx, "RegExp")?;
+        let function_ctor = require_global(&ctx, "Function")?;
+        let rewrite_result_helper = require_global(&ctx, "__grinchRewriteResult")?;
+        let make_ctx_helper = require_global(&ctx, "__grinchMakeCtx")?;
+        let url_ctor = require_global(&ctx, "URL")?;
 
         install_window_title_callback(&ctx);
 
@@ -2206,6 +2226,20 @@ unsafe fn eval_global(ctx: &JSContext, name: &str) -> Option<Retained<JSValue>> 
     unsafe { ctx.objectForKeyedSubscript(Some(key_ref)) }
 }
 
+/// Like `eval_global` but treats missing / null / undefined values as a
+/// `PreludeBroken` error. Used during engine init for the constructors
+/// and prelude helpers we need; the call sites would otherwise propagate
+/// a null `Retained<JSValue>` into downstream `isInstanceOf` / call
+/// operations and produce opaque "null is not an object" stderr per
+/// click without ever failing the load.
+fn require_global(ctx: &JSContext, name: &'static str) -> Result<Retained<JSValue>, EngineError> {
+    let v = unsafe { eval_global(ctx, name) }.ok_or(EngineError::PreludeBroken { global: name })?;
+    if unsafe { v.isNull() } || unsafe { v.isUndefined() } {
+        return Err(EngineError::PreludeBroken { global: name });
+    }
+    Ok(v)
+}
+
 fn is_function(v: &JSValue, function_ctor: &JSValue) -> bool {
     let any: &AnyObject = function_ctor;
     unsafe { v.isInstanceOf(Some(any)) }
@@ -2575,6 +2609,13 @@ mod integration_tests {
     /// can't see each other's globals. Panics on any JSC error — caller's
     /// job to keep the synthetic config valid.
     fn build_engine(user_src: &str) -> Engine {
+        try_build_engine(user_src).expect("engine init failed")
+    }
+
+    /// Variant that returns the Result so tests can assert on
+    /// EngineError variants (e.g. PreludeBroken when a hostile config
+    /// trashes a prelude global).
+    fn try_build_engine(user_src: &str) -> Result<Engine, EngineError> {
         let ctx: Retained<JSContext> = unsafe { JSContext::new() };
 
         let prelude_ns = NSString::from_str(JS_PRELUDE);
@@ -2600,7 +2641,7 @@ mod integration_tests {
         let exports = unsafe { module.objectForKeyedSubscript(Some(exports_ref)) }
             .expect("__grinchModule.exports missing");
 
-        Engine::new(LoadedConfig { exports, ctx }).expect("engine init failed")
+        Engine::new(LoadedConfig { exports, ctx })
     }
 
     /// Synthetic opener for tests. `pid = 0` short-circuits any AX/IPC
@@ -3499,6 +3540,37 @@ mod integration_tests {
         assert!(e.needs_opener());
         assert!(e.needs_modifiers());
         assert!(e.needs_opener_full());
+    }
+
+    #[test]
+    fn config_that_trashes_prelude_global_returns_error_not_panic() {
+        // Hostile/buggy config that nukes a prelude global should produce
+        // a clean EngineError so the previous engine survives a SIGHUP
+        // reload, not a panic that tears down the process.
+        let result = try_build_engine(
+            r#"RegExp = null;
+               module.exports = { default: "com.apple.Safari" };"#,
+        );
+        match result {
+            Err(EngineError::PreludeBroken { global }) => assert_eq!(global, "RegExp"),
+            Err(other) => panic!("wrong error variant: {other:?}"),
+            Ok(_) => panic!("expected PreludeBroken, got Ok"),
+        }
+    }
+
+    #[test]
+    fn config_that_nulls_make_ctx_helper_returns_error_not_panic() {
+        // Function-declaration globals can't be `delete`d (non-configurable),
+        // but can be assigned over.
+        let result = try_build_engine(
+            r#"globalThis.__grinchMakeCtx = null;
+               module.exports = { default: "com.apple.Safari" };"#,
+        );
+        match result {
+            Err(EngineError::PreludeBroken { global }) => assert_eq!(global, "__grinchMakeCtx"),
+            Err(other) => panic!("wrong error variant: {other:?}"),
+            Ok(_) => panic!("expected PreludeBroken, got Ok"),
+        }
     }
 
     #[test]

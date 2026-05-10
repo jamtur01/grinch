@@ -71,9 +71,9 @@ If your finicky.js works as a starting point, copy it across:
 
 ```sh
 cp ~/.config/finicky.js ~/.config/grinch.js
-# (a few `export default` → `module.exports =` and `await fetch()` adjustments
-# may be needed; see "Differences from Finicky" below)
 ```
+
+A few `export default` → `module.exports =` and `await fetch()` adjustments may be needed; see "Differences from Finicky" below).
 
 ## Configuration
 

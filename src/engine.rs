@@ -573,7 +573,7 @@ impl Engine {
         // the user fn now with (url, ctx) and resolve its return through
         // the same machinery as a Target::Fn rule would. Suppress =
         // explicit `defaultBrowser: null`, mirrors `open: null` for rules.
-        let res = match &self.default_browser {
+        match &self.default_browser {
             DefaultBrowser::Static(b) => Resolution {
                 browser: Rc::clone(b),
                 url: current,
@@ -601,8 +601,7 @@ impl Engine {
                 // coerces to Resolution<'u> via covariance.
                 suppressed()
             }
-        };
-        res
+        }
     }
 }
 

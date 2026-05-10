@@ -21,10 +21,13 @@ use objc2_foundation::{NSArray, NSBundle, NSString, NSURL};
 // objc2-application-services (which transitively pulls in core-graphics for
 // AX types), so the symbol is available at link time.
 const KCG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE: i32 = 0;
+// Bit positions match Apple's CGEventTypes.h kCGEventFlagMask* constants.
+const KCG_EVENT_FLAG_MASK_ALPHA_SHIFT: u64 = 1 << 16; // Caps Lock
 const KCG_EVENT_FLAG_MASK_SHIFT: u64 = 1 << 17;
 const KCG_EVENT_FLAG_MASK_CONTROL: u64 = 1 << 18;
 const KCG_EVENT_FLAG_MASK_ALTERNATE: u64 = 1 << 19; // Option
 const KCG_EVENT_FLAG_MASK_COMMAND: u64 = 1 << 20;
+const KCG_EVENT_FLAG_MASK_SECONDARY_FN: u64 = 1 << 23; // Fn / Globe
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
@@ -202,6 +205,8 @@ fn flags_from_mask(flags: u64) -> ModifierFlags {
         option: flags & KCG_EVENT_FLAG_MASK_ALTERNATE != 0,
         command: flags & KCG_EVENT_FLAG_MASK_COMMAND != 0,
         control: flags & KCG_EVENT_FLAG_MASK_CONTROL != 0,
+        caps_lock: flags & KCG_EVENT_FLAG_MASK_ALPHA_SHIFT != 0,
+        function: flags & KCG_EVENT_FLAG_MASK_SECONDARY_FN != 0,
     }
 }
 
@@ -362,6 +367,7 @@ mod tests {
     fn flags_from_mask_zero_means_no_modifiers() {
         let m = flags_from_mask(0);
         assert!(!m.shift && !m.option && !m.command && !m.control);
+        assert!(!m.caps_lock && !m.function);
     }
 
     #[test]
@@ -377,6 +383,12 @@ mod tests {
 
         let m = flags_from_mask(KCG_EVENT_FLAG_MASK_CONTROL);
         assert!(!m.shift && !m.option && !m.command && m.control);
+
+        let m = flags_from_mask(KCG_EVENT_FLAG_MASK_ALPHA_SHIFT);
+        assert!(m.caps_lock && !m.shift && !m.function);
+
+        let m = flags_from_mask(KCG_EVENT_FLAG_MASK_SECONDARY_FN);
+        assert!(m.function && !m.caps_lock && !m.shift);
     }
 
     #[test]
@@ -388,11 +400,13 @@ mod tests {
 
     #[test]
     fn flags_from_mask_ignores_irrelevant_high_bits() {
-        // CG events carry other flag bits (caps lock, function, secondary fn)
-        // that we deliberately don't surface — they shouldn't flip our fields.
-        let unrelated = (1u64 << 16) | (1u64 << 21) | (1u64 << 23);
+        // CG events carry other flag bits we don't surface — bit 21 is the
+        // help-key mask, bit 24+ are device-specific. They shouldn't flip
+        // our fields.
+        let unrelated = (1u64 << 21) | (1u64 << 24);
         let m = flags_from_mask(unrelated);
         assert!(!m.shift && !m.option && !m.command && !m.control);
+        assert!(!m.caps_lock && !m.function);
     }
 
     #[test]

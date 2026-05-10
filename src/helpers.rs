@@ -255,7 +255,8 @@ Object.defineProperty(__grinchOpener.prototype, "windowTitle", {
   enumerable: true,
 });
 
-function __grinchMakeCtx(url, openerBundleId, openerName, openerPath, shift, option, command, control) {
+function __grinchMakeCtx(url, openerBundleId, openerName, openerPath,
+                         shift, option, command, control, capsLock, fn) {
   // Match Finicky v4 semantics: opener is `null` when the source app is
   // unknown, not an object full of empty strings. Lets configs do
   // `if (ctx.opener) { ... }` truthiness checks the same way they would
@@ -269,7 +270,13 @@ function __grinchMakeCtx(url, openerBundleId, openerName, openerPath, shift, opt
     url: url,
     originalUrl: url,
     opener: opener,
-    modifiers: { shift: shift, option: option, command: command, control: control },
+    // `fn` and `function` carry the same value — Finicky exposes both
+    // names with `function` as the v3-back-compat alias. Mirror that
+    // so configs reading either work.
+    modifiers: {
+      shift: shift, option: option, command: command, control: control,
+      capsLock: capsLock, fn: fn, function: fn,
+    },
   };
 }
 

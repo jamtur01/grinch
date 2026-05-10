@@ -62,6 +62,11 @@ pub struct ModifierFlags {
     pub option: bool,
     pub command: bool,
     pub control: bool,
+    pub caps_lock: bool,
+    /// macOS Fn / Globe key. Surfaced as both `fn` and `function` in JS for
+    /// Finicky-v3-back-compat (Finicky exposes both names with the same
+    /// value; we follow suit so configs that read either work unchanged).
+    pub function: bool,
 }
 
 pub struct Resolution<'u> {
@@ -915,12 +920,11 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
 
     install_zero_arg_string(ctx, "__grinchGetModifierKeys", || {
         let m = crate::workspace::current_modifier_flags();
-        // capsLock/fn/function aren't surfaced by ModifierFlags today;
-        // emit `false` for parity with Finicky's shape so callers don't
-        // hit "undefined.shift" style errors on those keys.
+        // `fn` and `function` carry the same value — Finicky uses both
+        // names (with `function` as the v3-back-compat alias).
         format!(
-            r#"{{"shift":{},"option":{},"command":{},"control":{},"capsLock":false,"fn":false,"function":false}}"#,
-            m.shift, m.option, m.command, m.control,
+            r#"{{"shift":{},"option":{},"command":{},"control":{},"capsLock":{},"fn":{},"function":{}}}"#,
+            m.shift, m.option, m.command, m.control, m.caps_lock, m.function, m.function,
         )
     });
 
@@ -1012,6 +1016,8 @@ fn build_ctx_object(
     let option_v = js_bool(ctx, m.option);
     let command_v = js_bool(ctx, m.command);
     let control_v = js_bool(ctx, m.control);
+    let caps_lock_v = js_bool(ctx, m.caps_lock);
+    let function_v = js_bool(ctx, m.function);
     let args_objs: Vec<Retained<AnyObject>> = vec![
         unsafe { Retained::cast_unchecked(url_v) },
         unsafe { Retained::cast_unchecked(opener_id_v) },
@@ -1021,6 +1027,8 @@ fn build_ctx_object(
         unsafe { Retained::cast_unchecked(option_v) },
         unsafe { Retained::cast_unchecked(command_v) },
         unsafe { Retained::cast_unchecked(control_v) },
+        unsafe { Retained::cast_unchecked(caps_lock_v) },
+        unsafe { Retained::cast_unchecked(function_v) },
     ];
     let args = NSArray::from_retained_slice(&args_objs);
     let result = unsafe { helper.callWithArguments(Some(&args)) };
@@ -2768,6 +2776,75 @@ mod integration_tests {
     }
 
     // ---------- ctx semantics ----------
+
+    #[test]
+    fn ctx_modifiers_includes_caps_lock_and_function() {
+        // Pin the v4 shape: ctx.modifiers exposes seven keys.
+        // shift/option/command/control/capsLock/fn/function — fn and
+        // function carry the same value (Finicky-style alias).
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: (url, ctx) => "k:" + Object.keys(ctx.modifiers).sort().join(","),
+                }],
+            };"#,
+        );
+        // Sorted: capsLock, command, control, fn, function, option, shift.
+        assert_eq!(
+            resolve(&e, "https://x/").0,
+            "k:capsLock,command,control,fn,function,option,shift",
+        );
+    }
+
+    #[test]
+    fn ctx_modifiers_caps_lock_value_propagates() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url, ctx) => ctx.modifiers.capsLock,
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        // No caps lock — falls through to default.
+        assert_eq!(
+            resolve_with(
+                &e,
+                "https://x/",
+                &Opener::default(),
+                ModifierFlags::default()
+            )
+            .0,
+            "com.apple.Safari",
+        );
+        // Caps lock on — matches.
+        let caps = ModifierFlags {
+            caps_lock: true,
+            ..ModifierFlags::default()
+        };
+        assert_eq!(
+            resolve_with(&e, "https://x/", &Opener::default(), caps).0,
+            "com.google.Chrome",
+        );
+    }
+
+    #[test]
+    fn ctx_modifiers_function_alias_matches_fn() {
+        // Finicky exposes both `fn` and `function` with the same value.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url, ctx) => ctx.modifiers.fn === ctx.modifiers.function,
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
 
     #[test]
     fn ctx_url_pinned_to_input_after_global_rewrite() {

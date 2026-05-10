@@ -3639,6 +3639,54 @@ mod integration_tests {
     }
 
     #[test]
+    fn polyfill_preserves_opaque_scheme_on_rewrite() {
+        // Regression: rebuildHref used to unconditionally emit `scheme://...`,
+        // turning `mailto:user@example.com` into `mailto://user@example.com`.
+        // Verify the opaque schemes round-trip through a rewrite that
+        // returns the URL object unchanged.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{ match: () => true, url: (url) => url }],
+            };"#,
+        );
+        assert_eq!(
+            resolve(&e, "mailto:user@example.com").1,
+            "mailto:user@example.com"
+        );
+        assert_eq!(resolve(&e, "tel:+15551234567").1, "tel:+15551234567");
+        assert_eq!(
+            resolve(&e, "javascript:void(0)").1,
+            "javascript:void(0)"
+        );
+        // Hierarchical schemes still get the `//`.
+        assert_eq!(
+            resolve(&e, "https://example.com/path").1,
+            "https://example.com/path"
+        );
+    }
+
+    #[test]
+    fn polyfill_searchparams_value_with_equals_signs() {
+        // Regression: split("=") + kv[1] used to truncate values containing
+        // `=` (signed tokens, base64 payloads, nested query strings). The
+        // WHATWG split-on-first-= behaviour preserves the full value.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: (url) => "v:" + url.searchParams.get("token"),
+                }],
+            };"#,
+        );
+        assert_eq!(
+            resolve(&e, "https://x/?token=a=b=c&q=1").0,
+            "v:a=b=c"
+        );
+    }
+
+    #[test]
     fn polyfill_searchparams_set_and_delete_propagate() {
         let e = build_engine(
             r#"module.exports = {

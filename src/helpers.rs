@@ -36,12 +36,24 @@ pub const JS_PRELUDE: &str = r##"
     self.pathname = m[6] || "";
     self._search  = m[7] || "";
     self.hash     = m[8] || "";
+    // Opaque (non-hierarchical) URIs like mailto: / tel: / javascript: have
+    // no authority component — no `//` after the scheme. Track it so
+    // rebuildHref doesn't synthesise a spurious `//` on serialise.
+    self._opaque = href.substr(m[1].length, 2) !== "//";
     self.__sp = null;
   }
 
   function rebuildHref(u) {
     var p = u.protocol || "https";
     if (p && p.charAt(p.length - 1) !== ":") p += ":";
+    var search = u._search || "";
+    if (search && search.charAt(0) !== "?") search = "?" + search;
+    var hash = u.hash || "";
+    if (hash && hash.charAt(0) !== "#") hash = "#" + hash;
+    if (u._opaque) {
+      // mailto:user@example.com — no `//`, no authority, just scheme+path.
+      return p + (u.pathname || "") + search + hash;
+    }
     var auth = "";
     if (u.username || u.password) {
       auth = u.username || "";
@@ -49,10 +61,6 @@ pub const JS_PRELUDE: &str = r##"
       auth += "@";
     }
     var host = (u.hostname || "") + (u.port ? ":" + u.port : "");
-    var search = u._search || "";
-    if (search && search.charAt(0) !== "?") search = "?" + search;
-    var hash = u.hash || "";
-    if (hash && hash.charAt(0) !== "#") hash = "#" + hash;
     return p + "//" + auth + host + (u.pathname || "") + search + hash;
   }
 
@@ -63,9 +71,15 @@ pub const JS_PRELUDE: &str = r##"
       var pairs = s.slice(1).split("&");
       for (var i = 0; i < pairs.length; i++) {
         if (!pairs[i]) continue;
-        var kv = pairs[i].split("=");
-        var k = decodeURIComponent(kv[0]);
-        var v = kv[1] ? decodeURIComponent(kv[1].replace(/\+/g, ' ')) : "";
+        // WHATWG: split on the *first* `=`, not all of them.
+        // ?token=a=b=c → key "token", value "a=b=c". Splitting on every
+        // `=` (the previous bug) silently truncated signed tokens, base64
+        // payloads, and nested-query values.
+        var eq = pairs[i].indexOf("=");
+        var rawK = eq < 0 ? pairs[i] : pairs[i].slice(0, eq);
+        var rawV = eq < 0 ? "" : pairs[i].slice(eq + 1);
+        var k = decodeURIComponent(rawK.replace(/\+/g, ' '));
+        var v = decodeURIComponent(rawV.replace(/\+/g, ' '));
         (sp._m[k] = sp._m[k] || []).push(v);
       }
     }
@@ -388,6 +402,15 @@ function __grinchRewriteResult(v) {
     if (v.search) search = (v.search.charAt(0) === "?" ? v.search : "?" + v.search);
     var hash = "";
     if (v.hash) hash = (v.hash.charAt(0) === "#" ? v.hash : "#" + v.hash);
+    // Opaque heuristic: a legacy object with no authority (no host, no
+    // auth) is non-hierarchical — emit `scheme:path` not `scheme://path`.
+    // Catches mailto:, tel:, sms:, javascript:, data:. The trade-off is
+    // that a manually-constructed `{ protocol: "file", pathname: "/x" }`
+    // will serialise as `file:/x` rather than `file:///x`; legacy v3
+    // objects in the wild rarely express file URLs this way.
+    if (!host && !auth) {
+      return proto + ":" + path + search + hash;
+    }
     return proto + "://" + auth + host + path + search + hash;
   }
   return String(v);

@@ -2676,6 +2676,42 @@ mod integration_tests {
 
     // ---------- finicky.* namespace ----------
 
+    // ---------- ctx.opener nullability ----------
+
+    #[test]
+    fn ctx_opener_is_null_when_opener_unknown() {
+        // Default Opener (all-empty strings, pid 0) signals "no opener
+        // detected" — ctx.opener should be JS null, matching Finicky v4.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url, ctx) => ctx.opener === null,
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        let unknown = Opener::default(); // all empty strings
+        let (browser, _) = resolve_with(&e, "https://x/", &unknown, ModifierFlags::default());
+        assert_eq!(browser, "com.google.Chrome");
+    }
+
+    #[test]
+    fn ctx_opener_is_object_when_opener_known() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url, ctx) => ctx.opener && ctx.opener.bundleId === "com.x",
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        let known = opener("com.x", "X");
+        let (browser, _) = resolve_with(&e, "https://x/", &known, ModifierFlags::default());
+        assert_eq!(browser, "com.google.Chrome");
+    }
+
     #[test]
     fn finicky_namespace_is_present_with_all_v4_methods() {
         let e = build_engine(

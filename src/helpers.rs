@@ -201,10 +201,19 @@ Object.defineProperty(__grinchOpener.prototype, "windowTitle", {
 });
 
 function __grinchMakeCtx(url, openerBundleId, openerName, openerPath, shift, option, command, control) {
+  // Match Finicky v4 semantics: opener is `null` when the source app is
+  // unknown, not an object full of empty strings. Lets configs do
+  // `if (ctx.opener) { ... }` truthiness checks the same way they would
+  // in Finicky. Grinch passes empty strings from Rust when
+  // frontmost_opener() can't determine the source app; treat any all-
+  // empty triple as "unknown".
+  var opener = (openerBundleId || openerName || openerPath)
+    ? new __grinchOpener(openerBundleId, openerName, openerPath)
+    : null;
   return {
     url: url,
     originalUrl: url,
-    opener: new __grinchOpener(openerBundleId, openerName, openerPath),
+    opener: opener,
     modifiers: { shift: shift, option: option, command: command, control: control },
   };
 }

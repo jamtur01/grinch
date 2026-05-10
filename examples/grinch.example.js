@@ -200,25 +200,28 @@ module.exports = {
       },
     },
 
-    // ctx.opener (bundleId, name, path).
+    // ctx.opener (bundleId, name, path). Optional-chain `?.` because
+    // ctx.opener is null when the source app couldn't be detected (e.g.
+    // a URL handed in via the command line); without `?.`, those clicks
+    // would throw "undefined is not an object" and silently default-route.
     {
-      match: (url, ctx) => ctx.opener.bundleId === "com.microsoft.teams2",
+      match: (url, ctx) => ctx.opener?.bundleId === "com.microsoft.teams2",
       open: browsers.work,
     },
     {
-      match: (url, ctx) => ctx.opener.name === "Mail",
+      match: (url, ctx) => ctx.opener?.name === "Mail",
       open: browsers.personal,
     },
     {
-      match: (url, ctx) => ctx.opener.path.includes("/Visual Studio Code.app/"),
+      match: (url, ctx) => ctx.opener?.path.includes("/Visual Studio Code.app/"),
       open: browsers.work,
     },
 
     // ctx.opener.windowTitle (lazy — needs Accessibility permission).
     {
       match: (url, ctx) =>
-        ctx.opener.bundleId === "com.tinyspeck.slackmacgap" &&
-        (ctx.opener.windowTitle || "").includes("Convergint"),
+        ctx.opener?.bundleId === "com.tinyspeck.slackmacgap" &&
+        (ctx.opener?.windowTitle || "").includes("Convergint"),
       open: browsers.work,
     },
 

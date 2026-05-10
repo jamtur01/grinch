@@ -195,7 +195,7 @@ The second argument to every user fn is `ctx`:
 {
   url: "https://...",            // input URL passed to resolve (the "originalUrl")
   originalUrl: "https://...",    // alias of ctx.url
-  opener: {
+  opener: {                      // OR null — see below
     bundleId: "com.microsoft.Outlook",
     name: "Microsoft Outlook",
     path: "/Applications/Microsoft Outlook.app/Contents/MacOS/Microsoft Outlook",
@@ -210,6 +210,11 @@ The second argument to every user fn is `ctx`:
 `ctx.url` is pinned to the URL passed into `resolve()` — it doesn't reflect
 intermediate rewrites. The first argument (a URL instance) is the *current*
 URL and is rebuilt per fn call.
+
+`ctx.opener` is `null` when the source app couldn't be detected (e.g. the
+URL came from a non-app dispatcher). Always guard with
+`if (ctx.opener) { ... }` or optional chaining (`ctx.opener?.bundleId`)
+in fns that read it. This matches Finicky v4's `options.opener` semantics.
 
 `opener.windowTitle` is a lazy getter. The first time a rule reads it,
 Grinch fetches the focused window title via the Accessibility API (~5 ms

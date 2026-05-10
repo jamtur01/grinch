@@ -36,6 +36,19 @@ The release toolchain (signing, notarisation, DMG packaging) is only
 needed if you're cutting an actual release — day-to-day development
 just needs `cargo`.
 
+### Pre-commit hook
+
+The repo ships a `.githooks/pre-commit` that runs `cargo fmt --all --
+--check` on commits that touch Rust files. Activate it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+If the hook rejects a commit, run `cargo fmt --all`, re-stage, and try
+again. CI runs the same check, so this keeps push-and-CI-fail loops
+out of the workflow.
+
 ### Building and running
 
 The Makefile drives the per-arch build, app-bundle assembly, and the

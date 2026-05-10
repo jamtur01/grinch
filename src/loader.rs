@@ -35,8 +35,21 @@ pub fn find_config_path() -> Option<PathBuf> {
 
 pub fn load_config() -> Option<LoadedConfig> {
     let (path, source) = match read_first_existing(&config_paths()) {
-        Some(found) => found,
-        None => {
+        ReadOutcome::Found { path, source } => (path, source),
+        ReadOutcome::Unreadable { path, error } => {
+            // Distinguish "config exists but we can't read it" (permission
+            // denied, non-UTF-8 contents, mid-read I/O failure) from "no
+            // config at any of the candidate paths". The previous code
+            // collapsed both into the latter, leaving users staring at
+            // a "no config found" message while their config sat right
+            // there at the path it claimed didn't exist.
+            eprintln!(
+                "grinch: couldn't read config at {}: {error}",
+                path.display()
+            );
+            return None;
+        }
+        ReadOutcome::Missing => {
             eprintln!(
                 "grinch: no config at any of: ~/.grinch.js, ~/.config/grinch.js, \
                  ~/.config/grinch/grinch.js — create one"
@@ -174,11 +187,44 @@ fn config_paths() -> Vec<PathBuf> {
     ]
 }
 
-fn read_first_existing(paths: &[PathBuf]) -> Option<(PathBuf, String)> {
+enum ReadOutcome {
+    Found {
+        path: PathBuf,
+        source: String,
+    },
+    /// A candidate path exists on disk but reading it failed (permission
+    /// denied, non-UTF-8 bytes, IO error mid-read). Surfaces a specific
+    /// error rather than the misleading "no config found" message.
+    Unreadable {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+    Missing,
+}
+
+fn read_first_existing(paths: &[PathBuf]) -> ReadOutcome {
+    let mut first_unreadable: Option<(PathBuf, std::io::Error)> = None;
     for path in paths {
-        if let Ok(source) = std::fs::read_to_string(path) {
-            return Some((path.clone(), source));
+        if !path.is_file() {
+            continue;
+        }
+        match std::fs::read_to_string(path) {
+            Ok(source) => {
+                return ReadOutcome::Found {
+                    path: path.clone(),
+                    source,
+                };
+            }
+            Err(error) => {
+                if first_unreadable.is_none() {
+                    first_unreadable = Some((path.clone(), error));
+                }
+            }
         }
     }
-    None
+    if let Some((path, error)) = first_unreadable {
+        ReadOutcome::Unreadable { path, error }
+    } else {
+        ReadOutcome::Missing
+    }
 }

@@ -115,6 +115,12 @@ pub fn running_apps_cached() -> Arc<HashSet<String>> {
 /// Look up the on-disk URL of an app bundle by ID, hitting LaunchServices
 /// only on a cache miss. Returns `None` when no app with that bundle ID
 /// is installed (cached as well, so we don't re-query for missing apps).
+///
+/// The cached value is the URL's `absoluteString` (a percent-encoded
+/// `file://…` URL), not the decoded path. Using `path()` + `fileURLWithPath`
+/// re-encoded paths containing literal `%` or `#` differently from the
+/// original NSURL — round-tripping via the canonical URL form preserves
+/// whatever LaunchServices originally returned.
 fn resolved_app_url(bundle_id: &str) -> Option<Retained<NSURL>> {
     {
         let cache = BUNDLE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -122,19 +128,22 @@ fn resolved_app_url(bundle_id: &str) -> Option<Retained<NSURL>> {
             if let Some(hit) = map.get(bundle_id) {
                 return hit
                     .as_ref()
-                    .map(|p| NSURL::fileURLWithPath(&NSString::from_str(p)));
+                    .and_then(|s| NSURL::URLWithString(&NSString::from_str(s)));
             }
         }
     }
     let workspace = NSWorkspace::sharedWorkspace();
     let bundle_ns = NSString::from_str(bundle_id);
     let url = workspace.URLForApplicationWithBundleIdentifier(&bundle_ns);
-    let path = url.as_ref().and_then(|u| u.path()).map(|s| s.to_string());
+    let abs = url
+        .as_ref()
+        .and_then(|u| u.absoluteString())
+        .map(|s| s.to_string());
     {
         let mut cache = BUNDLE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         cache
             .get_or_insert_with(HashMap::new)
-            .insert(bundle_id.to_string(), path);
+            .insert(bundle_id.to_string(), abs);
     }
     url
 }

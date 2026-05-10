@@ -65,7 +65,10 @@ case "$filter" in
     hot|all)
         printf '\n## Hot path (declarative-only configs)\n\n'
         printf '| Workload | ns/op |\n|---|---:|\n'
-        for cfg in "$configs_dir"/0[1-7]-*.grinch.js; do
+        for cfg in "$configs_dir"/0[1-7]-*.grinch.js \
+                   "$configs_dir"/1[4-9]-*.grinch.js \
+                   "$configs_dir"/2[0-9]-*.grinch.js; do
+            [[ -f "$cfg" ]] || continue
             iters="$(read_meta "$cfg" Iterations)"
             url="$(read_meta "$cfg" URL)"
             label="$(label_of "$cfg")"

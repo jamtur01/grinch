@@ -3675,10 +3675,7 @@ mod integration_tests {
             "mailto:user@example.com"
         );
         assert_eq!(resolve(&e, "tel:+15551234567").1, "tel:+15551234567");
-        assert_eq!(
-            resolve(&e, "javascript:void(0)").1,
-            "javascript:void(0)"
-        );
+        assert_eq!(resolve(&e, "javascript:void(0)").1, "javascript:void(0)");
         // Hierarchical schemes still get the `//`.
         assert_eq!(
             resolve(&e, "https://example.com/path").1,
@@ -3700,10 +3697,7 @@ mod integration_tests {
                 }],
             };"#,
         );
-        assert_eq!(
-            resolve(&e, "https://x/?token=a=b=c&q=1").0,
-            "v:a=b=c"
-        );
+        assert_eq!(resolve(&e, "https://x/?token=a=b=c&q=1").0, "v:a=b=c");
     }
 
     #[test]

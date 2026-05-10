@@ -539,9 +539,8 @@ fn install_sighup_handler(delegate: &Delegate) {
     std::thread::spawn(move || {
         let mut buf = [0u8; 64];
         loop {
-            let n = unsafe {
-                libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-            };
+            let n =
+                unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
             if n <= 0 {
                 // EOF or error — pipe is gone, nothing more to do.
                 eprintln!("grinch: SIGHUP self-pipe closed; reload disabled");

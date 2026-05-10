@@ -543,7 +543,10 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
                 spec.bundle_id
             );
         } else {
-            eprintln!("grinch: browser not found ({}); URL dropped", spec.bundle_id);
+            eprintln!(
+                "grinch: browser not found ({}); URL dropped",
+                spec.bundle_id
+            );
         }
         return;
     };

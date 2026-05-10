@@ -951,19 +951,14 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
     });
 
     install_zero_arg_string(ctx, "__grinchGetSystemInfo", || {
-        let mut buf = [0u8; 256];
-        let ret = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len()) };
-        let host = if ret == 0 {
-            let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-            String::from_utf8_lossy(&buf[..len]).into_owned()
-        } else {
-            String::new()
-        };
-        // Finicky returns localizedName + name from NSHost; we just return
-        // gethostname() for both — it's good enough for routing decisions
-        // like "is this my work laptop?".
-        let json = serde_json::json!({ "localizedName": host, "name": host });
-        json.to_string()
+        // [NSHost currentHost] gives the same two values Finicky exposes:
+        //   - localizedName follows the user-set "Computer Name" (e.g.
+        //     "James's MacBook Pro")
+        //   - name is the canonical hostname (e.g. "jamtur01-mbp")
+        // On a fresh Mac install both are the same; routing on either
+        // is meaningful.
+        let (localized, name) = crate::workspace::host_info();
+        serde_json::json!({ "localizedName": localized, "name": name }).to_string()
     });
 
     install_zero_arg_string(ctx, "__grinchGetPowerInfo", || {

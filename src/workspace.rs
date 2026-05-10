@@ -6,7 +6,8 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use objc2::rc::Retained;
-use objc2::MainThreadMarker;
+use objc2::runtime::AnyObject;
+use objc2::{class, msg_send, MainThreadMarker};
 use objc2_app_kit::{NSWorkspace, NSWorkspaceOpenConfiguration};
 use objc2_application_services::{
     kAXTrustedCheckOptionPrompt, AXError, AXIsProcessTrusted, AXIsProcessTrustedWithOptions,
@@ -307,6 +308,38 @@ fn resolve_browser_identifier_uncached(name: &str) -> String {
 /// bundle can't be opened or has no `CFBundleIdentifier`, so the eventual
 /// open call gets something to work with (probably failing visibly rather
 /// than silently).
+/// Read NSHost's user-friendly + canonical machine identity.
+/// Returns `(localized_name, name)` — equivalent to
+/// `[[NSHost currentHost] localizedName]` and `[currentHost name]`.
+///
+/// The two values differ when the user has set a "Computer Name" in
+/// System Settings → General → About: localizedName follows that
+/// (e.g. "James's MacBook Pro"), while `name` is the canonical
+/// hostname (e.g. "jamtur01-mbp"). On a fresh install both are the
+/// same. Empty strings if NSHost yields nil for either field.
+pub fn host_info() -> (String, String) {
+    unsafe {
+        let cls = class!(NSHost);
+        let host: *mut AnyObject = msg_send![cls, currentHost];
+        if host.is_null() {
+            return (String::new(), String::new());
+        }
+        let localized: *mut NSString = msg_send![&*host, localizedName];
+        let canonical: *mut NSString = msg_send![&*host, name];
+        let l = if localized.is_null() {
+            String::new()
+        } else {
+            (*localized).to_string()
+        };
+        let c = if canonical.is_null() {
+            String::new()
+        } else {
+            (*canonical).to_string()
+        };
+        (l, c)
+    }
+}
+
 pub fn resolve_browser_path(path: &str) -> String {
     let path_ns = NSString::from_str(path);
     let url = NSURL::fileURLWithPath(&path_ns);

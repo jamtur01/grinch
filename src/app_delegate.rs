@@ -134,38 +134,47 @@ define_class!(
 
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
-            self.reload_engine();
-            self.setup_menu_bar();
-            install_sighup_handler(self);
-
-            // Skip the Accessibility prompt in CLI modes — they don't need
-            // opener.windowTitle resolution and the dialog is jarring during
-            // a one-shot --test or --bench invocation.
+            // CLI short-circuit: --test / --bench load the engine, run the
+            // requested command, and terminate. No menu bar, no SIGHUP
+            // handler, no Accessibility prompt — none of those are useful
+            // for a one-shot CLI invocation, and skipping them avoids the
+            // SMAppService / NSStatusBar work (which can stall in headless
+            // sandboxes that have no UI session).
             let args: Vec<String> = std::env::args().collect();
-            let in_cli_mode = args.iter().any(|a| a == "--test" || a == "--bench");
-            if !in_cli_mode && !ensure_accessibility_permission() {
-                eprintln!(
-                    "grinch: Accessibility permission not granted yet. \
-                     Rules that read opener.windowTitle (e.g. routing by Slack \
-                     workspace) will silently no-op until you allow Grinch.app \
-                     in System Settings → Privacy & Security → Accessibility."
-                );
-            }
+            let cli_test = args.iter().position(|a| a == "--test");
+            let cli_bench = args.iter().position(|a| a == "--bench");
 
-            // CLI modes: --test <url>, --bench <n> <url>
-            if let Some(idx) = args.iter().position(|a| a == "--test") {
+            if let Some(idx) = cli_test {
+                self.reload_engine();
                 if let Some(url) = args.get(idx + 1) {
                     self.test_url(url);
                 }
                 terminate(self.mtm());
                 return;
             }
-            if let Some(idx) = args.iter().position(|a| a == "--bench") {
+            if let Some(idx) = cli_bench {
+                self.reload_engine();
                 if let (Some(n), Some(url)) = (args.get(idx + 1), args.get(idx + 2)) {
                     let n: usize = n.parse().unwrap_or(10_000);
                     self.bench(n, url);
                 }
                 terminate(self.mtm());
+                return;
+            }
+
+            // Normal app-mode startup: load config, build the menu bar,
+            // wire SIGHUP, and ask for Accessibility once.
+            self.reload_engine();
+            self.setup_menu_bar();
+            install_sighup_handler(self);
+
+            if !ensure_accessibility_permission() {
+                eprintln!(
+                    "grinch: Accessibility permission not granted yet. \
+                     Rules that read opener.windowTitle (e.g. routing by Slack \
+                     workspace) will silently no-op until you allow Grinch.app \
+                     in System Settings → Privacy & Security → Accessibility."
+                );
             }
         }
     }

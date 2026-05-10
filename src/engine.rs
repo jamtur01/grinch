@@ -1079,14 +1079,37 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
         return BrowserSpec::empty();
     }
 
-    // Bundle ID source: `id`, `bundleId`, or `name`. `appType` (Finicky) is
-    // read but doesn't change behavior — we always normalise to a bundle ID.
+    // appType: "none" → no-op browser (same as `open: null`). Skip the
+    // identifier resolution entirely.
+    if let Some(t) = key(v, "appType").and_then(|x| js_to_string(&x)) {
+        if t == "none" {
+            return BrowserSpec::empty();
+        }
+    }
+
+    // Bundle ID source: `id`, `bundleId`, or `name`. The resolver dispatches
+    // on `appType` when present:
+    //   - "path"     → treat the value as a filesystem path, look up its
+    //                  CFBundleIdentifier directly.
+    //   - "bundleId" → use the value verbatim (skip the LaunchServices
+    //                  display-name fallback).
+    //   - "appName"  → look up via NSWorkspace's app-by-display-name path.
+    //   - default    → autodetect (existing behaviour).
     let raw_id = key(v, "id")
         .or_else(|| key(v, "bundleId"))
         .or_else(|| key(v, "name"))
         .and_then(|x| js_to_string(&x))
         .unwrap_or_default();
-    let bundle_id = resolve_browser_identifier(&raw_id);
+    let app_type = key(v, "appType").and_then(|x| js_to_string(&x));
+    let bundle_id = match app_type.as_deref() {
+        Some("path") => crate::workspace::resolve_browser_path(&raw_id),
+        Some("bundleId") => raw_id.clone(),
+        // "appName" goes through the same code path as autodetect — both end
+        // up at fullPathForApplication. The explicit appType lets the user
+        // skip the bundle-ID fast path when the name happens to look like
+        // one (rare but possible).
+        _ => resolve_browser_identifier(&raw_id),
+    };
 
     let mut args = key(v, "args")
         .map(|a| js_array_to_strings(&a))
@@ -1176,6 +1199,11 @@ fn parse_rule_array(
             Some(ov) if unsafe { ov.isNull() } => Target::Suppress,
             Some(ov) if is_function(ov, function_ctor) => Target::Fn(UserFn::new(ov.clone())),
             Some(ov) => match resolve_browser(ov, browsers) {
+                // Empty bundle_id = explicit no-op browser (e.g. via
+                // `appType: "none"`). Normalise to Target::Suppress so the
+                // resolve path's URL handling matches `open: null` exactly,
+                // including the "about:blank" Resolution.url.
+                Some(b) if b.bundle_id.is_empty() => Target::Suppress,
                 Some(b) => Target::Browser(b),
                 None => {
                     eprintln!(
@@ -2617,6 +2645,49 @@ mod integration_tests {
             };"#,
         );
         assert_eq!(resolve(&e, "https://x/").0, "com.spotify.client");
+    }
+
+    #[test]
+    fn parse_browser_jsval_apptype_none_suppresses() {
+        // appType: "none" is Finicky's explicit no-op browser. Should
+        // behave identically to `open: null`.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: "tracking.com",
+                    open: { name: "ignored", appType: "none" },
+                }],
+            };"#,
+        );
+        let (browser, url) = resolve(&e, "https://tracking.com/");
+        assert_eq!(browser, "");
+        assert_eq!(url, "about:blank");
+    }
+
+    #[test]
+    fn parse_browser_jsval_apptype_path_resolves_to_bundle_id() {
+        // appType: "path" — point at a real, always-installed system app
+        // and assert we recover its bundle ID. Safari ships with macOS,
+        // so /Applications/Safari.app exists in CI and on every dev box.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "/Applications/Safari.app", appType: "path" },
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn parse_browser_jsval_apptype_bundleid_skips_lookup() {
+        // appType: "bundleId" trusts the value verbatim. Even an unknown ID
+        // is preserved — the eventual open call is what would fail visibly.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.totally.fake", appType: "bundleId" },
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.totally.fake");
     }
 
     #[test]

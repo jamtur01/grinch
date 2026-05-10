@@ -30,6 +30,14 @@ const browsers = {
 
   // Open in the background (don't activate the target app).
   spotifyBackground: { name: "com.spotify.client", openInBackground: true },
+
+  // appType: "path" — point at an .app bundle directly. Useful for
+  // browsers outside /Applications or not registered with LaunchServices.
+  custom: { name: "/Applications/MyBrowser.app", appType: "path" },
+
+  // appType: "none" — explicit no-op browser. Same effect as `open: null`,
+  // but can be referenced by key from rules below.
+  doNothing: { appType: "none" },
 };
 
 // Apps too — same forms.

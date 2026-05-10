@@ -106,6 +106,9 @@ A browser is one of:
 | `{ name: "Google Chrome", profile: "Work" }` | Chromium profile shorthand — expanded to `--profile-directory=Work` for Chromium-family bundle IDs |
 | `{ name: "...", args: ["--incognito"] }` | Bundle ID + extra launch args |
 | `{ name: "...", openInBackground: true }` | Don't activate (keep focus where it is) |
+| `{ name: "/Applications/Foo.app", appType: "path" }` | Path to an `.app` bundle — Grinch reads `CFBundleIdentifier` directly. Useful for browsers outside `/Applications` or not registered with LaunchServices |
+| `{ name: "...", appType: "bundleId" }` | Trust the value as a bundle ID, skip the LaunchServices display-name fallback |
+| `{ appType: "none" }` | Explicit no-op browser. Same effect as `open: null` |
 | `(url, ctx) => "..."` | Dynamic — return any of the above |
 | `null` | Suppress: do nothing |
 
@@ -461,10 +464,13 @@ to adjust:
 4. **`opener.windowTitle` requires Accessibility permission.** First launch
    prompts; before granting, the field returns `""` and rules depending on
    it silently no-op.
-5. **`appType` is auto-detected, not declarative.** Names that look like
-   bundle IDs (reverse-DNS) are treated as such; everything else goes
-   through `NSWorkspace.fullPathForApplication`. You can still set
-   `bundleId`/`id` explicitly.
+5. **`appType` is honoured, but autodetected when omitted.** All four
+   Finicky values work: `"appName"` (the default — display-name lookup),
+   `"bundleId"` (skip the display-name fallback), `"path"` (read
+   `CFBundleIdentifier` from a `.app` bundle path), and `"none"`
+   (no-op browser, same as `open: null`). When you don't set `appType`,
+   Grinch autodetects: a reverse-DNS string is treated as a bundle ID,
+   anything else as a display name.
 
 Everything else — `domain`, `from`, `running`, `strip`, the `URL` polyfill,
 arrays of matchers, `null` open, combined `{match, url, browser}` entries,

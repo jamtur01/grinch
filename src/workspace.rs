@@ -265,6 +265,25 @@ fn resolve_browser_identifier_uncached(name: &str) -> String {
     name.to_string()
 }
 
+/// Resolve a filesystem path to an `.app` bundle ID. Used by browser specs
+/// that declare `appType: "path"` (e.g. `name: "/Applications/MyBrowser.app"`)
+/// — useful for browsers that aren't installed in `/Applications` or aren't
+/// registered with LaunchServices yet. Returns the input unchanged if the
+/// bundle can't be opened or has no `CFBundleIdentifier`, so the eventual
+/// open call gets something to work with (probably failing visibly rather
+/// than silently).
+pub fn resolve_browser_path(path: &str) -> String {
+    let path_ns = NSString::from_str(path);
+    let url = NSURL::fileURLWithPath(&path_ns);
+    if let Some(bundle) = NSBundle::bundleWithURL(&url) {
+        if let Some(id) = bundle.bundleIdentifier() {
+            return id.to_string();
+        }
+    }
+    eprintln!("grinch: couldn't load bundle at path {path}");
+    path.to_string()
+}
+
 /// Open `url` in the given browser app. If the bundle ID is empty (suppress),
 /// do nothing. If the bundle ID is unknown, fall back to the user's actual
 /// default browser via NSWorkspace.

@@ -18,7 +18,7 @@ use objc2::runtime::AnyObject;
 use objc2_foundation::{NSString, NSURL};
 use objc2_javascript_core::{JSContext, JSValue};
 
-use crate::helpers::{wrap_user_config, JS_PRELUDE};
+use crate::helpers::{preprocess_es_module_syntax, wrap_user_config, JS_PRELUDE};
 
 pub struct LoadedConfig {
     pub exports: Retained<JSValue>,
@@ -89,7 +89,18 @@ pub fn load_config() -> Option<LoadedConfig> {
     // finicky.* bridges (getModifierKeys / isAppRunning / etc.).
     crate::engine::install_console_callbacks(&ctx);
     crate::engine::install_finicky_callbacks(&ctx);
-    let wrapped = wrap_user_config(&source);
+
+    // Rewrite Finicky-v4-style `export default { … }` into the CommonJS
+    // form JSC's evaluateScript accepts. Unsupported ESM shapes (`import`,
+    // named exports) get a config-load error pointing at module.exports.
+    let preprocessed = match preprocess_es_module_syntax(&source) {
+        Ok(s) => s,
+        Err(msg) => {
+            eprintln!("grinch: js error in {path_str}: {msg}");
+            return None;
+        }
+    };
+    let wrapped = wrap_user_config(&preprocessed);
     if eval(&ctx, &wrapped).is_none() || *last_error.borrow() {
         return None;
     }

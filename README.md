@@ -75,7 +75,9 @@ If your finicky.js works as a starting point, copy it across:
 cp ~/.config/finicky.js ~/.config/grinch.js
 ```
 
-A few `export default` → `module.exports =` and `await fetch()` adjustments may be needed; see "Differences from Finicky" below).
+`export default { ... }` works as-is (auto-rewritten to `module.exports`).
+You'll still need to convert `await fetch()` calls; see
+"Differences from Finicky" below.
 
 ## Configuration
 
@@ -487,9 +489,13 @@ then read the list below for what Grinch handles differently.
 If you're porting a Finicky v4 config, these are the places you'll need
 to adjust:
 
-1. **`module.exports = { ... }` instead of `export default { ... }`.**
-   JavaScriptCore in Grinch evaluates scripts, not modules — `import`/`export`
-   syntax doesn't parse.
+1. **`export default { ... }` works; `import` / named `export` don't.**
+   Grinch preprocesses `export default <expr>` into `module.exports = <expr>`
+   at config-load, so paste-and-go from a Finicky v4 config works. ES module
+   `import` lines and named exports (`export const`, `export function`, etc.)
+   error out with a config-load message pointing at `module.exports` —
+   JSC evaluates the file as a script, so there's nowhere for an import to
+   resolve. Inline what you need or pre-process before invoking Grinch.
 2. **No `await fetch()`.** The resolve hot path is sync. The Finicky
    `shortenerExpander` pattern can't run; resolve a shortener separately
    if you need it — see [Working with URL shorteners](#working-with-url-shorteners)

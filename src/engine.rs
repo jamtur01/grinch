@@ -2397,6 +2397,26 @@ mod integration_tests {
     }
 
     #[test]
+    fn export_default_es_module_syntax_works() {
+        // Verify the loader's preprocess step kicks in and the user
+        // can write Finicky-v4-style `export default { … }` without
+        // converting to module.exports first. We stage the same way
+        // the loader does — preprocess + wrap — and run through
+        // build_engine's existing pipeline.
+        use crate::helpers::preprocess_es_module_syntax;
+        let src = preprocess_es_module_syntax(
+            r#"export default {
+                default: "com.apple.Safari",
+                rules: [{ match: "github.com", open: "com.google.Chrome" }],
+            };"#,
+        )
+        .unwrap();
+        let e = build_engine(&src);
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://example.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
     fn defaultbrowser_alias_works() {
         // Finicky-style key name should be accepted as well.
         let e = build_engine(r#"module.exports = { defaultBrowser: "com.apple.Safari" };"#);

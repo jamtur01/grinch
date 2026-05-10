@@ -441,6 +441,132 @@ var finicky = {
 var __grinchModule = { exports: {} };
 "##;
 
+/// Rewrite Finicky-v4-style ES module syntax into the CommonJS form
+/// JSC's `evaluateScript` accepts.
+///
+/// Three transforms:
+/// - `export default <expr>;` → `module.exports = <expr>;`
+///   (covers `export default { ... }`, `export default function …`, etc.)
+/// - `import …` lines emit a config-load error pointing at module.exports
+///   — JSC isn't a module evaluator and there's nowhere for the import to
+///   resolve to even if we could parse it.
+/// - `export const X = …` / `export function X` etc. emit the same error;
+///   Grinch only loads a single default export, named exports have no place
+///   to land.
+///
+/// The replacement is intentionally regex-based and per-line — handling
+/// the full ESM grammar would mean shipping a parser, and the only ESM
+/// shape we actually care about for Finicky-config porting is
+/// `export default { … }`.
+///
+/// Returns the transformed source on success, or `Err(message)` on the
+/// unsupported-syntax cases. Callers (loader.rs) print the message via the
+/// usual `grinch: …` channel and abort the load.
+pub fn preprocess_es_module_syntax(src: &str) -> Result<String, String> {
+    // Detect unsupported `import …` lines first — hint vs JSC's bare
+    // "Unexpected identifier 'from'" syntax error.
+    for (i, line) in src.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("import ") || trimmed.starts_with("import\t") {
+            return Err(format!(
+                "ES module `import` syntax is not supported (line {}). Grinch \
+                 evaluates the config as a script, not a module — inline what \
+                 you need or load it before invoking Grinch.",
+                i + 1
+            ));
+        }
+        // Non-default named exports: `export const`, `export function`,
+        // `export class`, `export {…}`. `export default` is the one shape
+        // we DO accept, so guard for it before flagging.
+        if (trimmed.starts_with("export ") || trimmed.starts_with("export\t"))
+            && !trimmed.starts_with("export default")
+        {
+            return Err(format!(
+                "Named ES module `export` syntax is not supported (line {}). \
+                 Grinch only consumes a single config object — use \
+                 `export default {{ … }}` or `module.exports = {{ … }}`.",
+                i + 1
+            ));
+        }
+    }
+
+    // Rewrite `export default` → `module.exports =`. Only the literal
+    // keyword sequence at the start of a line (after optional whitespace)
+    // is rewritten, to avoid touching strings or comments containing the
+    // phrase. The trailing `=` sits where `default` was, preserving the
+    // user's column offsets within the declaration body — important
+    // because JSC's exception line/column numbers are user-visible.
+    let mut out = String::with_capacity(src.len());
+    for line in src.lines() {
+        let leading_ws = line.len() - line.trim_start().len();
+        let rest = &line[leading_ws..];
+        if let Some(after) = rest.strip_prefix("export default ") {
+            // Replace "export default " (15 chars) with "module.exports = "
+            // (17 chars) — two extra columns. Acceptable: it's a one-line
+            // shift only on the export line itself.
+            out.push_str(&line[..leading_ws]);
+            out.push_str("module.exports = ");
+            out.push_str(after);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preprocess_rewrites_export_default_object() {
+        let out = preprocess_es_module_syntax("export default { default: \"x\" };").unwrap();
+        assert_eq!(out, "module.exports = { default: \"x\" };\n");
+    }
+
+    #[test]
+    fn preprocess_rewrites_export_default_with_leading_whitespace() {
+        // export-default lines may be indented (rare for top-level, but
+        // possible inside an IIFE); we still rewrite them.
+        let out = preprocess_es_module_syntax("    export default 42;").unwrap();
+        assert_eq!(out, "    module.exports = 42;\n");
+    }
+
+    #[test]
+    fn preprocess_leaves_unrelated_lines_untouched() {
+        let src = "// hello\nconst x = 1;\nmodule.exports = { x };";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        assert_eq!(out, "// hello\nconst x = 1;\nmodule.exports = { x };\n");
+    }
+
+    #[test]
+    fn preprocess_rejects_import_with_helpful_error() {
+        let err = preprocess_es_module_syntax("import foo from 'bar';").unwrap_err();
+        assert!(
+            err.contains("`import` syntax is not supported"),
+            "got: {err}"
+        );
+        assert!(err.contains("line 1"), "got: {err}");
+    }
+
+    #[test]
+    fn preprocess_rejects_named_export_with_helpful_error() {
+        let err = preprocess_es_module_syntax("export const x = 1;").unwrap_err();
+        assert!(err.contains("Named ES module `export`"), "got: {err}");
+        assert!(err.contains("module.exports"), "got: {err}");
+    }
+
+    #[test]
+    fn preprocess_does_not_match_export_inside_string() {
+        // `"export default"` as a string literal must NOT trigger the
+        // rewrite — the regex anchors on indentation + literal token.
+        let src = r#"const s = "export default { fake: true }";"#;
+        let out = preprocess_es_module_syntax(src).unwrap();
+        assert!(out.contains(r#""export default"#));
+    }
+}
+
 // Wrap user source so module/exports are scoped locally and don't pollute globals.
 //
 // The `{` and the user source share line 1 deliberately: any `\n` between

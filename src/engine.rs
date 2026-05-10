@@ -3483,6 +3483,31 @@ mod integration_tests {
     }
 
     #[test]
+    fn finicky_get_power_info_is_dedup_stub() {
+        // The stub returns the same shape on every call. The one-time
+        // console.warn is observable on stderr but doesn't affect the
+        // return value; verify the structure is stable across repeated
+        // calls so the dedup flag doesn't accidentally cache a
+        // different first-call return.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => {
+                        var a = finicky.getPowerInfo();
+                        var b = finicky.getPowerInfo();
+                        return "same:" + (a.isCharging === b.isCharging
+                            && a.isConnected === b.isConnected
+                            && a.percentage === b.percentage);
+                    },
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "same:true");
+    }
+
+    #[test]
     fn finicky_notify_is_inert_stub() {
         // Calling notify must not throw, must return undefined; matches
         // Finicky's deprecated stub behaviour.

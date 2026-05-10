@@ -417,6 +417,19 @@ var finicky = {
   },
 
   getPowerInfo: function() {
+    // The Rust bridge currently returns placeholder values (Grinch
+    // doesn't link IOKit IOPSCopy* yet — most routing configs don't
+    // read battery state). Warn loudly the first time so configs that
+    // actually depend on the real values don't silently misroute.
+    if (!finicky.__grinchPowerInfoWarned) {
+      finicky.__grinchPowerInfoWarned = true;
+      console.warn(
+        "finicky.getPowerInfo is a stub in Grinch — it returns placeholder " +
+        "values (isCharging: false, isConnected: true, percentage: null) " +
+        "regardless of actual battery state. File a Grinch issue if you " +
+        "need real values."
+      );
+    }
     if (typeof __grinchGetPowerInfo === "function") {
       try { return JSON.parse(__grinchGetPowerInfo()); } catch (_) {}
     }

@@ -1855,10 +1855,13 @@ fn compile_wildcard(pattern: &str) -> Option<Regex> {
     // Step 6: anchor.
     let anchored = format!("^{work}$");
 
-    RegexBuilder::new(&anchored)
-        .case_insensitive(true)
-        .build()
-        .ok()
+    // Case-sensitive by default — Finicky's `matchWildcard` produces a
+    // bare JS RegExp with no `/i` flag and matches via `RegExp.test`,
+    // which is also case-sensitive by default. Earlier Grinch versions
+    // forced case_insensitive(true) here, which silently diverged on any
+    // mixed-case URL (e.g. `match: "GitHub.com/*"` matched
+    // `https://github.com/path` in Grinch but not in Finicky).
+    RegexBuilder::new(&anchored).build().ok()
 }
 
 fn pattern_has_protocol_prefix(pat: &str) -> bool {
@@ -2304,8 +2307,18 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_case_insensitive() {
-        assert!(matches_pat("zoom.us/j/*", "HTTPS://ZOOM.US/J/abc"));
+    fn wildcard_is_case_sensitive_matching_finicky() {
+        // Finicky's matchWildcard produces a JS RegExp without the /i
+        // flag — RegExp.test is case-sensitive by default. Mirror that.
+        assert!(matches_pat("zoom.us/j/*", "https://zoom.us/j/abc"));
+        // Same path, mixed case host — must NOT match without /i.
+        assert!(!matches_pat("zoom.us/j/*", "HTTPS://ZOOM.US/J/abc"));
+        // Path case must also be respected.
+        assert!(matches_pat("github.com/Org/*", "https://github.com/Org/repo"));
+        assert!(!matches_pat(
+            "github.com/Org/*",
+            "https://github.com/org/repo"
+        ));
     }
 
     // -------- analyse_runtime_needs --------

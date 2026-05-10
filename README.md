@@ -385,18 +385,20 @@ configs and URLs that produced these numbers live in `bench/configs/`.
 
 These are the workloads that hit the bulk of the rules-array — domain
 matchers, regex, wildcards. No JS bridge crossings; the URL string is
-borrowed (`Cow::Borrowed`) for the entire resolve when no rewrite fires,
-and `quick_host` is skipped when the config has no host-using matcher.
+borrowed (`Cow::Borrowed`) for the entire resolve when no rewrite fires;
+`quick_host` is skipped when the config has no host-using matcher and
+borrows the host slice when it's already lowercase ASCII.
 
 | Workload | ns/op |
 |---|---:|
 | Floor: empty rules, no rewrite | **5** |
-| Default fallback, no query | 75 |
-| Default fallback, strip removes a param | 216 |
-| Bare-hostname match (`"github.com"`) | 52 |
-| `domain()` match | 57 |
-| Regex match | 32 |
+| Default fallback, no query | 67 |
+| Default fallback, strip removes a param | 187 |
+| Bare-hostname match (`"github.com"`) | 42 |
+| `domain()` match | 48 |
+| Regex match | 22 |
 | Wildcard match (`"zoom.us/j/*"`) | 30 |
+| 50 bare-hostname rules, last one wins | 295 |
 
 ### Slow path (configs with `(url, ctx) => …` fn matchers)
 
@@ -405,16 +407,17 @@ predicates (`(url) => …`) skip the `__grinchMakeCtx` build *and* skip
 the LaunchServices IPC for `frontmost_opener()` upstream — only fns
 declaring a second formal arg pay for ctx. The first JS-bridge call in
 a resolve costs ~3 µs (URL polyfill + cached opener-field JSValues);
-subsequent fn calls within the same resolve reuse the cached args.
+subsequent fn calls within the same resolve reuse the cached args. Ctx
+build itself reuses pre-built `true`/`false` JSValues for modifier flags.
 
 | Workload | ns/op |
 |---|---:|
-| Native rule wins early (no fn fires) | 51 |
-| Drop URL via `() => null` (url-only) | 2,705 |
-| HTTP→HTTPS via URL mutation (url-only) | 4,303 |
-| `?browser=` dynamic open fn (url-only matcher) | 4,509 |
-| 4 fn matchers reading `ctx.opener` | 5,568 |
-| Full Slack-web → `slack://` rewrite | 5,687 |
+| Native rule wins early (no fn fires) | 42 |
+| Drop URL via `() => null` (url-only) | 2,597 |
+| HTTP→HTTPS via URL mutation (url-only) | 4,327 |
+| `?browser=` dynamic open fn (url-only matcher) | 4,855 |
+| 4 fn matchers reading `ctx.opener` | 5,159 |
+| Full Slack-web → `slack://` rewrite | 5,494 |
 
 ### Memory
 
@@ -428,11 +431,11 @@ Same hardware, same config, same URLs.
 
 | Workload | Finch (Swift) | **Grinch (Rust)** | Speedup |
 |---|---:|---:|---:|
-| Default fallback, no query | 9,308 ns | **75 ns** | 124× |
-| Default fallback, strip removes | 10,898 ns | **216 ns** | 50× |
-| Bare-hostname match | 5,242 ns | **52 ns** | 101× |
-| Subdomain via `domain()` | 5,784 ns | **57 ns** | 101× |
-| Regex match | 1,454 ns | **32 ns** | 45× |
+| Default fallback, no query | 9,308 ns | **67 ns** | 139× |
+| Default fallback, strip removes | 10,898 ns | **187 ns** | 58× |
+| Bare-hostname match | 5,242 ns | **42 ns** | 125× |
+| Subdomain via `domain()` | 5,784 ns | **48 ns** | 121× |
+| Regex match | 1,454 ns | **22 ns** | 66× |
 | Wildcard match | 9,060 ns | **30 ns** | 302× |
 
 | | Finch | **Grinch** | Finicky |
@@ -463,7 +466,9 @@ clicks add a few more steps:
 - **`frontmost_opener()`**: ~100–500 µs of LaunchServices IPC, *only
   when the engine reports it needs the opener* (any rule using
   `from()`, `ctx.opener.*`, or any user fn matcher). Configs with
-  pure declarative matchers skip this entirely.
+  pure declarative matchers skip this entirely; configs that only use
+  `from()` matchers take a lite path that fetches just `bundleIdentifier`
+  and skips `localizedName` + `executableURL` IPC.
 - **`current_modifier_flags()`**: ~100 ns kernel call, same gating —
   skipped unless a fn matcher might read modifiers.
 - **`open_url()`**: ~few ms for `NSWorkspace.openApplicationAtURL` to

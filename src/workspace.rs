@@ -552,6 +552,11 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     };
 
     let cfg = NSWorkspaceOpenConfiguration::configuration();
+    // macOS Recent Items defaults to *adding* every URL Grinch routes,
+    // which clogs the system menu with one entry per routed click.
+    // Browsers maintain their own history; the OS-wide Recent list is
+    // for user-initiated document opens, not a router's pass-through.
+    cfg.setAddsToRecentItems(false);
     if spec.open_in_background {
         cfg.setActivates(false);
     }

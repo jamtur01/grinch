@@ -86,7 +86,7 @@ export a config object via CommonJS:
 
 ```js
 module.exports = {
-  default: ...,           // required: fallback browser
+  default: ...,           // required (browser spec, fn, or null for "do nothing")
   browsers: { ... },      // optional: named-browser dictionary
   rewrite: [ ... ],       // optional: URL rewriters, applied in order
   rules: [ ... ],         // optional: routing rules, first match wins
@@ -133,7 +133,7 @@ A browser is one of:
 | `{ name: "...", appType: "bundleId" }` | Trust the value as a bundle ID, skip the LaunchServices display-name fallback |
 | `{ appType: "none" }` | Explicit no-op browser. Same effect as `open: null` |
 | `(url, ctx) => "..."` | Dynamic — return any of the above. Works for `defaultBrowser` too (Finicky-compatible): a fn default is invoked at resolve time when no rule matched |
-| `null` | Suppress: do nothing |
+| `null` | Suppress: do nothing. Works as a rule's `open: null` AND as `defaultBrowser: null` (Finicky-compat) — when no rule matches and the default is null, nothing opens |
 
 The `profile` shorthand is auto-expanded for the Chromium family (Chrome,
 Brave, Edge, Vivaldi, Arc, Opera, Chromium) and the Firefox family

@@ -202,14 +202,19 @@ struct RewriteRule {
 /// on macOS), and `CURRENT_OPENER_PID` likewise assumes a single in-flight
 /// resolve. Don't try to call `.resolve()` from a background thread — it'll
 /// fail to compile.
-/// What `defaultBrowser` resolves to. Static = parsed at config load to a
-/// concrete spec (the common case). Fn = a user function called at resolve
-/// time when no rule matched. The fn variant means we always need ctx
-/// available, so it forces `needs_opener` / `needs_modifiers` / `needs_host`
-/// on (host because the fn might call `url.hostname` against the URL).
+/// What `defaultBrowser` resolves to.
+///
+/// - `Static` = parsed at config load to a concrete spec (the common case).
+/// - `Fn` = a user function called at resolve time when no rule matched.
+///   Forces `needs_opener` / `needs_modifiers` / `needs_host` on, since the
+///   fn might call `url.hostname` or read `ctx.opener`.
+/// - `Suppress` = `defaultBrowser: null`. Finicky-compatible — when no
+///   rule matches, nothing opens. Mirrors how a rule's `open: null`
+///   suppresses an individual URL.
 enum DefaultBrowser {
     Static(Rc<BrowserSpec>),
     Fn(UserFn),
+    Suppress,
 }
 
 pub struct Engine {
@@ -317,14 +322,22 @@ impl Engine {
         let default_val = key(&exports, "default")
             .or_else(|| key(&exports, "defaultBrowser"))
             .ok_or(EngineError::MissingDefault)?;
-        if is_undef_or_null(&default_val) {
+        // Three-way classification:
+        //   - explicit `null` → Suppress (Finicky-compat: no rule + no
+        //     default = nothing happens)
+        //   - undefined (key returned a JSValue but it's undefined-typed,
+        //     which `is_undef_or_null` catches) → MissingDefault error
+        //   - fn → dynamic default
+        //   - anything else → static
+        let default_browser = if unsafe { default_val.isNull() } {
+            DefaultBrowser::Suppress
+        } else if unsafe { default_val.isUndefined() } {
             return Err(EngineError::MissingDefault);
-        }
-        // Dynamic default browser (Finicky parity): a fn evaluated at
-        // resolve time. Detected here at config load so we can mark
-        // runtime needs upstream — a default fn always needs ctx (it can
-        // read opener / modifiers / url) and a URL polyfill instance.
-        let default_browser = if is_function(&default_val, &function_ctor) {
+        } else if is_function(&default_val, &function_ctor) {
+            // Dynamic default browser (Finicky parity): a fn evaluated at
+            // resolve time. Detected here at config load so we can mark
+            // runtime needs upstream — a default fn always needs ctx (it can
+            // read opener / modifiers / url) and a URL polyfill instance.
             DefaultBrowser::Fn(UserFn::new(default_val.retain()))
         } else {
             let spec = resolve_browser(&default_val, &browsers, true).unwrap_or_else(|| {
@@ -558,14 +571,14 @@ impl Engine {
 
         // Default fallback. Static = the pre-resolved spec; Fn = invoke
         // the user fn now with (url, ctx) and resolve its return through
-        // the same machinery as a Target::Fn rule would. Fall back to a
-        // suppressed-style empty spec if the fn returns null/undefined or
-        // its return doesn't resolve to a browser — better than panicking.
+        // the same machinery as a Target::Fn rule would. Suppress =
+        // explicit `defaultBrowser: null`, mirrors `open: null` for rules.
         let res = match &self.default_browser {
             DefaultBrowser::Static(b) => Resolution {
                 browser: Rc::clone(b),
                 url: current,
             },
+            DefaultBrowser::Suppress => suppressed(),
             DefaultBrowser::Fn(uf) => 'fn_default: {
                 if let Some(args) = rc.fn_args(&current, uf.needs_ctx) {
                     if let Some(r) = unsafe { uf.f.callWithArguments(Some(&args)) } {
@@ -2314,7 +2327,10 @@ mod tests {
         // Same path, mixed case host — must NOT match without /i.
         assert!(!matches_pat("zoom.us/j/*", "HTTPS://ZOOM.US/J/abc"));
         // Path case must also be respected.
-        assert!(matches_pat("github.com/Org/*", "https://github.com/Org/repo"));
+        assert!(matches_pat(
+            "github.com/Org/*",
+            "https://github.com/Org/repo"
+        ));
         assert!(!matches_pat(
             "github.com/Org/*",
             "https://github.com/org/repo"
@@ -2687,6 +2703,25 @@ mod integration_tests {
             resolve_with(&e, "https://x/", &Opener::default(), with_shift).0,
             "com.google.Chrome",
         );
+    }
+
+    #[test]
+    fn default_browser_null_is_explicit_suppress() {
+        // Finicky-compat: `defaultBrowser: null` means "do nothing if no
+        // rule matches" rather than being a config error. Mirrors how
+        // a rule's `open: null` suppresses an individual URL.
+        let e = build_engine(
+            r#"module.exports = {
+                default: null,
+                rules: [{ match: "github.com", open: "com.google.Chrome" }],
+            };"#,
+        );
+        // Match → routes normally.
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        // No match → suppressed via the about:blank sentinel.
+        let (browser, url) = resolve(&e, "https://other.com/");
+        assert_eq!(browser, "");
+        assert_eq!(url, "about:blank");
     }
 
     #[test]

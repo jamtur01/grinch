@@ -3403,22 +3403,25 @@ mod integration_tests {
     }
 
     #[test]
-    fn legacy_url_opener_throws_with_helpful_message() {
-        // url.opener throws — shouldn't silently return undefined or the
-        // wrong thing. The matcher catches and inspects the message.
+    fn legacy_url_opener_returns_active_opener_with_warning() {
+        // Match Finicky v4: url.opener warns and returns the live opener.
+        // The opener publishes onto a per-resolve global from
+        // `__grinchMakeCtx`, so we need a 2-arg fn (which triggers ctx
+        // build) for the value to be set. The matcher reads `url.opener`
+        // and checks the bundle ID — without the warn-and-return shim
+        // this would have thrown.
         let e = build_engine(
             r#"module.exports = {
                 default: "com.apple.Safari",
                 rules: [{
-                    match: (url) => {
-                        try { url.opener; return false; }
-                        catch (e) { return e.message.indexOf("ctx.opener") !== -1; }
-                    },
+                    match: (url, _ctx) => url.opener && url.opener.bundleId === "com.x",
                     open: "com.google.Chrome",
                 }],
             };"#,
         );
-        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+        let known = opener("com.x", "X");
+        let (browser, _) = resolve_with(&e, "https://x/", &known, ModifierFlags::default());
+        assert_eq!(browser, "com.google.Chrome");
     }
 
     #[test]

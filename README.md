@@ -496,16 +496,18 @@ Grinch tracks **Finicky v4** (the current line, with `defaultBrowser` /
 first, but for the most common v3 leftovers Grinch ships compatibility
 shims:
 
-- `url.urlString` and `url.url` warn-and-return — `urlString` returns
-  `url.href`; `url.url` returns the legacy `{protocol, hostname, …}`
-  object. Both log a one-line `console.warn` pointing at the v4
-  equivalent.
-- `url.opener` and `url.keys` throw with helpful messages directing
-  to `ctx.opener` and `ctx.modifiers` / `finicky.getModifierKeys()`
-  respectively. (Throwing rather than warn-and-returning, because
-  silently returning the wrong thing here would cause subtle
-  misroutes — a `url.opener.bundleId === "x"` check on a wrong shape
-  would always be false.)
+- `url.urlString`, `url.url`, and `url.opener` warn-and-return — the
+  values are usable, just deprecated. `urlString` returns `url.href`;
+  `url.url` returns the legacy `{protocol, hostname, …}` object;
+  `url.opener` returns the live opener (the same `{bundleId, name,
+  path}` object you'd get via `ctx.opener` in a 2-arg matcher fn) or
+  `null` if no opener is available. Each logs a one-line
+  `console.warn` pointing at the v4 equivalent.
+- `url.keys` throws with a helpful message pointing at `ctx.modifiers`
+  and `finicky.getModifierKeys()`. (Throwing rather than warn-and-
+  returning because v3's `url.keys` had a different shape from v4's
+  `ctx.modifiers`, and silently returning the wrong shape would cause
+  routes to misfire.)
 
 If you're porting a Finicky v4 config, these are the places you'll need
 

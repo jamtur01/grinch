@@ -68,9 +68,10 @@ iterating:
 ./target/release/Grinch --bench 100000 "https://example.com/?utm_source=x"
 ```
 
-Both load whichever config exists at `~/.grinch.js` or
-`~/.config/grinch.js`. To exercise a different config without touching
-your real one, stage it under a temp `HOME`:
+Both load whichever config exists at `~/.grinch.js`,
+`~/.config/grinch.js`, or `~/.config/grinch/grinch.js` (checked in that
+order). To exercise a different config without touching your real one,
+stage it under a temp `HOME`:
 
 ```sh
 mkdir -p /tmp/scratch && cp examples/grinch.example.js /tmp/scratch/.grinch.js

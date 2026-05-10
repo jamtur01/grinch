@@ -2,7 +2,8 @@
 
 A small, fast native macOS browser router. Set it as your default browser
 and it routes each URL to the right one based on rules in
-`~/.config/grinch.js` (or `~/.grinch.js`).
+`~/.grinch.js`, `~/.config/grinch.js`, or `~/.config/grinch/grinch.js`
+(checked in that order; first found wins).
 
 Most Finicky **v4** configs work in Grinch unchanged. (Finicky v3 configs
 need updating — see the
@@ -81,8 +82,13 @@ You'll still need to convert `await fetch()` calls; see
 
 ## Configuration
 
-Drop a JavaScript file at `~/.config/grinch.js` (or `~/.grinch.js`). It must
-export a config object via CommonJS:
+Drop a JavaScript file at one of (checked in this order, first found wins):
+
+1. `~/.grinch.js` — legacy / dotfile
+2. `~/.config/grinch.js` — flat XDG
+3. `~/.config/grinch/grinch.js` — XDG subdir, mirrors Finicky's layout
+
+It must export a config object via CommonJS:
 
 ```js
 module.exports = {
@@ -478,8 +484,6 @@ shims:
   routes to misfire.)
 
 If you're porting a Finicky v4 config, these are the places you'll need
-
-If you're porting a Finicky v4 config, these are the places you'll need
 to adjust:
 
 1. **`export default { ... }` works; `import` / named `export` don't.**
@@ -493,8 +497,8 @@ to adjust:
    `shortenerExpander` pattern can't run; resolve a shortener separately
    if you need it — see [Working with URL shorteners](#working-with-url-shorteners)
    below.
-3. **`finicky.*` namespace is shipped, with one stub.** All eight v4
-   methods are present:
+3. **`finicky.*` namespace is shipped; three of the eight methods are stubbed.**
+   All eight v4 methods are present:
    - `finicky.matchHostnames(matchers)` — exact-hostname matcher fn
      (Finicky-compatible). For subdomain matching use Grinch's `domain(...)`.
    - `finicky.matchDomains(matchers)` — deprecated alias, warns and delegates.
@@ -506,9 +510,10 @@ to adjust:
      (`{isCharging:false, isConnected:true, percentage:null}`) and emits a
      one-time `console.warn` on first call. Real IOKit hookup is on the TODO
      list; routing on actual battery state isn't supported yet.
-   - `finicky.notify` and `finicky.getBattery` — inert stubs that match
-     Finicky's own deprecated behaviour (`notify` logs an error pointing at
-     `console.log`; `getBattery` returns dummies pointing at `getPowerInfo`).
+   - `finicky.notify(...)` — **stub**; logs a `console.error` pointing at
+     `console.log` and returns. macOS notifications aren't wired up.
+   - `finicky.getBattery()` — **stub**; matches Finicky's own deprecation
+     by logging an error pointing at `getPowerInfo` and returning dummies.
 4. **`opener.windowTitle` requires Accessibility permission.** First launch
    prompts; before granting, the field returns `""` and rules depending on
    it silently no-op.

@@ -38,7 +38,7 @@
     <li><strong>~16 MB resident memory, ~1.5 MB universal binary.</strong></li>
     <li><strong>Native JavaScriptCore</strong> for config eval — no Electron, no bundler, no transpiler.</li>
     <li><strong>Single signed and notarized DMG.</strong> Universal binary (Apple Silicon + Intel).</li>
-    <li><strong>Menu-bar app.</strong> Reload config, test a URL, open the log.</li>
+    <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar.</li>
     <li><strong>Hot-path resolve in nanoseconds</strong>, full click-to-browser pipeline in single-digit milliseconds.</li>
   </ul>
 </section>
@@ -62,7 +62,7 @@ make run</code></pre>
 
 <section id="config">
   <h2>Configure</h2>
-  <p>Drop a JavaScript file at <code>~/.config/grinch.js</code>. First match wins.</p>
+  <p>Drop a JavaScript file at <code>~/.grinch.js</code>, <code>~/.config/grinch.js</code>, or <code>~/.config/grinch/grinch.js</code> (Grinch checks each in that order; first found wins). First matching rule wins.</p>
 <pre><code>module.exports = {
   default: "org.mozilla.firefox",
 

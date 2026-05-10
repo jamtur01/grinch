@@ -532,7 +532,10 @@ var finicky = {
     if (typeof __grinchGetPowerInfo === "function") {
       try { return JSON.parse(__grinchGetPowerInfo()); } catch (_) {}
     }
-    return { isCharging: false, isConnected: false, percentage: null };
+    // Match the shape the Rust bridge returns when it IS installed
+    // (engine.rs's `__grinchGetPowerInfo` placeholder), so behaviour is
+    // identical whether or not the install_finicky_callbacks pass ran.
+    return { isCharging: false, isConnected: true, percentage: null };
   },
 };
 

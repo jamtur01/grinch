@@ -1966,7 +1966,7 @@ fn pattern_has_protocol_prefix(pat: &str) -> bool {
 /// Hostnames are ASCII per the URL spec, so we use `to_ascii_lowercase` —
 /// faster than the Unicode-aware `to_lowercase` and good enough.
 #[inline]
-pub(crate) fn quick_host(url: &str) -> Option<String> {
+pub(crate) fn quick_host(url: &str) -> Option<Cow<'_, str>> {
     let mut s = url;
     if let Some(idx) = s.find("://") {
         s = &s[idx + 3..];
@@ -1986,7 +1986,7 @@ pub(crate) fn quick_host(url: &str) -> Option<String> {
             return if host.len() <= 2 {
                 None
             } else {
-                Some(host.to_ascii_lowercase())
+                Some(maybe_lowercase(host))
             };
         }
         return None;
@@ -1997,7 +1997,18 @@ pub(crate) fn quick_host(url: &str) -> Option<String> {
     if s.is_empty() {
         None
     } else {
-        Some(s.to_ascii_lowercase())
+        Some(maybe_lowercase(s))
+    }
+}
+
+/// Return `s` borrowed when it has no ASCII uppercase bytes, otherwise
+/// allocate a lowercased copy. Most URLs in the wild have already-lowercase
+/// hostnames, so this skips the `String` allocation on the common path.
+fn maybe_lowercase(s: &str) -> Cow<'_, str> {
+    if s.bytes().any(|b| b.is_ascii_uppercase()) {
+        Cow::Owned(s.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(s)
     }
 }
 

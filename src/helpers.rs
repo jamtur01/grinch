@@ -65,7 +65,13 @@ pub const JS_PRELUDE: &str = r##"
   }
 
   function makeSearchParams(u) {
-    var sp = { _m: {} };
+    // `_m` is the backing map for parsed pairs. Use Object.create(null)
+    // (no prototype) so that user-land Object.prototype pollution —
+    // intentional or pulled in transitively from a vendored helper —
+    // can't leak phantom keys into iteration, .has, .get, .size, etc.
+    // Without this guard, `Object.prototype.utm = ["x"]` injects "utm"
+    // into every URL's searchParams.
+    var sp = { _m: Object.create(null) };
     var s = u._search;
     if (s && s.length > 1) {
       var pairs = s.slice(1).split("&");

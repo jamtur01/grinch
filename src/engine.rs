@@ -3773,6 +3773,30 @@ mod integration_tests {
     }
 
     #[test]
+    fn polyfill_searchparams_immune_to_object_prototype_pollution() {
+        // Regression: `_m: {}` exposed every URL's searchParams to
+        // Object.prototype mutations — `Object.prototype.utm = ["x"]`
+        // injected a phantom "utm" entry into every URL. Object.create(null)
+        // backing object has no prototype, so for-in only enumerates own
+        // keys.
+        let e = build_engine(
+            r#"Object.prototype.utm = ["polluted"];
+               module.exports = {
+                 default: "com.apple.Safari",
+                 rules: [{
+                   match: () => true,
+                   open: (url) => "n:" + url.searchParams.size +
+                                  ",has:" + (url.searchParams.has("utm") ? "yes" : "no"),
+                 }],
+               };"#,
+        );
+        // Clean URL: zero own keys, no "utm".
+        assert_eq!(resolve(&e, "https://x/").0, "n:0,has:no");
+        // Real ?utm=… still works.
+        assert_eq!(resolve(&e, "https://x/?utm=real").0, "n:1,has:yes");
+    }
+
+    #[test]
     fn polyfill_searchparams_set_and_delete_propagate() {
         let e = build_engine(
             r#"module.exports = {

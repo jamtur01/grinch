@@ -1263,9 +1263,42 @@ fn expand_profile_args(bundle_id: &str, profile: &str) -> Option<Vec<String>> {
     None
 }
 
+/// Heuristic: does this string look like an `.app` bundle path that
+/// should resolve via `NSBundle.bundleWithURL` instead of going through
+/// the LaunchServices display-name lookup? Mirrors Finicky's
+/// `autodetectAppStringType` regex (`^(~?(?:\/[^/\n]+)+\/[^/\n]+\.app)$`)
+/// with a cheaper byte-level check.
+fn looks_like_app_path(s: &str) -> bool {
+    s.ends_with(".app") && s.contains('/')
+}
+
+/// Expand a leading `~/` to `$HOME/`. No-op for any other input. Used
+/// only for path-form browser specs; the Chromium / Firefox profile
+/// path code already calls `std::env::var("HOME")` directly.
+fn expand_tilde(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    }
+    s.to_string()
+}
+
 fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
     if unsafe { v.isString() } {
         let s = js_to_string(v).unwrap_or_default();
+        // Path autodetect: bare-string browser specs that look like
+        // `.app` paths skip the LaunchServices display-name lookup and
+        // resolve via NSBundle directly. Matches Finicky's
+        // autodetectAppStringType — anyone writing
+        // `default: "/Applications/Arc.app"` (rather than the explicit
+        // `{ name: "...", appType: "path" }` form) gets the right
+        // behaviour. Checked before the Name:Profile shorthand because
+        // a path can't reasonably carry a profile suffix.
+        if looks_like_app_path(&s) {
+            let bundle_id = crate::workspace::resolve_browser_path(&expand_tilde(&s));
+            return BrowserSpec::from_bundle_id(bundle_id);
+        }
         // Finicky's "Name:Profile" shorthand: a colon separates the app
         // name (or bundle ID) from a profile name. Bundle IDs use `.` not
         // `:`, so a `:` after the first character is unambiguously the
@@ -3670,6 +3703,29 @@ mod integration_tests {
         let (browser, url) = resolve(&e, "https://tracking.com/");
         assert_eq!(browser, "");
         assert_eq!(url, "about:blank");
+    }
+
+    #[test]
+    fn browser_spec_string_path_autodetects_via_nsbundle() {
+        // Finicky-compat: a bare-string browser spec that looks like an
+        // .app path (ends with .app + contains /) goes through NSBundle
+        // directly, no `appType: "path"` required. Use Safari since it
+        // ships with macOS in /Applications/Safari.app.
+        let e = build_engine(r#"module.exports = { default: "/Applications/Safari.app" };"#);
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn browser_spec_string_path_with_tilde_expands_home() {
+        // Tilde expansion in the path. Hard to test against a real ~
+        // path without polluting the home directory, so use the engine
+        // fixture's HOME-override mutex to point HOME at /Applications,
+        // then refer to ~/Safari.app — should resolve to the same bundle
+        // ID as /Applications/Safari.app does in the test above.
+        with_home(std::path::Path::new("/Applications"), || {
+            let e = build_engine(r#"module.exports = { default: "~/Safari.app" };"#);
+            assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+        });
     }
 
     #[test]

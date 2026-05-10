@@ -114,7 +114,17 @@ test: build
 # ID Application cert as the .app — DMGs use Application certs, not
 # Installer certs (those are .pkg-only). Signing here lets the workflow's
 # notarytool step staple a Gatekeeper ticket onto the .dmg itself.
-dmg: build
+#
+# `dmg` deliberately does NOT depend on `build`. The release workflow
+# notarizes and staples Grinch.app between `make build UNIVERSAL=1` and
+# `make dmg`; if `dmg` re-ran `build` it would (a) overwrite the universal
+# binary with a single-arch one and (b) re-codesign, invalidating the
+# stapled ticket. Run `make build dmg` (in that order) for a local build.
+dmg:
+	@if [ ! -d "$(APP)" ]; then \
+	    echo "error: $(APP) not built — run 'make build' (or 'make build UNIVERSAL=1') first" >&2; \
+	    exit 1; \
+	fi
 	@rm -rf $(DMG_STAGE) $(DMG)
 	@mkdir -p $(DMG_STAGE)
 	@cp -R $(APP) $(DMG_STAGE)/

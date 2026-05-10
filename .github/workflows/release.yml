@@ -111,7 +111,21 @@ jobs:
           spctl --assess --type execute --verbose Grinch.app
 
       - name: Build DMG
-        run: make dmg
+        run: |
+          set -euo pipefail
+          make dmg
+          # Verify the DMG packaged the right binary: universal AND with
+          # the stapled notarization ticket intact. Mount, inspect, eject.
+          # Without this check, a future Makefile change could silently
+          # ship single-arch / unstapled artifacts (regression of #2).
+          MOUNT_DIR="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_DIR" Grinch.dmg
+          APP_BIN="$MOUNT_DIR/Grinch.app/Contents/MacOS/Grinch"
+          lipo -info "$APP_BIN" | grep -E 'x86_64.*arm64|arm64.*x86_64' \
+              || { echo "::error::DMG binary is not universal" >&2; exit 1; }
+          xcrun stapler validate "$MOUNT_DIR/Grinch.app" \
+              || { echo "::error::DMG .app is not stapled" >&2; exit 1; }
+          hdiutil detach "$MOUNT_DIR" -quiet
 
       - name: Notarize and staple DMG
         env:

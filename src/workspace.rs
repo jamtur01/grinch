@@ -528,9 +528,23 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     };
 
     let Some(app_url) = resolved_app_url(&spec.bundle_id) else {
-        eprintln!("grinch: browser not found: {}", spec.bundle_id);
-        let cfg = NSWorkspaceOpenConfiguration::configuration();
-        workspace.openURL_configuration_completionHandler(&url_ns, &cfg, None);
+        // Suppress instead of falling back to NSWorkspace.openURL with no
+        // app: when Grinch is the system default browser (the expected
+        // setup), that call dispatches the URL right back to Grinch via
+        // Apple Events, the same routing fires, and we loop indefinitely
+        // through the OS until something kills the process. A clear
+        // error + dropped URL is strictly safer than a runaway loop —
+        // the user can fix their config and click again.
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            eprintln!(
+                "grinch: browser not found ({}); URL dropped. Edit your config \
+                 to reference an installed browser (bundle ID or app name).",
+                spec.bundle_id
+            );
+        } else {
+            eprintln!("grinch: browser not found ({}); URL dropped", spec.bundle_id);
+        }
         return;
     };
 

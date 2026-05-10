@@ -1140,7 +1140,11 @@ fn build_ctx_object(
     // we hold a single cached Retained<JSValue> per truth value on the
     // Engine — clones here are refcount bumps, not JSC bridge crossings.
     let bool_v = |b: bool| -> Retained<JSValue> {
-        if b { js_true.clone() } else { js_false.clone() }
+        if b {
+            js_true.clone()
+        } else {
+            js_false.clone()
+        }
     };
     let url_v = js_string(ctx, url);
     let opener_id_v = cached_js_string(ctx, opener_str_cache, &opener.bundle_id);

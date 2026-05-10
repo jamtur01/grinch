@@ -29,8 +29,8 @@ use objc2_foundation::{
 use crate::engine::{Engine, ModifierFlags};
 use crate::loader::{find_config_path, load_config};
 use crate::workspace::{
-    current_modifier_flags, ensure_accessibility_permission, frontmost_opener,
-    frontmost_opener_id, open_url, Opener,
+    current_modifier_flags, ensure_accessibility_permission, frontmost_opener, frontmost_opener_id,
+    open_url, Opener,
 };
 
 // SMAppService lives in ServiceManagement.framework; not transitively pulled

@@ -392,7 +392,7 @@ the few-millisecond range), so engine-only numbers don't translate
 1:1 into a faster-feeling click — but they're a useful window into
 what the engine is doing on its own.
 
-Apple Silicon, macOS 25, release build, median of 10 runs at 100k–200k
+Apple Silicon, macOS 26, release build, median of 10 runs at 100k–200k
 iterations per workload. Configs and URLs in `bench/configs/`.
 
 ### Hot path (declarative-only configs)

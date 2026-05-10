@@ -12,10 +12,18 @@
     <string>grinch.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <!-- CFBundleShortVersionString is rewritten from Cargo.toml at build
+         time by the Makefile (PlistBuddy on $(BUNDLE)/Info.plist). The
+         source value below is a placeholder; the value in any built or
+         shipped bundle is the Cargo.toml version. Don't edit by hand. -->
     <key>CFBundleShortVersionString</key>
-    <string>0.1.1</string>
+    <string>0.0.0-DEV</string>
     <key>CFBundleVersion</key>
     <string>2</string>
+    <!-- Minimum macOS for the released universal binary. Mirrored in
+         the README's Install section. -->
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSPrincipalClass</key>

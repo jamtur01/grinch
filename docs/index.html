@@ -95,7 +95,7 @@ make run</code></pre>
 
   <p>A few benchmark data points from <code>bench/run.sh</code>. Worth knowing that real-world click-to-browser latency is dominated by macOS plumbing (Apple Event dispatch + <code>NSWorkspace.openApplicationAtURL</code>, both in the few-millisecond range), so engine-only numbers don't translate 1:1 into a faster-feeling click — but they're a useful window into what the engine is doing on its own.</p>
 
-  <p>Apple Silicon, macOS 25, release build, median of 10 runs at 100k–200k iterations per workload. Configs and URLs in <code>bench/configs/</code>.</p>
+  <p>Apple Silicon, macOS 26, release build, median of 10 runs at 100k–200k iterations per workload. Configs and URLs in <code>bench/configs/</code>.</p>
 
   <h3>Hot path (declarative-only configs)</h3>
   <table>

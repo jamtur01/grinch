@@ -56,6 +56,10 @@ const apps = {
 module.exports = {
   // ---------- Default browser (required) ----------
   // Either `default` (Grinch) or `defaultBrowser` (Finicky alias) works.
+  // Accepts any browser-spec form including a fn — a dynamic default
+  // is invoked at resolve time when no rule matched, e.g.:
+  //   default: (url, ctx) =>
+  //     ctx.modifiers.shift ? browsers.work : browsers.personal,
   default: browsers.personal,
 
   // Top-level browsers map — looked up by key in `open: "<key>"`.

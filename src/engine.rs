@@ -197,8 +197,18 @@ struct RewriteRule {
 /// on macOS), and `CURRENT_OPENER_PID` likewise assumes a single in-flight
 /// resolve. Don't try to call `.resolve()` from a background thread — it'll
 /// fail to compile.
+/// What `defaultBrowser` resolves to. Static = parsed at config load to a
+/// concrete spec (the common case). Fn = a user function called at resolve
+/// time when no rule matched. The fn variant means we always need ctx
+/// available, so it forces `needs_opener` / `needs_modifiers` / `needs_host`
+/// on (host because the fn might call `url.hostname` against the URL).
+enum DefaultBrowser {
+    Static(Rc<BrowserSpec>),
+    Fn(UserFn),
+}
+
 pub struct Engine {
-    default_browser: Rc<BrowserSpec>,
+    default_browser: DefaultBrowser,
     browsers: std::collections::HashMap<String, Rc<BrowserSpec>>,
     rewrites: Vec<RewriteRule>,
     rules: Vec<Rule>,
@@ -289,11 +299,20 @@ impl Engine {
         if is_undef_or_null(&default_val) {
             return Err(EngineError::MissingDefault);
         }
-        let default_browser = resolve_browser(&default_val, &browsers, true).unwrap_or_else(|| {
-            Rc::new(BrowserSpec::from_bundle_id(
-                js_to_string(&default_val).unwrap_or_default(),
-            ))
-        });
+        // Dynamic default browser (Finicky parity): a fn evaluated at
+        // resolve time. Detected here at config load so we can mark
+        // runtime needs upstream — a default fn always needs ctx (it can
+        // read opener / modifiers / url) and a URL polyfill instance.
+        let default_browser = if is_function(&default_val, &function_ctor) {
+            DefaultBrowser::Fn(UserFn::new(default_val.retain()))
+        } else {
+            let spec = resolve_browser(&default_val, &browsers, true).unwrap_or_else(|| {
+                Rc::new(BrowserSpec::from_bundle_id(
+                    js_to_string(&default_val).unwrap_or_default(),
+                ))
+            });
+            DefaultBrowser::Static(spec)
+        };
 
         // rewrites
         let rewrites = key(&exports, "rewrite")
@@ -306,7 +325,14 @@ impl Engine {
             .map(|arr| parse_rule_array(&arr, &browsers, &regexp_ctor, &function_ctor))
             .unwrap_or_default();
 
-        let needs = analyse_runtime_needs(&rewrites, &rules);
+        let mut needs = analyse_runtime_needs(&rewrites, &rules);
+        // A dynamic default (fn) is always reachable when no rule matches,
+        // and it could read any of url/opener/modifiers. Force them all on.
+        if matches!(&default_browser, DefaultBrowser::Fn(_)) {
+            needs.opener = true;
+            needs.modifiers = true;
+            needs.host = true;
+        }
 
         Ok(Self {
             default_browser,
@@ -446,9 +472,37 @@ impl Engine {
             }
         }
 
-        Resolution {
-            browser: Rc::clone(&self.default_browser),
-            url: current,
+        // Default fallback. Static = the pre-resolved spec; Fn = invoke
+        // the user fn now with (url, ctx) and resolve its return through
+        // the same machinery as a Target::Fn rule would. Fall back to a
+        // suppressed-style empty spec if the fn returns null/undefined or
+        // its return doesn't resolve to a browser — better than panicking.
+        match &self.default_browser {
+            DefaultBrowser::Static(b) => Resolution {
+                browser: Rc::clone(b),
+                url: current,
+            },
+            DefaultBrowser::Fn(uf) => {
+                if let Some(args) = rc.fn_args(&current, uf.needs_ctx) {
+                    if let Some(r) = unsafe { uf.f.callWithArguments(Some(&args)) } {
+                        if !unsafe { r.isUndefined() } && !unsafe { r.isNull() } {
+                            let spec =
+                                resolve_browser(&r, &self.browsers, false).unwrap_or_else(|| {
+                                    Rc::new(BrowserSpec::from_bundle_id(
+                                        js_to_string(&r).unwrap_or_default(),
+                                    ))
+                                });
+                            return Resolution {
+                                browser: spec,
+                                url: current,
+                            };
+                        }
+                    }
+                }
+                // Fn returned null/undefined or args build failed — same
+                // semantics as `open: null` (suppress).
+                suppressed()
+            }
         }
     }
 }
@@ -2111,6 +2165,61 @@ mod integration_tests {
         let (browser, url) = resolve(&e, "https://example.com/");
         assert_eq!(browser, "com.apple.Safari");
         assert_eq!(url, "https://example.com/");
+    }
+
+    #[test]
+    fn dynamic_default_browser_fn_returning_string() {
+        // Finicky-style dynamic default: defaultBrowser is a fn evaluated
+        // at resolve time when no rule matched.
+        let e = build_engine(
+            r#"module.exports = {
+                default: (url) =>
+                    url.hostname === "internal.corp" ? "com.apple.Safari" : "com.google.Chrome",
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://internal.corp/x").0, "com.apple.Safari");
+        assert_eq!(resolve(&e, "https://github.com/x").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn dynamic_default_browser_fn_with_ctx() {
+        // Default fn can read ctx (opener / modifiers). Dynamic-default
+        // configs always have needs_opener / needs_modifiers / needs_host
+        // forced on so the IPC happens upstream.
+        let e = build_engine(
+            r#"module.exports = {
+                default: (url, ctx) =>
+                    ctx.modifiers.shift ? "com.google.Chrome" : "com.apple.Safari",
+            };"#,
+        );
+        assert!(e.needs_opener());
+        assert!(e.needs_modifiers());
+        assert_eq!(
+            resolve_with(
+                &e,
+                "https://x/",
+                &Opener::default(),
+                ModifierFlags::default()
+            )
+            .0,
+            "com.apple.Safari",
+        );
+        let with_shift = ModifierFlags {
+            shift: true,
+            ..ModifierFlags::default()
+        };
+        assert_eq!(
+            resolve_with(&e, "https://x/", &Opener::default(), with_shift).0,
+            "com.google.Chrome",
+        );
+    }
+
+    #[test]
+    fn dynamic_default_browser_returning_null_suppresses() {
+        let e = build_engine(r#"module.exports = { default: () => null };"#);
+        let (browser, url) = resolve(&e, "https://x/");
+        assert_eq!(browser, "");
+        assert_eq!(url, "about:blank");
     }
 
     #[test]

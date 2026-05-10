@@ -110,7 +110,7 @@ A browser is one of:
 | `{ name: "/Applications/Foo.app", appType: "path" }` | Path to an `.app` bundle — Grinch reads `CFBundleIdentifier` directly. Useful for browsers outside `/Applications` or not registered with LaunchServices |
 | `{ name: "...", appType: "bundleId" }` | Trust the value as a bundle ID, skip the LaunchServices display-name fallback |
 | `{ appType: "none" }` | Explicit no-op browser. Same effect as `open: null` |
-| `(url, ctx) => "..."` | Dynamic — return any of the above |
+| `(url, ctx) => "..."` | Dynamic — return any of the above. Works for `defaultBrowser` too (Finicky-compatible): a fn default is invoked at resolve time when no rule matched |
 | `null` | Suppress: do nothing |
 
 The `profile` shorthand is auto-expanded for: Chrome, Brave, Edge, Vivaldi,

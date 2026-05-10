@@ -359,16 +359,24 @@ pub fn frontmost_window_title(pid: i32) -> String {
         }
     };
 
-    // window is a CFType holding a window AXUIElement.
-    let window_ax: &AXUIElement = unsafe { &*(&*window as *const CFType as *const AXUIElement) };
+    // AXFocusedWindow is documented to return an AXUIElement, but a misbehaving
+    // app's AX implementation can hand us back any CFType. Downcast checks
+    // CFGetTypeID first; on mismatch we return "" rather than transmuting and
+    // walking off into UB.
+    let Ok(window_ax) = window.downcast::<AXUIElement>() else {
+        return String::new();
+    };
 
-    let title = match copy_attribute(window_ax, &title_attr) {
+    let title = match copy_attribute(&window_ax, &title_attr) {
         Ok(v) => v,
         Err(_) => return String::new(),
     };
 
-    // title is a CFString-typed CFType.
-    let cf_str: &CFString = unsafe { &*(&*title as *const CFType as *const CFString) };
+    // Same defensive downcast for AXTitle. Some apps return localized
+    // CFAttributedString; we only handle plain CFString.
+    let Ok(cf_str) = title.downcast::<CFString>() else {
+        return String::new();
+    };
     cf_str.to_string()
 }
 

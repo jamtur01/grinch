@@ -1326,10 +1326,25 @@ fn compile_matcher(v: &JSValue, regexp_ctor: &JSValue, function_ctor: &JSValue) 
                 }
             }
         }
-        // Regex literal /.../ — compile via the regex crate.
+        // Regex literal /.../ — compile via the regex crate. Honour the JS
+        // RegExp's `ignoreCase` (`i`) and `multiline` (`m`) flags. Finicky
+        // matches via native RegExp.test on url.href, which respects all the
+        // flags the user wrote; mirror that. Earlier versions of Grinch
+        // forced case-insensitive matching, which was a silent semantic
+        // divergence from Finicky and from JS's own `.test()` behaviour.
         if is_instance_of(v, regexp_ctor) {
             if let Some(pattern) = key(v, "source").and_then(|p| js_to_string(&p)) {
-                if let Ok(re) = RegexBuilder::new(&pattern).case_insensitive(true).build() {
+                let ignore_case = key(v, "ignoreCase")
+                    .map(|p| unsafe { p.toBool() })
+                    .unwrap_or(false);
+                let multi_line = key(v, "multiline")
+                    .map(|p| unsafe { p.toBool() })
+                    .unwrap_or(false);
+                if let Ok(re) = RegexBuilder::new(&pattern)
+                    .case_insensitive(ignore_case)
+                    .multi_line(multi_line)
+                    .build()
+                {
                     return Some(Matcher::Regex(re));
                 }
             }
@@ -2107,6 +2122,35 @@ mod integration_tests {
             "com.google.Chrome"
         );
         assert_eq!(resolve(&e, "https://github.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_regex_default_is_case_sensitive() {
+        // Regression: previously Grinch forced case_insensitive(true) on
+        // every regex. Now matches Finicky / native JS RegExp.test, which
+        // is case-sensitive unless the `i` flag is set.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: /github\.com/, open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        // Same domain, mixed case — must NOT match without /i.
+        assert_eq!(resolve(&e, "https://GitHub.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn matcher_regex_i_flag_makes_it_case_insensitive() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{ match: /github\.com/i, open: "com.google.Chrome" }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://GitHub.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://GITHUB.COM/").0, "com.google.Chrome");
     }
 
     #[test]

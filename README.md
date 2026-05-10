@@ -140,7 +140,7 @@ hit triggers).
 | `domain("a.com", "b.com")` | any of the listed hostnames or their subdomains | Compiled to a single fast check |
 | `from("com.tinyspeck.slackmacgap")` | URL was opened by this app | Caller bundle ID; matches `ctx.opener.bundleId` |
 | `running("us.zoom.xos")` | this app is currently running | Lazily computed once per resolve |
-| `/regex/` | regex against full URL | Case-insensitive |
+| `/regex/` | regex against full URL | Honours `i` and `m` flags from the JS literal (matches Finicky / native `RegExp.test`); without `i`, matching is case-sensitive |
 | `(url, ctx) => bool` | anything | Slow path (~10 µs extra) — full power |
 
 Helper return values like `domain(...)`/`from(...)`/`running(...)`/`strip(...)`

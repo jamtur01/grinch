@@ -127,11 +127,13 @@ module.exports = {
   rules: [
     // ----- Match types -----
 
-    // Regex literal — matched (case-insensitive) against the full URL.
-    // Placed before the bare-hostname `github.com` rule so path-specific
-    // patterns win over the broader hostname match.
-    { match: /github\.com\/(paymentology|tutuka)\//, open: browsers.work },
-    { match: /\.(figma|notion)\.(com|so)/, open: browsers.work },
+    // Regex literal — matched against the full URL. Honours the JS `i` and
+    // `m` flags from the literal (matches Finicky / native RegExp.test);
+    // omit /i if you want case-sensitive matching. Placed before the bare-
+    // hostname `github.com` rule so path-specific patterns win over the
+    // broader hostname match.
+    { match: /github\.com\/(paymentology|tutuka)\//i, open: browsers.work },
+    { match: /\.(figma|notion)\.(com|so)/i,           open: browsers.work },
 
     // Wildcard string with `*`. Implicitly anchored; `(?:https?:)?(?://)?` is
     // prepended unless the pattern starts with `*` or a protocol prefix.

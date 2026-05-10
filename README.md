@@ -12,9 +12,8 @@ upstream, then [Differences from Finicky](#differences-from-finicky)
 below for what's still different in Grinch.)
 
 - **~1500 LOC Rust** + a small embedded JS prelude
-- **5–220 ns** hot-path resolve latency (50–1800× faster than Finch on the
-  same workload; see [Performance](#performance) below)
-- **~16 MB** resident memory (vs ~140 MB for Finicky)
+- Hot-path resolve in **nanoseconds** (full numbers in [Performance](#performance))
+- **~16 MB** resident memory
 - Native `JavaScriptCore`, no bundler, no transpiler, no Electron
 - Config is real JavaScript — simple cases look like data, full power available
 
@@ -425,42 +424,46 @@ build itself reuses pre-built `true`/`false` JSValues for modifier flags.
 |---|---:|---:|
 | Grinch | **16 MB** | 17 MB |
 
-### Compared to alternatives
+### Engine resolve cost vs alternatives
 
-Same hardware, same config, same URLs.
+`resolve()` benchmarked in isolation, same hardware / config / URLs.
+These numbers measure the engine alone, not click-to-browser latency
+(see the [Click latency](#click-latency-in-practice) section below for
+the full picture).
 
-| Workload | Finch (Swift) | **Grinch (Rust)** | Speedup |
+| Workload | Finch (Swift) | Grinch (Rust) |
+|---|---:|---:|
+| Default fallback, no query | 9,308 ns | 67 ns |
+| Default fallback, strip removes | 10,898 ns | 187 ns |
+| Bare-hostname match | 5,242 ns | 42 ns |
+| Subdomain via `domain()` | 5,784 ns | 48 ns |
+| Regex match | 1,454 ns | 22 ns |
+| Wildcard match | 9,060 ns | 30 ns |
+
+| | Finch | Grinch | Finicky |
 |---|---:|---:|---:|
-| Default fallback, no query | 9,308 ns | **67 ns** | 139× |
-| Default fallback, strip removes | 10,898 ns | **187 ns** | 58× |
-| Bare-hostname match | 5,242 ns | **42 ns** | 125× |
-| Subdomain via `domain()` | 5,784 ns | **48 ns** | 121× |
-| Regex match | 1,454 ns | **22 ns** | 66× |
-| Wildcard match | 9,060 ns | **30 ns** | 302× |
-
-| | Finch | **Grinch** | Finicky |
-|---|---:|---:|---:|
-| Resident memory | 14.6 MB | **15.5 MB** | 142.5 MB |
-| Peak memory | 15.5 MB | **16.6 MB** | 391.2 MB |
+| Resident memory | 14.6 MB | 15.5 MB | 142.5 MB |
+| Peak memory | 15.5 MB | 16.6 MB | 391.2 MB |
 | Source LOC | ~700 | ~1,500 | ~2,900 |
 
-Grinch's wins over Finch come from native, allocation-aware Rust:
-`regex` crate vs `NSRegularExpression`, byte-level subdomain matching,
-`Cow<'_, str>` for the URL so a no-rewrite resolve allocates zero bytes,
-config-time runtime-needs analysis that skips `quick_host`,
-`frontmost_opener()`, and `__grinchMakeCtx` for configs that don't read
-them, `Rc<BrowserSpec>` instead of deep clone on every match, ASCII-only
-lowercase, and a strip short-circuit when nothing changes. On the slow
-path, fn arity is sniffed at config load — `(url) => …` predicates skip
-the JS ctx build *and* the LaunchServices opener IPC entirely. Finicky's
-higher memory footprint is its bundled WebView config UI eagerly loading
-WebKit, not engine weight — Finicky uses goja (Go JS) for resolve, which
-crosses a JS bridge for every match.
+Grinch's resolve is faster than Finch's on these workloads largely
+because of native, allocation-aware Rust: the `regex` crate vs
+`NSRegularExpression`, byte-level subdomain matching, `Cow<'_, str>`
+for the URL so a no-rewrite resolve allocates zero bytes, config-time
+runtime-needs analysis that skips `quick_host`, `frontmost_opener()`,
+and `__grinchMakeCtx` for configs that don't read them, `Rc<BrowserSpec>`
+instead of a deep clone on every match, ASCII-only lowercase, and a
+strip short-circuit when nothing changes. On the slow path, fn arity
+is sniffed at config load — `(url) => …` predicates skip the JS ctx
+build *and* the LaunchServices opener IPC entirely. Finicky's higher
+memory footprint is its bundled WebView config UI loading WebKit, not
+engine weight; Finicky uses goja (Go JS) for resolve, which crosses a
+JS bridge for every match.
 
 ### Click latency in practice
 
-The `--bench` numbers above measure `resolve()` in isolation. Real
-clicks add a few more steps:
+The `--bench` numbers above measure `resolve()` in isolation. A real
+click adds:
 
 - **macOS Apple Event dispatch**: 1–5 ms from the originating app.
 - **`frontmost_opener()`**: ~100–500 µs of LaunchServices IPC, *only
@@ -474,9 +477,12 @@ clicks add a few more steps:
 - **`open_url()`**: ~few ms for `NSWorkspace.openApplicationAtURL` to
   hand off to the target browser.
 
-So full click-to-browser latency is dominated by macOS event dispatch
-(~ms) and target-browser launch (~ms), not by Grinch. Grinch's
-contribution is two-to-four orders of magnitude smaller.
+End-to-end is in the single-digit-millisecond range and is dominated
+by the macOS-side costs (event dispatch, browser hand-off), not by
+Grinch's engine. The engine differences in the table above are real
+but largely invisible at click-to-browser scope — choose between these
+tools on the basis of features, footprint, and config ergonomics, not
+single-click latency.
 
 ### How it works
 

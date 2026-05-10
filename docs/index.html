@@ -34,8 +34,8 @@
   <h2>What it is</h2>
   <ul class="features">
     <li><strong>~1500 lines of Rust</strong> + a small embedded JS prelude. No bundler, no transpiler, no Electron.</li>
-    <li><strong>5–300 ns hot-path resolves</strong> on Apple Silicon. 50–300× faster than the closest comparable tool on the same workload.</li>
-    <li><strong>~16 MB resident memory.</strong> Compare to ~140 MB for Finicky.</li>
+    <li><strong>Hot-path resolve in nanoseconds</strong> on Apple Silicon. End-to-end click-to-browser latency is in the single-digit-millisecond range, dominated by macOS event dispatch and the target-browser launch — not the engine.</li>
+    <li><strong>~16 MB resident memory.</strong></li>
     <li><strong>Native JavaScriptCore.</strong> Config is real JavaScript — simple cases look like data, full power available when you need it.</li>
     <li><strong>Finicky v4 compatible.</strong> Most v4 configs work unchanged: <code>finicky.matchHostnames</code>, <code>finicky.notify</code>, <code>ctx.opener.*</code>, the <code>options</code> block, profile shorthand.</li>
     <li><strong>Menu-bar app.</strong> Reload config, test a URL, open the log — without leaving the menu bar.</li>
@@ -120,18 +120,19 @@ make run</code></pre>
     </tbody>
   </table>
 
-  <h3>Versus Finch (Swift)</h3>
+  <h3>Engine resolve cost vs Finch (Swift)</h3>
   <table>
-    <thead><tr><th>Workload</th><th>Finch</th><th>Grinch</th><th>Speedup</th></tr></thead>
+    <thead><tr><th>Workload</th><th>Finch</th><th>Grinch</th></tr></thead>
     <tbody>
-      <tr><td>Default fallback, no query</td><td>9,308 ns</td><td><strong>67 ns</strong></td><td>139×</td></tr>
-      <tr><td>Default fallback, strip removes</td><td>10,898 ns</td><td><strong>187 ns</strong></td><td>58×</td></tr>
-      <tr><td>Bare-hostname match</td><td>5,242 ns</td><td><strong>42 ns</strong></td><td>125×</td></tr>
-      <tr><td>Subdomain via <code>domain()</code></td><td>5,784 ns</td><td><strong>48 ns</strong></td><td>121×</td></tr>
-      <tr><td>Regex match</td><td>1,454 ns</td><td><strong>22 ns</strong></td><td>66×</td></tr>
-      <tr><td>Wildcard match</td><td>9,060 ns</td><td><strong>30 ns</strong></td><td>302×</td></tr>
+      <tr><td>Default fallback, no query</td><td>9,308 ns</td><td>67 ns</td></tr>
+      <tr><td>Default fallback, strip removes</td><td>10,898 ns</td><td>187 ns</td></tr>
+      <tr><td>Bare-hostname match</td><td>5,242 ns</td><td>42 ns</td></tr>
+      <tr><td>Subdomain via <code>domain()</code></td><td>5,784 ns</td><td>48 ns</td></tr>
+      <tr><td>Regex match</td><td>1,454 ns</td><td>22 ns</td></tr>
+      <tr><td>Wildcard match</td><td>9,060 ns</td><td>30 ns</td></tr>
     </tbody>
   </table>
+  <p class="note">These measure <code>resolve()</code> in isolation. Real click-to-browser latency on either tool is dominated by macOS event dispatch and the target-browser launch (a few ms each); the engine differences are real but largely invisible at that scope.</p>
 </section>
 
 <section id="links">

@@ -739,13 +739,31 @@ pub(crate) fn install_console_callbacks(ctx: &JSContext) {
     install(ctx, "__grinchConsoleDebug", "debug");
 }
 
+/// Manual encoding for `NSString * (^)(void)` — block returning id, no
+/// args. Same JSC reason as the console encoding: without a signature,
+/// JSC sees an opaque NSBlock and JS-side `typeof` returns "object",
+/// silently dropping the call. The previous implementation looked
+/// correct but was effectively dead code; opener.windowTitle just
+/// returned "" because the JS-side fallback (`typeof === "function"`)
+/// failed.
+struct ZeroArgIdReturnEncoding;
+unsafe impl block2::ManualBlockEncoding for ZeroArgIdReturnEncoding {
+    type Arguments = ();
+    type Return = *mut NSString;
+    const ENCODING_CSTR: &'static std::ffi::CStr = if cfg!(target_pointer_width = "64") {
+        c"@8@?0"
+    } else {
+        c"@4@?0"
+    };
+}
+
 fn install_window_title_callback(ctx: &JSContext) {
     // Block return follows ARC's id-returning convention: autoreleased, not
     // +1 retained. JSC's Obj-C bridge calls objc_retainAutoreleasedReturnValue
     // on the result; pairing an autorelease here means the retain counts
     // balance. Returning Retained::into_raw (a +1 pointer) leaks the NSString
     // every time user code reads opener.windowTitle.
-    let block = RcBlock::new(|| -> *mut NSString {
+    let block = RcBlock::with_encoding::<_, _, _, ZeroArgIdReturnEncoding>(|| -> *mut NSString {
         let pid = CURRENT_OPENER_PID.load(Ordering::Relaxed);
         let title = frontmost_window_title(pid);
         Retained::autorelease_return(NSString::from_str(&title))
@@ -753,9 +771,8 @@ fn install_window_title_callback(ctx: &JSContext) {
     // SAFETY: A block is an Objective-C object (NSBlock). `&Block<F>` is
     // ABI-compatible with a block pointer, which is itself a valid `id`.
     // JSC accepts blocks as JS-callable functions via the standard objc bridge.
-    let block_obj: &AnyObject = unsafe {
-        &*(&*block as *const block2::Block<dyn Fn() -> *mut NSString> as *const AnyObject)
-    };
+    let block_ref: &block2::Block<_> = &block;
+    let block_obj: &AnyObject = unsafe { &*(block_ref as *const _ as *const AnyObject) };
     let key_ns = NSString::from_str("__grinchFetchWindowTitle");
     // JSContext::setObject_forKeyedSubscript takes the key as &NSObject
     // (NSCopying-typed historically), unlike the JSValue variant which takes
@@ -2501,6 +2518,23 @@ mod integration_tests {
         );
         assert_eq!(resolve(&e, "https://example.com/").0, "com.google.Chrome");
         assert_eq!(resolve(&e, "https://other.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn fetch_window_title_bridge_is_a_function() {
+        // Regression for the same _Block_signature issue that bit console:
+        // without ManualBlockEncoding, JSC saw __grinchFetchWindowTitle as
+        // an opaque NSBlock and the JS-side getter fell through to "".
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => "t:" + typeof __grinchFetchWindowTitle,
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "t:function");
     }
 
     #[test]

@@ -242,19 +242,36 @@ function __grinchRewriteResult(v) {
   return String(v);
 }
 
-// ---------- console shim (no-op) ----------
-// JSC has no built-in console; without this, user code calling console.log
-// would throw. We discard output rather than bridging back to Rust — keeping
-// the slow path slow path. Set __grinchSilenceConsole = false to debug.
-if (typeof console === "undefined") {
-  console = {
-    log:   function() {},
-    warn:  function() {},
-    error: function() {},
-    info:  function() {},
-    debug: function() {},
-  };
+// ---------- console bridge to Rust → stderr ----------
+// JSC has no built-in console. Each level is a thin shim that joins its
+// varargs into a single string and hands it to a Rust block (installed at
+// engine init) that prints to stderr with a `grinch [level]:` prefix.
+//
+// Objects are JSON-stringified for inspection-style debugging; primitives
+// are stringified normally. `JSON.stringify` can throw on circular refs,
+// in which case we fall back to plain `String(v)`.
+function __grinchFormatArgs(args) {
+  var parts = [];
+  for (var i = 0; i < args.length; i++) {
+    var v = args[i];
+    if (typeof v === "string") {
+      parts.push(v);
+    } else if (v && typeof v === "object") {
+      try { parts.push(JSON.stringify(v)); } catch (_) { parts.push(String(v)); }
+    } else {
+      parts.push(String(v));
+    }
+  }
+  return parts.join(" ");
 }
+
+console = {
+  log:   function() { if (typeof __grinchConsoleLog   === "function") __grinchConsoleLog(__grinchFormatArgs(arguments)); },
+  warn:  function() { if (typeof __grinchConsoleWarn  === "function") __grinchConsoleWarn(__grinchFormatArgs(arguments)); },
+  error: function() { if (typeof __grinchConsoleError === "function") __grinchConsoleError(__grinchFormatArgs(arguments)); },
+  info:  function() { if (typeof __grinchConsoleInfo  === "function") __grinchConsoleInfo(__grinchFormatArgs(arguments)); },
+  debug: function() { if (typeof __grinchConsoleDebug === "function") __grinchConsoleDebug(__grinchFormatArgs(arguments)); },
+};
 
 // ---------- CommonJS scaffolding ----------
 var __grinchModule = { exports: {} };

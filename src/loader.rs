@@ -83,6 +83,10 @@ pub fn load_config() -> Option<LoadedConfig> {
     if eval(&ctx, JS_PRELUDE).is_none() || *last_error.borrow() {
         return None;
     }
+    // Console blocks must be installed BEFORE the user config evaluates so
+    // top-level `console.log("…")` calls land on the wired blocks, not the
+    // prelude's `typeof` no-op fallback.
+    crate::engine::install_console_callbacks(&ctx);
     let wrapped = wrap_user_config(&source);
     if eval(&ctx, &wrapped).is_none() || *last_error.borrow() {
         return None;

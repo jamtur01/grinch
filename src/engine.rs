@@ -683,6 +683,62 @@ impl<'a> ResolveCtx<'a> {
 /// reads CURRENT_OPENER_PID (set by resolve()) and calls into the AX API.
 /// Lazy: the JS getter on opener.windowTitle only invokes this when user code
 /// reads it, so configs that don't touch windowTitle pay nothing.
+/// Install five `__grinchConsole*` blocks that the prelude wires up to
+/// `console.log/warn/error/info/debug`. Each block takes a single
+/// already-formatted string (the prelude joins varargs JS-side) and prints
+/// it to stderr with a `grinch [level]:` prefix.
+///
+/// Called from the loader after the prelude evaluates but before user
+/// config evaluates, so top-level `console.log()` calls in the user file
+/// land on the wired blocks rather than the prelude's `typeof` no-op
+/// fallback. Without this ordering, configs that call `console.log("…")`
+/// at module scope got silent drops — debugging a non-firing rule was
+/// painful.
+/// Manual Obj-C block encoding for `void (^)(NSString *)`. JSC will only
+/// auto-bridge a block to a JS function if it carries `_Block_signature`
+/// metadata — objc2's `RcBlock::new` uses `NoBlockEncoding`, which omits
+/// it. With this encoding string in place (`v16@?0@8` on 64-bit), JSC
+/// reads the signature and exposes the block as a callable JS function;
+/// without it, the block stays an opaque `NSBlock` and JS-side calls
+/// throw "is not a function".
+struct OneStringArgEncoding;
+unsafe impl block2::ManualBlockEncoding for OneStringArgEncoding {
+    type Arguments = (*mut NSString,);
+    type Return = ();
+    const ENCODING_CSTR: &'static std::ffi::CStr = if cfg!(target_pointer_width = "64") {
+        c"v16@?0@8"
+    } else {
+        c"v8@?0@4"
+    };
+}
+
+pub(crate) fn install_console_callbacks(ctx: &JSContext) {
+    fn install(ctx: &JSContext, key: &str, level: &'static str) {
+        let block =
+            RcBlock::with_encoding::<_, _, _, OneStringArgEncoding>(move |msg: *mut NSString| {
+                if msg.is_null() {
+                    return;
+                }
+                // SAFETY: JSC owns the NSString; we just borrow it for one call.
+                let s = unsafe { (*msg).to_string() };
+                eprintln!("grinch [{level}]: {s}");
+            });
+        let block_ref: &block2::Block<_> = &block;
+        let block_obj: &AnyObject = unsafe { &*(block_ref as *const _ as *const AnyObject) };
+        let key_ns = NSString::from_str(key);
+        let key_ref: &objc2_foundation::NSObject = &key_ns;
+        unsafe {
+            ctx.setObject_forKeyedSubscript(Some(block_obj), Some(key_ref));
+        }
+        drop(block);
+    }
+    install(ctx, "__grinchConsoleLog", "log");
+    install(ctx, "__grinchConsoleWarn", "warn");
+    install(ctx, "__grinchConsoleError", "error");
+    install(ctx, "__grinchConsoleInfo", "info");
+    install(ctx, "__grinchConsoleDebug", "debug");
+}
+
 fn install_window_title_callback(ctx: &JSContext) {
     // Block return follows ARC's id-returning convention: autoreleased, not
     // +1 retained. JSC's Obj-C bridge calls objc_retainAutoreleasedReturnValue
@@ -1774,6 +1830,11 @@ mod integration_tests {
         let prelude_ns = NSString::from_str(JS_PRELUDE);
         unsafe { ctx.evaluateScript(Some(&prelude_ns)) }.expect("prelude evaluation returned null");
 
+        // Match the loader's ordering: install console blocks between
+        // prelude eval and user-config eval so top-level `console.log`
+        // calls in the user source land on the wired blocks.
+        super::install_console_callbacks(&ctx);
+
         let wrapped = wrap_user_config(user_src);
         let wrapped_ns = NSString::from_str(&wrapped);
         unsafe { ctx.evaluateScript(Some(&wrapped_ns)) }
@@ -2392,6 +2453,70 @@ mod integration_tests {
         let e = build_engine(
             r#"module.exports = {
                 default: { id: "com.google.Chrome" },
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    // ---------- console wiring ----------
+
+    #[test]
+    fn console_callbacks_are_callable_functions() {
+        // typeof should be "function" for all five levels — proves the
+        // manual block-encoding registration is reaching JSC's bridge.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () =>
+                        typeof __grinchConsoleLog + "/" +
+                        typeof __grinchConsoleWarn + "/" +
+                        typeof __grinchConsoleError + "/" +
+                        typeof __grinchConsoleInfo + "/" +
+                        typeof __grinchConsoleDebug,
+                }],
+            };"#,
+        );
+        let (browser, _) = resolve(&e, "https://x/");
+        assert_eq!(browser, "function/function/function/function/function");
+    }
+
+    #[test]
+    fn console_log_inside_fn_matcher_does_not_throw() {
+        // Calling console.log from a user fn must not throw; the matcher
+        // must still be able to return its value. We use the matcher's
+        // return to signal success.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url) => {
+                        console.log("matched", url.hostname);
+                        return url.hostname === "example.com";
+                    },
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://example.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://other.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn console_log_handles_objects_and_primitives() {
+        // The prelude's `__grinchFormatArgs` must not throw on mixed types
+        // — number, string, object, null, undefined.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => {
+                        console.log("string", 42, { a: 1 }, null, undefined);
+                        return true;
+                    },
+                    open: "com.google.Chrome",
+                }],
             };"#,
         );
         assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");

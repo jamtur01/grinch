@@ -116,6 +116,26 @@ pub fn frontmost_opener() -> Opener {
     }
 }
 
+/// Bundle-id-only variant of [`frontmost_opener`]. Used when the config
+/// has `from()` matchers but no fn matchers/rewrites/targets that read
+/// `ctx.opener` — skips `localizedName` and `executableURL` IPC entirely
+/// (each is a LaunchServices round-trip). pid stays 0 since the AX-based
+/// `windowTitle` block can't fire from a config that doesn't read ctx.
+pub fn frontmost_opener_id() -> Opener {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let Some(app) = workspace.frontmostApplication() else {
+        return Opener::default();
+    };
+    let bundle_id = app
+        .bundleIdentifier()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    Opener {
+        bundle_id,
+        ..Opener::default()
+    }
+}
+
 /// Check whether Grinch.app has been granted Accessibility permission, and
 /// if not, ask the system to show its standard prompt to the user. Returns
 /// the trusted state at the time of the call (which is unaffected by the

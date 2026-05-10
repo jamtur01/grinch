@@ -29,7 +29,8 @@ use objc2_foundation::{
 use crate::engine::{Engine, ModifierFlags};
 use crate::loader::{find_config_path, load_config};
 use crate::workspace::{
-    current_modifier_flags, ensure_accessibility_permission, frontmost_opener, open_url, Opener,
+    current_modifier_flags, ensure_accessibility_permission, frontmost_opener,
+    frontmost_opener_id, open_url, Opener,
 };
 
 // SMAppService lives in ServiceManagement.framework; not transitively pulled
@@ -104,7 +105,13 @@ define_class!(
             // click, one drop, one open-with), so they share an opener and
             // modifier state by intent. Per-URL re-reads would also race
             // against the user releasing the key while the batch resolves.
-            let opener = if engine.needs_opener() { frontmost_opener() } else { Opener::default() };
+            let opener = if !engine.needs_opener() {
+                Opener::default()
+            } else if engine.needs_opener_full() {
+                frontmost_opener()
+            } else {
+                frontmost_opener_id()
+            };
             let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
             for i in 0..count {
                 let url = urls.objectAtIndex(i);
@@ -191,7 +198,13 @@ define_class!(
 
             let engine_ref = self.ivars().engine.borrow();
             let Some(engine) = engine_ref.as_ref() else { return };
-            let opener = if engine.needs_opener() { frontmost_opener() } else { Opener::default() };
+            let opener = if !engine.needs_opener() {
+                Opener::default()
+            } else if engine.needs_opener_full() {
+                frontmost_opener()
+            } else {
+                frontmost_opener_id()
+            };
             let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
 
             // Diagnostic — gated by GRINCH_DEBUG=1 in env. Prints opener and

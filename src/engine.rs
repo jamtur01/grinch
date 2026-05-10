@@ -239,6 +239,11 @@ pub struct Engine {
     /// AppDelegate skips frontmost_opener() when this is false, saving 4
     /// LaunchServices/IPC round-trips per click.
     needs_opener: bool,
+    /// True if a fn matcher / rewriter / target with ctx exists. When this
+    /// is false but `needs_opener` is true (= `from()`-only configs),
+    /// AppDelegate uses the lite `frontmost_opener_id` path that skips
+    /// `localizedName` + `executableURL` IPC.
+    needs_opener_full: bool,
     /// True if any rule reads modifier flags (any user fn predicate, since
     /// fns can read ctx.modifiers). AppDelegate skips
     /// current_modifier_flags() when this is false.
@@ -390,6 +395,10 @@ impl Engine {
             make_ctx_helper,
             url_ctor,
             needs_opener: needs.opener,
+            // Modifiers are only set by fn-with-ctx (see analyse_runtime_needs);
+            // a `from()`-only config has needs_opener=true / needs_modifiers=false,
+            // and needs only the bundle_id field of the opener.
+            needs_opener_full: needs.modifiers,
             needs_modifiers: needs.modifiers,
             needs_host: needs.host,
             options,
@@ -414,6 +423,14 @@ impl Engine {
     /// ~100–500 µs of LaunchServices IPC per click.
     pub fn needs_opener(&self) -> bool {
         self.needs_opener
+    }
+
+    /// True if any rule reads opener fields beyond `bundle_id`. When false
+    /// but `needs_opener()` is true, AppDelegate uses the lite
+    /// `frontmost_opener_id` path that skips `localizedName` +
+    /// `executableURL` IPC.
+    pub fn needs_opener_full(&self) -> bool {
+        self.needs_opener_full
     }
 
     /// True if AppDelegate should fetch modifier flags before calling
@@ -3453,6 +3470,26 @@ mod integration_tests {
         );
         assert!(e.needs_opener());
         assert!(e.needs_modifiers());
+        assert!(e.needs_opener_full());
+    }
+
+    #[test]
+    fn from_matcher_needs_opener_but_not_full() {
+        // `from()` matchers only read opener.bundle_id — AppDelegate can use
+        // the lite `frontmost_opener_id` path that skips localizedName /
+        // executableURL IPC.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: from("com.tinyspeck.slackmacgap"),
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert!(e.needs_opener());
+        assert!(!e.needs_modifiers());
+        assert!(!e.needs_opener_full());
     }
 
     #[test]

@@ -295,8 +295,10 @@ primitives:
 | Read modifier keys | `(url, ctx) => ctx.modifiers.shift` |
 | Read opener metadata | `ctx.opener.{bundleId, name, path, windowTitle}` |
 
-`console.log/warn/error` are no-ops — JavaScriptCore has no console;
-output is discarded rather than bridged.
+`console.log/warn/error/info/debug` are wired to stderr with a
+`grinch [level]:` prefix — call them from anywhere in your config to
+trace why a rule did or didn't fire. Objects are JSON-stringified for
+inspection-style debugging.
 
 ### Menu bar
 
@@ -521,17 +523,22 @@ to adjust:
    `shortenerExpander` pattern can't run; resolve a shortener separately
    if you need it — see [Working with URL shorteners](#working-with-url-shorteners)
    below.
-3. **No `finicky.*` namespace.** Grinch doesn't ship `finicky.matchHostnames`,
-   `finicky.getModifierKeys`, `finicky.isAppRunning`, `finicky.notify`,
-   `finicky.getBattery`, `finicky.getPowerInfo`, or `finicky.getSystemInfo`.
-   Migrate to:
-   - `finicky.matchHostnames(...)` → `domain(...)` (note: `domain` matches
-     subdomains too; for exact-hostname-only use a regex like
-     `/^github\.com$/`)
-   - `finicky.getModifierKeys()` → `ctx.modifiers` inside a fn matcher
-   - `finicky.isAppRunning(id)` → declarative `running(id)` matcher
-   - The remaining stubs (notify / getBattery / getPowerInfo / getSystemInfo)
-     never had meaningful implementations and have no replacement.
+3. **`finicky.*` namespace is shipped, with one stub.** All eight v4
+   methods are present:
+   - `finicky.matchHostnames(matchers)` — exact-hostname matcher fn
+     (Finicky-compatible). For subdomain matching use Grinch's `domain(...)`.
+   - `finicky.matchDomains(matchers)` — deprecated alias, warns and delegates.
+   - `finicky.getModifierKeys()` — real values from CG event flags
+     (shift/option/command/control/capsLock/fn/function).
+   - `finicky.isAppRunning(id)` — matches against bundle ID OR localized name.
+   - `finicky.getSystemInfo()` — `{localizedName, name}` from `[NSHost currentHost]`.
+   - `finicky.getPowerInfo()` — **stub** that returns placeholder values
+     (`{isCharging:false, isConnected:true, percentage:null}`) and emits a
+     one-time `console.warn` on first call. Real IOKit hookup is on the TODO
+     list; routing on actual battery state isn't supported yet.
+   - `finicky.notify` and `finicky.getBattery` — inert stubs that match
+     Finicky's own deprecated behaviour (`notify` logs an error pointing at
+     `console.log`; `getBattery` returns dummies pointing at `getPowerInfo`).
 4. **`opener.windowTitle` requires Accessibility permission.** First launch
    prompts; before granting, the field returns `""` and rules depending on
    it silently no-op.

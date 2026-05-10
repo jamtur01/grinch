@@ -2,8 +2,11 @@
 // URL polyfill pre-injected, and returns the module.exports JSValue plus the
 // context that owns it (must be kept alive — JSValues retain their context).
 //
-// Two config locations are checked, in order: ~/.grinch.js (legacy), then
-// ~/.config/grinch.js (XDG-style). The first one found wins.
+// Three config locations are checked, in order. First file found wins:
+//   1. ~/.grinch.js                         (legacy/dotfile)
+//   2. ~/.config/grinch.js                  (flat XDG)
+//   3. ~/.config/grinch/grinch.js           (XDG subdir, mirrors Finicky)
+// The subdir form is for users who keep one folder per tool under ~/.config.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -34,7 +37,10 @@ pub fn load_config() -> Option<LoadedConfig> {
     let (path, source) = match read_first_existing(&config_paths()) {
         Some(found) => found,
         None => {
-            eprintln!("grinch: no config at ~/.grinch.js or ~/.config/grinch.js — create one");
+            eprintln!(
+                "grinch: no config at any of: ~/.grinch.js, ~/.config/grinch.js, \
+                 ~/.config/grinch/grinch.js — create one"
+            );
             return None;
         }
     };
@@ -108,7 +114,11 @@ fn config_paths() -> Vec<PathBuf> {
         return vec![];
     };
     let home = PathBuf::from(home);
-    vec![home.join(".grinch.js"), home.join(".config/grinch.js")]
+    vec![
+        home.join(".grinch.js"),
+        home.join(".config/grinch.js"),
+        home.join(".config/grinch/grinch.js"),
+    ]
 }
 
 fn read_first_existing(paths: &[PathBuf]) -> Option<(PathBuf, String)> {

@@ -253,7 +253,10 @@ impl Delegate {
     fn open_config(&self) {
         let path_ref = self.ivars().config_path.borrow();
         let Some(path) = path_ref.as_ref() else {
-            eprintln!("grinch: no config to open — create ~/.config/grinch.js or ~/.grinch.js");
+            eprintln!(
+                "grinch: no config to open — create one at ~/.grinch.js, \
+                 ~/.config/grinch.js, or ~/.config/grinch/grinch.js"
+            );
             return;
         };
         let path_ns = NSString::from_str(&path.to_string_lossy());

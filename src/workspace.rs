@@ -94,13 +94,17 @@ static RUNNING_APPS_CACHE: Mutex<Option<Arc<HashSet<String>>>> = Mutex::new(None
 static BUNDLE_URL_CACHE: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
 
 pub fn running_apps_cached() -> Arc<HashSet<String>> {
-    if let Some(c) = RUNNING_APPS_CACHE.lock().unwrap().as_ref() {
+    if let Some(c) = RUNNING_APPS_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+    {
         return c.clone();
     }
     // Fetch outside the lock — runningApplications() can stall briefly under
     // memory pressure and we don't want to serialise other readers behind it.
     let fresh = Arc::new(running_app_bundle_ids());
-    let mut g = RUNNING_APPS_CACHE.lock().unwrap();
+    let mut g = RUNNING_APPS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(c) = g.as_ref() {
         return c.clone();
     }
@@ -113,7 +117,7 @@ pub fn running_apps_cached() -> Arc<HashSet<String>> {
 /// is installed (cached as well, so we don't re-query for missing apps).
 fn resolved_app_url(bundle_id: &str) -> Option<Retained<NSURL>> {
     {
-        let cache = BUNDLE_URL_CACHE.lock().unwrap();
+        let cache = BUNDLE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(map) = cache.as_ref() {
             if let Some(hit) = map.get(bundle_id) {
                 return hit
@@ -127,7 +131,7 @@ fn resolved_app_url(bundle_id: &str) -> Option<Retained<NSURL>> {
     let url = workspace.URLForApplicationWithBundleIdentifier(&bundle_ns);
     let path = url.as_ref().and_then(|u| u.path()).map(|s| s.to_string());
     {
-        let mut cache = BUNDLE_URL_CACHE.lock().unwrap();
+        let mut cache = BUNDLE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         cache
             .get_or_insert_with(HashMap::new)
             .insert(bundle_id.to_string(), path);
@@ -136,8 +140,12 @@ fn resolved_app_url(bundle_id: &str) -> Option<Retained<NSURL>> {
 }
 
 fn invalidate_caches() {
-    *RUNNING_APPS_CACHE.lock().unwrap() = None;
-    *BUNDLE_URL_CACHE.lock().unwrap() = None;
+    // unwrap_or_else(|e| e.into_inner()) so a panic that poisoned a cache
+    // doesn't permanently brick all subsequent clicks. The cached data
+    // (HashMap/HashSet of strings) is safe to read after a panic; worst
+    // case we re-fetch from LaunchServices on the next access.
+    *RUNNING_APPS_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *BUNDLE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Register a process-lifetime "user-initiated" activity with

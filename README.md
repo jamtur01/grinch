@@ -88,11 +88,20 @@ module.exports = {
   browsers: { ... },      // optional: named-browser dictionary
   rewrite: [ ... ],       // optional: URL rewriters, applied in order
   rules: [ ... ],         // optional: routing rules, first match wins
+  options: { ... },       // optional: Finicky-compat options block (parsed, mostly inert)
 };
 ```
 
 Finicky-style aliases are accepted everywhere: `defaultBrowser`, `handlers`,
 `browser` work identically to `default`, `rules`, `open`.
+
+The `options` block accepts Finicky v4's five keys without erroring so
+ported configs don't have to delete them, but most don't have a Grinch-
+side implementation today: `urlShorteners` (Grinch expects
+[external expansion](#working-with-url-shorteners)), `logRequests`
+(Grinch uses `GRINCH_DEBUG=1`), `checkForUpdates` (Grinch doesn't poll),
+`keepRunning` (Grinch is always resident), `hideIcon` (not yet
+implemented). Unknown keys log a one-line warning.
 
 ### Browser specs
 

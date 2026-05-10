@@ -281,6 +281,15 @@ impl Engine {
 
         install_window_title_callback(&ctx);
 
+        // options block — Finicky-compat. Accept all five v4 keys without
+        // erroring so configs ported across don't have to delete them.
+        // Anything unknown logs a one-line warning per key.
+        if let Some(opts) = key(&exports, "options") {
+            if !is_undef_or_null(&opts) && unsafe { opts.isObject() } {
+                parse_options_block(&opts);
+            }
+        }
+
         // browsers
         let mut browsers: std::collections::HashMap<String, Rc<BrowserSpec>> =
             std::collections::HashMap::new();
@@ -1273,6 +1282,38 @@ fn resolve_browser(
     None
 }
 
+/// Parse Finicky v4's `options` block. The five known keys are accepted
+/// without error so a copied-over Finicky config doesn't break:
+///
+/// | Key | Grinch behaviour |
+/// |---|---|
+/// | `urlShorteners` | silently ignored — Finicky's hard-coded list isn't user-configurable there either; Grinch expects external expansion (see `examples/expand-shortener.sh`) |
+/// | `logRequests`   | silently ignored — Grinch uses `GRINCH_DEBUG=1` for trace logs to stderr |
+/// | `checkForUpdates` | silently ignored — Grinch doesn't poll for updates |
+/// | `keepRunning`   | silently ignored — Grinch is always resident |
+/// | `hideIcon`      | silently ignored for now (will be implemented in a future commit) |
+///
+/// Unknown keys log a one-line warning so users can spot typos. Doesn't
+/// affect the engine's runtime behaviour today; existing in code is
+/// purely about not erroring on valid Finicky config.
+fn parse_options_block(opts: &JSValue) {
+    const KNOWN: &[&str] = &[
+        "urlShorteners",
+        "logRequests",
+        "checkForUpdates",
+        "keepRunning",
+        "hideIcon",
+    ];
+    for (k, _v) in iter_object(opts) {
+        if !KNOWN.contains(&k.as_str()) {
+            eprintln!(
+                "grinch: unknown options.{k} — accepted keys are urlShorteners, \
+                 logRequests, checkForUpdates, keepRunning, hideIcon"
+            );
+        }
+    }
+}
+
 fn parse_rule_array(
     arr: &JSValue,
     browsers: &std::collections::HashMap<String, Rc<BrowserSpec>>,
@@ -2165,6 +2206,41 @@ mod integration_tests {
         let (browser, url) = resolve(&e, "https://example.com/");
         assert_eq!(browser, "com.apple.Safari");
         assert_eq!(url, "https://example.com/");
+    }
+
+    #[test]
+    fn options_block_with_all_known_keys_is_accepted() {
+        // Finicky-config compat: the entire options block should be
+        // accepted without erroring even though Grinch implements none
+        // of these today. Verify by checking that the engine builds
+        // (build_engine would panic if Engine::new returned Err) and
+        // that resolve still works.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                options: {
+                    urlShorteners: ["bit.ly", "t.co"],
+                    logRequests: true,
+                    checkForUpdates: false,
+                    keepRunning: true,
+                    hideIcon: false,
+                },
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn options_block_with_unknown_key_does_not_error() {
+        // Unknown option keys log a stderr warning but must not break
+        // engine init. The user's config still loads and resolves.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                options: { thisIsNotARealOption: 42 },
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
     }
 
     #[test]

@@ -403,8 +403,12 @@ impl Engine {
         // Cache true/false JSValues — every ctx build (slow path) reads
         // six modifier flags through these. Pre-built here so the hot
         // path is a refcount bump, not a fresh JSC bridge crossing.
-        let js_true = js_bool(&ctx, true);
-        let js_false = js_bool(&ctx, false);
+        let js_true = js_bool(&ctx, true).ok_or(EngineError::PreludeBroken {
+            global: "valueWithBool(true)",
+        })?;
+        let js_false = js_bool(&ctx, false).ok_or(EngineError::PreludeBroken {
+            global: "valueWithBool(false)",
+        })?;
 
         Ok(Self {
             default_browser,
@@ -1116,14 +1120,18 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
 /// to parse (e.g. exotic scheme), fall back to a plain object so user code
 /// destructuring `{ href }` doesn't crash.
 fn build_url_instance(url_ctor: &JSValue, ctx: &JSContext, url: &str) -> Retained<JSValue> {
-    let url_str = js_string(ctx, url);
-    let url_str_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_str) };
-    let args = NSArray::from_retained_slice(&[url_str_obj]);
-    if let Some(instance) = unsafe { url_ctor.constructWithArguments(Some(&args)) } {
-        if !unsafe { instance.isUndefined() } && !unsafe { instance.isNull() } {
-            return instance;
+    if let Some(url_str) = js_string(ctx, url) {
+        let url_str_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_str) };
+        let args = NSArray::from_retained_slice(&[url_str_obj]);
+        if let Some(instance) = unsafe { url_ctor.constructWithArguments(Some(&args)) } {
+            if !unsafe { instance.isUndefined() } && !unsafe { instance.isNull() } {
+                return instance;
+            }
         }
     }
+    // js_string failed (OOM) or `new URL(...)` returned undefined/null —
+    // fall through to the existing stub-object path so user code can
+    // still destructure { href } without crashing the resolve.
     // Parse failed (URL polyfill threw); return a stub object with .href set
     // so user code can still destructure. serde_json gives us a JSON string
     // literal that's also valid JS — Rust's debug-format `{:?}` would emit
@@ -1166,10 +1174,13 @@ fn build_ctx_object(
             js_false.clone()
         }
     };
-    let url_v = js_string(ctx, url);
-    let opener_id_v = cached_js_string(ctx, opener_str_cache, &opener.bundle_id);
-    let opener_name_v = cached_js_string(ctx, opener_str_cache, &opener.name);
-    let opener_path_v = cached_js_string(ctx, opener_str_cache, &opener.path);
+    // js_string / cached_js_string return None on JSC OOM. Propagate
+    // via `?` to the function's Option return; the caller treats that
+    // as "fn matcher won't match" and continues with the next rule.
+    let url_v = js_string(ctx, url)?;
+    let opener_id_v = cached_js_string(ctx, opener_str_cache, &opener.bundle_id)?;
+    let opener_name_v = cached_js_string(ctx, opener_str_cache, &opener.name)?;
+    let opener_path_v = cached_js_string(ctx, opener_str_cache, &opener.path)?;
     // Fixed-size array (was a heap-allocated Vec<Retained<AnyObject>>).
     // NSArray::from_retained_slice takes a `&[Retained<T>]` so the array
     // coerces cleanly; no allocation between us and JSC's NSArray copy.
@@ -2205,11 +2216,15 @@ fn js_array_to_strings(v: &JSValue) -> Vec<String> {
     out
 }
 
-fn js_string(ctx: &JSContext, s: &str) -> Retained<JSValue> {
+fn js_string(ctx: &JSContext, s: &str) -> Option<Retained<JSValue>> {
     let ns = NSString::from_str(s);
     let any: &AnyObject = &ns;
+    // `valueWithObject_inContext` returns Option in the bindings and
+    // documented as infallible by Apple, but JSC can return null under
+    // hard memory pressure. Returning Option lets the resolve hot path
+    // suppress the click cleanly (matcher returns false, ctx build
+    // returns None, engine continues) instead of panicking the process.
     unsafe { JSValue::valueWithObject_inContext(Some(any), Some(ctx)) }
-        .expect("valueWithObject returned null")
 }
 
 /// Cached `js_string` keyed by the Rust `&str`. Cache hit returns a
@@ -2220,17 +2235,20 @@ fn cached_js_string(
     ctx: &JSContext,
     cache: &RefCell<std::collections::HashMap<String, Retained<JSValue>>>,
     s: &str,
-) -> Retained<JSValue> {
+) -> Option<Retained<JSValue>> {
     if let Some(v) = cache.borrow().get(s) {
-        return v.clone();
+        return Some(v.clone());
     }
-    let v = js_string(ctx, s);
+    let v = js_string(ctx, s)?;
     cache.borrow_mut().insert(s.to_string(), v.clone());
-    v
+    Some(v)
 }
 
-fn js_bool(ctx: &JSContext, b: bool) -> Retained<JSValue> {
-    unsafe { JSValue::valueWithBool_inContext(b, Some(ctx)) }.expect("valueWithBool null")
+fn js_bool(ctx: &JSContext, b: bool) -> Option<Retained<JSValue>> {
+    // Same OOM rationale as js_string. Engine::new propagates failure
+    // here as EngineError::PreludeBroken; per-resolve callers can `?`
+    // through to the build_ctx_object Option.
+    unsafe { JSValue::valueWithBool_inContext(b, Some(ctx)) }
 }
 
 unsafe fn eval_global(ctx: &JSContext, name: &str) -> Option<Retained<JSValue>> {

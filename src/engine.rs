@@ -2292,24 +2292,45 @@ fn is_marker(v: &JSValue, ty: &str) -> bool {
 }
 
 /// Iterate the keys of a JS object as Rust strings, returning (key, value).
-/// Values are re-fetched as JSValues so we don't lose JSValue identity (which
-/// `JSValue::toDictionary` would erase by recursively converting to NS*).
-/// The double bridge crossing is fine here — only called from `Engine::new`
-/// against the small `browsers:` map, never on the resolve hot path.
+///
+/// Uses `Object.keys(v)` rather than `v.toDictionary()`. The dictionary
+/// path recursively converts every value to its NS* equivalent, which
+/// stack-overflows on a circular config like `var x = {}; x.self = x;
+/// module.exports = { browsers: x };`. `Object.keys` returns only the
+/// own enumerable property *names* — no value walk — so circular values
+/// are safe; we re-fetch each value via subscript afterwards (one JSC
+/// bridge crossing per key, fine because this is engine-init only).
 fn iter_object(v: &JSValue) -> Vec<(String, Retained<JSValue>)> {
-    let dict = match unsafe { v.toDictionary() } {
-        Some(d) => d,
-        None => return vec![],
+    if !unsafe { v.isObject() } {
+        return vec![];
+    }
+    let Some(ctx) = (unsafe { v.context() }) else {
+        return vec![];
     };
-    let keys = dict.allKeys();
-    let count = keys.count();
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        let any_key = keys.objectAtIndex(i);
-        let Ok(s) = any_key.downcast::<NSString>() else {
+    let Some(object_ctor) = (unsafe { eval_global(&ctx, "Object") }) else {
+        return vec![];
+    };
+    let Some(keys_fn) = key(&object_ctor, "keys") else {
+        return vec![];
+    };
+    let v_clone: Retained<AnyObject> = unsafe { Retained::cast_unchecked(v.retain()) };
+    let args = NSArray::from_retained_slice(&[v_clone]);
+    let Some(keys_array) = (unsafe { keys_fn.callWithArguments(Some(&args)) }) else {
+        return vec![];
+    };
+    let Some(length_jsv) = key(&keys_array, "length") else {
+        return vec![];
+    };
+    let length = unsafe { length_jsv.toUInt32() } as usize;
+    let mut out = Vec::with_capacity(length);
+    for i in 0..length {
+        let Some(name_jsv) = (unsafe { keys_array.valueAtIndex(i) }) else {
             continue;
         };
-        let name = s.to_string();
+        let Some(name_ns) = (unsafe { name_jsv.toString() }) else {
+            continue;
+        };
+        let name = name_ns.to_string();
         if let Some(val) = key(v, &name) {
             out.push((name, val));
         }
@@ -3598,6 +3619,27 @@ mod integration_tests {
             Err(other) => panic!("wrong error variant: {other:?}"),
             Ok(_) => panic!("expected PreludeBroken, got Ok"),
         }
+    }
+
+    #[test]
+    fn config_with_circular_browsers_map_does_not_stack_overflow() {
+        // Regression: iter_object used to call v.toDictionary() which
+        // recursively converted every value to its NS* equivalent and
+        // blew the stack on circular references. The Object.keys path
+        // walks names only — circular *values* are safe; we just hand
+        // the JSValue back to parse_browser_jsval, which reads specific
+        // keys (name/id/profile/...) without deep traversal.
+        let e = build_engine(
+            r#"var x = {};
+               x.self = x;
+               module.exports = {
+                 default: "com.apple.Safari",
+                 browsers: { broken: x },
+               };"#,
+        );
+        // Resolves without panicking; broken-browser entry is a no-op spec
+        // (no `name`/`id`), so the rule below falls through to the default.
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
     }
 
     #[test]

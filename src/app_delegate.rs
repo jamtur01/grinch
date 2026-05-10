@@ -483,15 +483,32 @@ fn terminate(mtm: MainThreadMarker) {
 
 // MARK: - SIGHUP handling
 //
-// Grinch reloads its config on SIGHUP. We install a libc signal handler that
-// schedules a callback on the main dispatch queue (which the run loop drains),
-// from which we can safely poke the delegate's reloadConfig: action.
+// Grinch reloads its config on SIGHUP via the textbook self-pipe trick:
+//
+//   1. Open a pipe at startup; stash the write end in an atomic.
+//   2. Signal handler does only one thing — write a single byte to the
+//      pipe. `write(2)` is on POSIX's async-signal-safe list (libdispatch
+//      and Obj-C runtime calls are not — the previous direct-dispatch_async
+//      handler was a latent deadlock waiting for unlucky timing).
+//   3. A background thread blocks reading the other end; on byte arrival
+//      it dispatches the reload to the main queue from normal context,
+//      where `DispatchQueue::main()` and `msg_send!` are safe.
 
 static DELEGATE_PTR: AtomicPtr<AnyObject> = AtomicPtr::new(std::ptr::null_mut());
+static SIGHUP_PIPE_WRITE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
 extern "C" fn sighup_trampoline(_sig: libc::c_int) {
-    let queue = DispatchQueue::main();
-    unsafe { queue.exec_async_f(std::ptr::null_mut(), reload_on_main) };
+    let fd = SIGHUP_PIPE_WRITE.load(Ordering::Relaxed);
+    if fd < 0 {
+        return;
+    }
+    // SAFETY: write(2) is async-signal-safe per POSIX; a single-byte write
+    // ≤ PIPE_BUF is atomic. Errors ignored — if the pipe is full, a reload
+    // is already pending in the reader thread's queue.
+    let b: u8 = b'r';
+    unsafe {
+        libc::write(fd, &b as *const u8 as *const libc::c_void, 1);
+    }
 }
 
 extern "C" fn reload_on_main(_ctx: *mut c_void) {
@@ -508,6 +525,36 @@ fn install_sighup_handler(delegate: &Delegate) {
     let ptr: *const Delegate = delegate;
     let any_ptr: *mut AnyObject = ptr as *mut AnyObject;
     DELEGATE_PTR.store(any_ptr, Ordering::Relaxed);
+
+    let mut fds: [libc::c_int; 2] = [-1; 2];
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        eprintln!("grinch: pipe() failed for SIGHUP self-pipe; reload disabled");
+        return;
+    }
+    SIGHUP_PIPE_WRITE.store(fds[1], Ordering::Relaxed);
+
+    // Reader thread: drains bytes from the read end and posts a reload to
+    // the main queue per byte arrival. Lives for the process lifetime.
+    let read_fd = fds[0];
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 64];
+        loop {
+            let n = unsafe {
+                libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+            };
+            if n <= 0 {
+                // EOF or error — pipe is gone, nothing more to do.
+                eprintln!("grinch: SIGHUP self-pipe closed; reload disabled");
+                return;
+            }
+            // Off the signal handler now — libdispatch + Obj-C are safe.
+            let queue = DispatchQueue::main();
+            unsafe {
+                queue.exec_async_f(std::ptr::null_mut(), reload_on_main);
+            }
+        }
+    });
+
     let handler = sighup_trampoline as *const () as libc::sighandler_t;
     unsafe { libc::signal(libc::SIGHUP, handler) };
 }

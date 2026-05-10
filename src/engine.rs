@@ -243,6 +243,8 @@ pub struct Engine {
     /// resolve — saves ~30-50 ns for configs that route purely on regex /
     /// wildcard / fn matchers.
     needs_host: bool,
+    /// Parsed `options` block — the few keys Grinch actually acts on.
+    options: OptionsConfig,
     /// Cached JSValue strings for opener fields (bundleId / name / path).
     /// Most clicks come from the same handful of openers (Mail, Slack,
     /// Outlook…), and the JSC bridge crossing for NSString::from_str +
@@ -289,11 +291,10 @@ impl Engine {
         // options block — Finicky-compat. Accept all five v4 keys without
         // erroring so configs ported across don't have to delete them.
         // Anything unknown logs a one-line warning per key.
-        if let Some(opts) = key(&exports, "options") {
-            if !is_undef_or_null(&opts) && unsafe { opts.isObject() } {
-                parse_options_block(&opts);
-            }
-        }
+        let options = key(&exports, "options")
+            .filter(|opts| !is_undef_or_null(opts) && unsafe { opts.isObject() })
+            .map(|opts| parse_options_block(&opts))
+            .unwrap_or_default();
 
         // browsers
         let mut browsers: std::collections::HashMap<String, Rc<BrowserSpec>> =
@@ -360,6 +361,7 @@ impl Engine {
             needs_opener: needs.opener,
             needs_modifiers: needs.modifiers,
             needs_host: needs.host,
+            options,
             opener_str_cache: RefCell::new(std::collections::HashMap::new()),
         })
     }
@@ -377,6 +379,15 @@ impl Engine {
     /// (only those can read modifiers, via `ctx.modifiers`).
     pub fn needs_modifiers(&self) -> bool {
         self.needs_modifiers
+    }
+
+    /// True when `options.hideIcon` was set in the user config. Read once
+    /// by AppDelegate at app launch to decide whether to create the
+    /// menu-bar status item. Reloads don't toggle the icon mid-session
+    /// (no NSStatusItem add/remove dance) — that's consistent with how
+    /// most macOS background apps surface this setting.
+    pub fn hide_icon(&self) -> bool {
+        self.options.hide_icon
     }
 
     /// Hot path: resolve a URL given the opener and modifier flags.
@@ -1296,6 +1307,19 @@ fn resolve_browser(
     None
 }
 
+/// Outcome of parsing the user config's `options` block. Only fields
+/// Grinch actually acts on appear here — the others (urlShorteners,
+/// logRequests, checkForUpdates, keepRunning) are still accepted at
+/// parse time but discarded (see `parse_options_block`).
+#[derive(Default, Debug, Clone, Copy)]
+pub struct OptionsConfig {
+    /// Whether the menu-bar status item should be skipped at app launch.
+    /// Read once by AppDelegate during `setup_menu_bar`; reloads won't
+    /// hide or re-show the icon mid-session (consistent with most macOS
+    /// background apps that surface this kind of toggle).
+    pub hide_icon: bool,
+}
+
 /// Parse Finicky v4's `options` block. The five known keys are accepted
 /// without error so a copied-over Finicky config doesn't break:
 ///
@@ -1305,12 +1329,10 @@ fn resolve_browser(
 /// | `logRequests`   | silently ignored — Grinch uses `GRINCH_DEBUG=1` for trace logs to stderr |
 /// | `checkForUpdates` | silently ignored — Grinch doesn't poll for updates |
 /// | `keepRunning`   | silently ignored — Grinch is always resident |
-/// | `hideIcon`      | silently ignored for now (will be implemented in a future commit) |
+/// | `hideIcon`      | **honoured** — propagated through `OptionsConfig` to AppDelegate, which skips menu-bar status item creation when set |
 ///
-/// Unknown keys log a one-line warning so users can spot typos. Doesn't
-/// affect the engine's runtime behaviour today; existing in code is
-/// purely about not erroring on valid Finicky config.
-fn parse_options_block(opts: &JSValue) {
+/// Unknown keys log a one-line warning so users can spot typos.
+fn parse_options_block(opts: &JSValue) -> OptionsConfig {
     const KNOWN: &[&str] = &[
         "urlShorteners",
         "logRequests",
@@ -1318,14 +1340,23 @@ fn parse_options_block(opts: &JSValue) {
         "keepRunning",
         "hideIcon",
     ];
-    for (k, _v) in iter_object(opts) {
-        if !KNOWN.contains(&k.as_str()) {
-            eprintln!(
-                "grinch: unknown options.{k} — accepted keys are urlShorteners, \
-                 logRequests, checkForUpdates, keepRunning, hideIcon"
-            );
+    let mut out = OptionsConfig::default();
+    for (k, v) in iter_object(opts) {
+        match k.as_str() {
+            "hideIcon" => {
+                out.hide_icon = unsafe { v.toBool() };
+            }
+            other if !KNOWN.contains(&other) => {
+                eprintln!(
+                    "grinch: unknown options.{other} — accepted keys are urlShorteners, \
+                     logRequests, checkForUpdates, keepRunning, hideIcon"
+                );
+            }
+            // Known but inert keys: accept silently.
+            _ => {}
         }
     }
+    out
 }
 
 fn parse_rule_array(
@@ -2242,6 +2273,31 @@ mod integration_tests {
             };"#,
         );
         assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn options_hideicon_parses_to_engine_accessor() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                options: { hideIcon: true },
+            };"#,
+        );
+        assert!(e.hide_icon());
+    }
+
+    #[test]
+    fn options_hideicon_default_is_false() {
+        let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
+        assert!(!e.hide_icon());
+
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                options: { hideIcon: false },
+            };"#,
+        );
+        assert!(!e.hide_icon());
     }
 
     #[test]

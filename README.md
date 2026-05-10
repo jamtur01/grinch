@@ -96,12 +96,14 @@ Finicky-style aliases are accepted everywhere: `defaultBrowser`, `handlers`,
 `browser` work identically to `default`, `rules`, `open`.
 
 The `options` block accepts Finicky v4's five keys without erroring so
-ported configs don't have to delete them, but most don't have a Grinch-
-side implementation today: `urlShorteners` (Grinch expects
-[external expansion](#working-with-url-shorteners)), `logRequests`
-(Grinch uses `GRINCH_DEBUG=1`), `checkForUpdates` (Grinch doesn't poll),
-`keepRunning` (Grinch is always resident), `hideIcon` (not yet
-implemented). Unknown keys log a one-line warning.
+ported configs don't have to delete them. Most are inert in Grinch:
+`urlShorteners` (expects [external expansion](#working-with-url-shorteners)),
+`logRequests` (use `GRINCH_DEBUG=1`), `checkForUpdates` (Grinch doesn't
+poll), `keepRunning` (Grinch is always resident). The one that's wired
+up is `hideIcon: true`, which skips the menu-bar status item entirely
+at app launch — useful when you don't want the 🎄 in your menu bar.
+Reloads don't toggle the icon mid-session; restart Grinch to apply
+changes. Unknown keys log a one-line warning.
 
 ### Browser specs
 

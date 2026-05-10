@@ -360,6 +360,22 @@ impl Delegate {
     }
 
     fn setup_menu_bar(&self) {
+        // options.hideIcon — Finicky-compat. Skip status-item creation
+        // entirely when the user opts out. Read once at launch; reloads
+        // don't add/remove the icon mid-session (kill -HUP $(pgrep …) +
+        // change won't toggle visibility — restart the app to take
+        // effect).
+        let hide_icon = self
+            .ivars()
+            .engine
+            .borrow()
+            .as_ref()
+            .map(|e| e.hide_icon())
+            .unwrap_or(false);
+        if hide_icon {
+            return;
+        }
+
         let mtm = self.mtm();
         let bar = NSStatusBar::systemStatusBar();
         let item = bar.statusItemWithLength(NSSquareStatusItemLength);

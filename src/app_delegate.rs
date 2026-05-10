@@ -170,10 +170,12 @@ define_class!(
             }
 
             // Normal app-mode startup: load config, build the menu bar,
-            // wire SIGHUP, and ask for Accessibility once.
+            // wire SIGHUP, install the running-apps cache observer, and
+            // ask for Accessibility once.
             self.reload_engine();
             self.setup_menu_bar();
             install_sighup_handler(self);
+            crate::workspace::install_running_apps_observer();
 
             if !ensure_accessibility_permission() {
                 eprintln!(

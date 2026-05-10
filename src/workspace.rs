@@ -4,17 +4,22 @@
 use std::collections::HashSet;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
+use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send, MainThreadMarker};
-use objc2_app_kit::{NSWorkspace, NSWorkspaceOpenConfiguration};
+use objc2_app_kit::{
+    NSWorkspace, NSWorkspaceDidLaunchApplicationNotification,
+    NSWorkspaceDidTerminateApplicationNotification, NSWorkspaceOpenConfiguration,
+};
 use objc2_application_services::{
     kAXTrustedCheckOptionPrompt, AXError, AXIsProcessTrusted, AXIsProcessTrustedWithOptions,
     AXUIElement,
 };
 use objc2_core_foundation::{kCFBooleanTrue, CFDictionary, CFRetained, CFString, CFType};
-use objc2_foundation::{NSArray, NSBundle, NSString, NSURL};
+use objc2_foundation::{NSArray, NSBundle, NSNotification, NSString, NSURL};
 
 // Raw FFI for CGEventSourceFlagsState. The objc2-core-graphics 0.3.2 crate
 // declares a dependency on objc2-metal 0.3.2 which isn't published, so we
@@ -57,6 +62,68 @@ pub fn running_app_bundle_ids() -> HashSet<String> {
         }
     }
     out
+}
+
+/// Process-wide cached snapshot of running app bundle IDs. The snapshot
+/// stays valid until the next NSWorkspace launch/terminate notification
+/// invalidates it (see `install_running_apps_observer`). Without the
+/// observer (e.g., in tests, before app start), every call rebuilds.
+///
+/// Returned as `Arc` so the per-resolve cache can hold a reference that
+/// outlives any concurrent invalidation without copying the underlying
+/// `HashSet` (typically 50–200 entries).
+static RUNNING_APPS_CACHE: Mutex<Option<Arc<HashSet<String>>>> = Mutex::new(None);
+
+pub fn running_apps_cached() -> Arc<HashSet<String>> {
+    if let Some(c) = RUNNING_APPS_CACHE.lock().unwrap().as_ref() {
+        return c.clone();
+    }
+    // Fetch outside the lock — runningApplications() can stall briefly under
+    // memory pressure and we don't want to serialise other readers behind it.
+    let fresh = Arc::new(running_app_bundle_ids());
+    let mut g = RUNNING_APPS_CACHE.lock().unwrap();
+    if let Some(c) = g.as_ref() {
+        return c.clone();
+    }
+    *g = Some(fresh.clone());
+    fresh
+}
+
+fn invalidate_running_apps_cache() {
+    *RUNNING_APPS_CACHE.lock().unwrap() = None;
+}
+
+/// Install NSWorkspace launch/terminate observers that invalidate the
+/// `running_apps_cached` snapshot. Idempotent — repeated calls are no-ops.
+/// The observer tokens and block are leaked intentionally; the observers
+/// must live for the duration of the process.
+pub fn install_running_apps_observer() {
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let workspace = NSWorkspace::sharedWorkspace();
+    let nc = workspace.notificationCenter();
+    let block = RcBlock::new(|_n: NonNull<NSNotification>| {
+        invalidate_running_apps_cache();
+    });
+    unsafe {
+        let t1 = nc.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceDidLaunchApplicationNotification),
+            None,
+            None,
+            &block,
+        );
+        let t2 = nc.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceDidTerminateApplicationNotification),
+            None,
+            None,
+            &block,
+        );
+        std::mem::forget(t1);
+        std::mem::forget(t2);
+        std::mem::forget(block);
+    }
 }
 
 /// True if any running app's bundle identifier OR localized name matches
@@ -500,5 +567,21 @@ mod tests {
         assert_eq!(KCG_EVENT_FLAG_MASK_CONTROL, 1u64 << 18);
         assert_eq!(KCG_EVENT_FLAG_MASK_COMMAND, 1u64 << 20);
         assert_eq!(KCG_EVENT_FLAG_MASK_SHIFT, 1u64 << 17);
+    }
+
+    #[test]
+    fn running_apps_cached_returns_same_arc_until_invalidated() {
+        // Reset cache state so we don't depend on test ordering. Other
+        // tests may have populated it via direct calls or via engine
+        // resolves that touched a `running()` matcher.
+        invalidate_running_apps_cache();
+        let a = running_apps_cached();
+        let b = running_apps_cached();
+        // Same Arc means subsequent reads avoid re-fetching the
+        // NSWorkspace snapshot — the win this cache exists to give us.
+        assert!(Arc::ptr_eq(&a, &b));
+        invalidate_running_apps_cache();
+        let c = running_apps_cached();
+        assert!(!Arc::ptr_eq(&a, &c));
     }
 }

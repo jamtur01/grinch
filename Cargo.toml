@@ -33,6 +33,7 @@ features = [
     "NSError",
     "NSNotification",
     "NSObjCRuntime",
+    "NSOperation",
     "NSString",
     "NSURL",
     "NSValue",

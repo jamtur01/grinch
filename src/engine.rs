@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -741,11 +742,12 @@ struct ResolveCtx<'a> {
     js_false: &'a Retained<JSValue>,
     opener: &'a Opener,
     modifiers: ModifierFlags,
-    /// Per-resolve cache for `running()` matchers. Built lazily on first
-    /// `running_apps()` access, dropped at end of resolve. Lifetime-of-Engine
-    /// caching looked tempting but goes stale — apps start/quit between
-    /// clicks and `running()` would lie until the next config reload.
-    running_cache: RefCell<Option<HashSet<String>>>,
+    /// Per-resolve cache for `running()` matchers. Holds an `Arc` snapshot
+    /// from the process-wide `running_apps_cached`, so subsequent
+    /// `running_apps()` calls within one resolve avoid the Mutex roundtrip.
+    /// The process-wide cache is kept fresh by NSWorkspace launch/terminate
+    /// observers (`install_running_apps_observer`).
+    running_cache: RefCell<Option<Arc<HashSet<String>>>>,
     /// URL passed to resolve() — exposed to user fns as `ctx.url` /
     /// `ctx.originalUrl`. Stays constant for the entire resolve even if
     /// rewrites fire; user code reads the *current* URL via the first arg.
@@ -801,11 +803,13 @@ impl<'a> ResolveCtx<'a> {
         }
     }
 
-    fn running_apps(&self) -> std::cell::Ref<'_, HashSet<String>> {
-        if self.running_cache.borrow().is_none() {
-            *self.running_cache.borrow_mut() = Some(crate::workspace::running_app_bundle_ids());
+    fn running_apps(&self) -> Arc<HashSet<String>> {
+        if let Some(c) = self.running_cache.borrow().as_ref() {
+            return c.clone();
         }
-        std::cell::Ref::map(self.running_cache.borrow(), |o| o.as_ref().unwrap())
+        let fresh = crate::workspace::running_apps_cached();
+        *self.running_cache.borrow_mut() = Some(fresh.clone());
+        fresh
     }
 
     /// Lazily-built ctx object. Reused across all fn invocations within a

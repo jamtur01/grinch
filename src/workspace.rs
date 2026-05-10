@@ -58,6 +58,36 @@ pub fn running_app_bundle_ids() -> HashSet<String> {
     out
 }
 
+/// True if any running app's bundle identifier OR localized name matches
+/// `id`. Matches Finicky's `finicky.isAppRunning` semantics where
+/// `isAppRunning("Slack")` works as well as
+/// `isAppRunning("com.tinyspeck.slackmacgap")`.
+///
+/// The bundle-ID + display-name dual-check makes this slightly more
+/// expensive than the bundle-only `running_app_bundle_ids` walk used by
+/// the declarative `running()` matcher — we read both fields per app
+/// rather than collecting one and intersecting. Worth it: most users
+/// reach for the friendlier display-name form.
+pub fn is_app_running(id: &str) -> bool {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let apps = workspace.runningApplications();
+    let count = apps.count();
+    for i in 0..count {
+        let app = apps.objectAtIndex(i);
+        if let Some(bundle) = app.bundleIdentifier() {
+            if bundle.to_string() == id {
+                return true;
+            }
+        }
+        if let Some(name) = app.localizedName() {
+            if name.to_string() == id {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn frontmost_opener() -> Opener {
     let workspace = NSWorkspace::sharedWorkspace();
     let Some(app) = workspace.frontmostApplication() else {

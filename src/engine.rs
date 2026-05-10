@@ -929,11 +929,10 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
     });
 
     install_one_arg_string(ctx, "__grinchIsAppRunning", |id| {
-        // Match against either bundle ID or localized name, like Finicky.
-        // `running_app_bundle_ids` only returns bundle IDs today; the
-        // localized-name comparison would need a different NSWorkspace
-        // call. Document this gap; common case (bundle ID) works.
-        if crate::workspace::running_app_bundle_ids().contains(id) {
+        // Mirrors Finicky: match against either bundle ID or localized
+        // name (so `finicky.isAppRunning("Slack")` works in addition to
+        // `finicky.isAppRunning("com.tinyspeck.slackmacgap")`).
+        if crate::workspace::is_app_running(id) {
             "1".to_string()
         } else {
             "0".to_string()
@@ -3341,6 +3340,25 @@ mod integration_tests {
             resolve(&e, "https://x/").0,
             "k:capsLock,command,control,fn,function,option,shift",
         );
+    }
+
+    #[test]
+    fn finicky_is_app_running_matches_localized_name() {
+        // Finder is always running on macOS and its localized name is
+        // "Finder" (in any locale Grinch is likely to ship in).
+        // Confirms the bundle-ID-OR-localized-name match — same call
+        // would have been false before this commit, since Grinch only
+        // compared against bundle IDs.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => finicky.isAppRunning("Finder") ? "yes" : "no",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "yes");
     }
 
     #[test]

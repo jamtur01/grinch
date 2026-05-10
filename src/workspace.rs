@@ -1,7 +1,7 @@
 // Thin AppKit/Foundation glue: anything that touches NSWorkspace / NSEvent
 // lives here so the engine stays framework-free.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,7 +19,9 @@ use objc2_application_services::{
     AXUIElement,
 };
 use objc2_core_foundation::{kCFBooleanTrue, CFDictionary, CFRetained, CFString, CFType};
-use objc2_foundation::{NSArray, NSBundle, NSNotification, NSString, NSURL};
+use objc2_foundation::{
+    NSActivityOptions, NSArray, NSBundle, NSNotification, NSProcessInfo, NSString, NSURL,
+};
 
 // Raw FFI for CGEventSourceFlagsState. The objc2-core-graphics 0.3.2 crate
 // declares a dependency on objc2-metal 0.3.2 which isn't published, so we
@@ -74,6 +76,23 @@ pub fn running_app_bundle_ids() -> HashSet<String> {
 /// `HashSet` (typically 50–200 entries).
 static RUNNING_APPS_CACHE: Mutex<Option<Arc<HashSet<String>>>> = Mutex::new(None);
 
+/// Process-wide cached `bundle_id` → `app bundle path` lookups. Each miss
+/// hits LaunchServices via `URLForApplicationWithBundleIdentifier` (an
+/// XPC round-trip to `lsd`, ~50–500 µs depending on warmth); the cache
+/// turns subsequent clicks at the same browser into a HashMap probe.
+///
+/// Stored as `Option<String>` so a negative result ("browser not found")
+/// is also remembered — re-querying for a missing bundle ID on every
+/// click would otherwise burn the same XPC roundtrip indefinitely.
+///
+/// Invalidated alongside `RUNNING_APPS_CACHE` by the NSWorkspace
+/// launch/terminate observer. Strictly speaking the bundle URL only
+/// changes when an app is moved/installed/uninstalled, but the
+/// launch/terminate signal catches "newly installed and launched"
+/// without extra observers — the rarer move/uninstall cases will fix
+/// themselves on the next NSWorkspace event.
+static BUNDLE_URL_CACHE: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
+
 pub fn running_apps_cached() -> Arc<HashSet<String>> {
     if let Some(c) = RUNNING_APPS_CACHE.lock().unwrap().as_ref() {
         return c.clone();
@@ -89,8 +108,62 @@ pub fn running_apps_cached() -> Arc<HashSet<String>> {
     fresh
 }
 
-fn invalidate_running_apps_cache() {
+/// Look up the on-disk URL of an app bundle by ID, hitting LaunchServices
+/// only on a cache miss. Returns `None` when no app with that bundle ID
+/// is installed (cached as well, so we don't re-query for missing apps).
+fn resolved_app_url(bundle_id: &str) -> Option<Retained<NSURL>> {
+    {
+        let cache = BUNDLE_URL_CACHE.lock().unwrap();
+        if let Some(map) = cache.as_ref() {
+            if let Some(hit) = map.get(bundle_id) {
+                return hit
+                    .as_ref()
+                    .map(|p| NSURL::fileURLWithPath(&NSString::from_str(p)));
+            }
+        }
+    }
+    let workspace = NSWorkspace::sharedWorkspace();
+    let bundle_ns = NSString::from_str(bundle_id);
+    let url = workspace.URLForApplicationWithBundleIdentifier(&bundle_ns);
+    let path = url.as_ref().and_then(|u| u.path()).map(|s| s.to_string());
+    {
+        let mut cache = BUNDLE_URL_CACHE.lock().unwrap();
+        cache
+            .get_or_insert_with(HashMap::new)
+            .insert(bundle_id.to_string(), path);
+    }
+    url
+}
+
+fn invalidate_caches() {
     *RUNNING_APPS_CACHE.lock().unwrap() = None;
+    *BUNDLE_URL_CACHE.lock().unwrap() = None;
+}
+
+/// Register a process-lifetime "user-initiated" activity with
+/// NSProcessInfo so AppNap doesn't suspend Grinch when it's been idle.
+/// LSUIElement apps (no Dock tile, no key window) are AppNap's prime
+/// target; without this, a long-idle Grinch can pay an extra 20–100 ms
+/// of resume latency on the first click after suspension.
+///
+/// Uses `UserInitiatedAllowingIdleSystemSleep` — keeps the process
+/// schedulable, but doesn't prevent the user's display/system from
+/// sleeping. The returned activity token must outlive the process; we
+/// leak it intentionally.
+///
+/// Idempotent: repeated calls are no-ops.
+pub fn defeat_app_nap() {
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let info = NSProcessInfo::processInfo();
+    let reason = NSString::from_str("Grinch routes URLs on demand and must respond to clicks");
+    let token = info.beginActivityWithOptions_reason(
+        NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        &reason,
+    );
+    std::mem::forget(token);
 }
 
 /// Install NSWorkspace launch/terminate observers that invalidate the
@@ -105,7 +178,7 @@ pub fn install_running_apps_observer() {
     let workspace = NSWorkspace::sharedWorkspace();
     let nc = workspace.notificationCenter();
     let block = RcBlock::new(|_n: NonNull<NSNotification>| {
-        invalidate_running_apps_cache();
+        invalidate_caches();
     });
     unsafe {
         let t1 = nc.addObserverForName_object_queue_usingBlock(
@@ -454,9 +527,7 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
         return;
     };
 
-    let bundle_id_ns = NSString::from_str(&spec.bundle_id);
-    let app_url = workspace.URLForApplicationWithBundleIdentifier(&bundle_id_ns);
-    let Some(app_url) = app_url else {
+    let Some(app_url) = resolved_app_url(&spec.bundle_id) else {
         eprintln!("grinch: browser not found: {}", spec.bundle_id);
         let cfg = NSWorkspaceOpenConfiguration::configuration();
         workspace.openURL_configuration_completionHandler(&url_ns, &cfg, None);
@@ -574,13 +645,13 @@ mod tests {
         // Reset cache state so we don't depend on test ordering. Other
         // tests may have populated it via direct calls or via engine
         // resolves that touched a `running()` matcher.
-        invalidate_running_apps_cache();
+        invalidate_caches();
         let a = running_apps_cached();
         let b = running_apps_cached();
         // Same Arc means subsequent reads avoid re-fetching the
         // NSWorkspace snapshot — the win this cache exists to give us.
         assert!(Arc::ptr_eq(&a, &b));
-        invalidate_running_apps_cache();
+        invalidate_caches();
         let c = running_apps_cached();
         assert!(!Arc::ptr_eq(&a, &c));
     }

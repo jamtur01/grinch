@@ -1967,15 +1967,27 @@ fn compile_wildcard(pattern: &str) -> Option<Regex> {
 }
 
 fn pattern_has_protocol_prefix(pat: &str) -> bool {
+    // RFC 3986 scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ). First
+    // char must be ASCII alpha (rejects `1foo:` and `:nocolon-prefix`).
+    // Continuation chars allow + - . in addition to alnum, catching
+    // `chrome-extension:`, `view-source:`, `git+https:`, `web+foo:` —
+    // the previous (alnum-or-underscore-only) version mistakenly
+    // classified those as having no protocol prefix and compiled them
+    // to an unanchored regex. Underscore is also accepted in
+    // continuation for backwards compatibility with configs that used
+    // it (RFC doesn't allow it but it was accepted historically).
     let bytes = pat.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c.is_ascii_alphanumeric() || c == b'_' {
-            i += 1;
+    let Some((first, rest)) = bytes.split_first() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    for c in rest {
+        if c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.' | b'_') {
             continue;
         }
-        return c == b':' && i > 0;
+        return *c == b':';
     }
     false
 }
@@ -2387,6 +2399,12 @@ mod tests {
         assert!(pattern_has_protocol_prefix("slack:"));
         assert!(pattern_has_protocol_prefix("https://x"));
         assert!(pattern_has_protocol_prefix("custom_scheme:foo"));
+        // RFC-3986 scheme chars: + - . in continuation. Previously rejected,
+        // making patterns like `chrome-extension:*` compile as unanchored.
+        assert!(pattern_has_protocol_prefix("chrome-extension:foo"));
+        assert!(pattern_has_protocol_prefix("view-source:bar"));
+        assert!(pattern_has_protocol_prefix("git+https:baz"));
+        assert!(pattern_has_protocol_prefix("web+foo:qux"));
     }
 
     #[test]
@@ -2395,6 +2413,8 @@ mod tests {
         assert!(!pattern_has_protocol_prefix(""));
         assert!(!pattern_has_protocol_prefix(":nocolon-prefix"));
         assert!(!pattern_has_protocol_prefix("zoom.us/j/*"));
+        // RFC: scheme must start with ALPHA. Previously alnum was accepted.
+        assert!(!pattern_has_protocol_prefix("1foo:bar"));
     }
 
     // -------- compile_wildcard --------

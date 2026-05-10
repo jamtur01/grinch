@@ -117,7 +117,43 @@ pub fn load_config() -> Option<LoadedConfig> {
         return None;
     }
 
+    // Swap the loud load-time exception handler for a quiet resolve-time
+    // one. The load-time handler logs every JS exception with file/line —
+    // useful for catching syntax errors and broken-helper exports, but
+    // catastrophic during resolve(): a single malformed URL like
+    // `https://x/?key=%ZZ` makes user fn matchers throw on every click,
+    // and the loud handler then floods stderr with one
+    // `grinch: js error in <path>: URI malformed` per click, forever.
+    //
+    // The replacement no-ops by default; user fn matchers that throw
+    // still produce a None result inside the engine and silently fail
+    // to match (same as before). Set GRINCH_DEBUG=1 to re-enable
+    // per-exception logging when chasing a bad rule.
+    install_resolve_exception_handler(&ctx, path_str.clone());
+
     Some(LoadedConfig { exports, ctx })
+}
+
+fn install_resolve_exception_handler(ctx: &JSContext, path: String) {
+    let debug = std::env::var("GRINCH_DEBUG").is_ok();
+    let handler = RcBlock::new(move |_ctx_ptr: *mut JSContext, ex_ptr: *mut JSValue| {
+        if !debug {
+            return;
+        }
+        if ex_ptr.is_null() {
+            eprintln!("grinch: js error during resolve in {path}: unknown");
+            return;
+        }
+        unsafe {
+            let ex = &*ex_ptr;
+            let msg = ex
+                .toString()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            eprintln!("grinch: js error during resolve in {path}: {msg}");
+        }
+    });
+    unsafe { ctx.setExceptionHandler(Some(&handler)) };
 }
 
 fn eval(ctx: &JSContext, script: &str) -> Option<Retained<JSValue>> {

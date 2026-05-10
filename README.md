@@ -180,7 +180,8 @@ the ctx as its second. It can return:
 | `string` | Use as the new URL |
 | `URL` instance (incl. mutated input) | Use `.href` |
 | `{protocol, host, pathname, search, hash, ...}` | Concatenate fields into a URL |
-| `null` / `undefined` | Drop the URL |
+| `null` | Drop the URL (suppress, open nothing) |
+| `undefined` (or `return;`) | Pass-through — leave the URL unchanged. Matches Finicky v4 |
 
 `new URL(href)` works in user code. The polyfill is mutable: `url.protocol = "https:"`,
 `url.hostname = "..."`, and `url.searchParams.set("k", "v")` are all reflected

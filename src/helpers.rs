@@ -273,11 +273,15 @@ function __grinchMakeCtx(url, openerBundleId, openerName, openerPath, shift, opt
   };
 }
 
-// Normalise the result of a user rewrite function to a string href, or null
-// if the URL should be dropped. Accepts: string | URL instance | LegacyURLObject
-// {protocol, host?, hostname?, port?, pathname?, search?, hash?, ...} | null.
+// Normalise the result of a user rewrite function. Three outcomes the
+// Rust side distinguishes via JSValue.isNull / .isUndefined:
+//   - null      → drop the URL (suppress)
+//   - undefined → leave the URL unchanged (Finicky's "no rewrite" return)
+//   - string    → use as the new URL
+//   - URL/LegacyURLObject → serialise to a string href
 function __grinchRewriteResult(v) {
-  if (v == null) return null;                 // drop
+  if (v === null) return null;            // drop
+  if (v === undefined) return undefined;  // pass-through, no change
   if (typeof v === "string") return v;
   if (typeof v === "object") {
     // URL instance (or anything with a non-empty .href).

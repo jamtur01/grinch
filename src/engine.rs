@@ -1117,8 +1117,15 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
             }) else {
                 return RewriteOutcome::Unchanged;
             };
-            if unsafe { normalised.isNull() } || unsafe { normalised.isUndefined() } {
+            // Two distinct outcomes: null = drop, undefined = pass-through.
+            // Matches Finicky v4 — `url: () => null` suppresses the URL,
+            // `url: () => undefined` (or any fn that doesn't `return`)
+            // leaves the current URL unchanged.
+            if unsafe { normalised.isNull() } {
                 return RewriteOutcome::Drop;
+            }
+            if unsafe { normalised.isUndefined() } {
+                return RewriteOutcome::Unchanged;
             }
             let Some(s) = js_to_string(&normalised) else {
                 return RewriteOutcome::Unchanged;
@@ -2607,6 +2614,57 @@ mod integration_tests {
         let (browser, url) = resolve(&e, "https://tracking.example.com/pixel");
         assert_eq!(browser, ""); // suppress
         assert_eq!(url, "about:blank");
+    }
+
+    #[test]
+    fn rewriter_fn_returning_undefined_passes_through() {
+        // Finicky v4 contract: undefined return = leave the URL alone.
+        // Distinct from null (drop). Pin both behaviours together.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [
+                    { match: () => true, url: () => undefined },
+                ],
+            };"#,
+        );
+        let (browser, url) = resolve(&e, "https://example.com/path?q=1");
+        assert_eq!(browser, "com.apple.Safari");
+        assert_eq!(url, "https://example.com/path?q=1");
+    }
+
+    #[test]
+    fn rewriter_fn_with_no_explicit_return_is_pass_through() {
+        // Functions with no `return` statement implicitly return undefined,
+        // which the prelude maps to "no change". Same as the explicit
+        // undefined return.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [
+                    { match: () => true, url: () => { /* no return */ } },
+                ],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://x.example/path");
+        assert_eq!(url, "https://x.example/path");
+    }
+
+    #[test]
+    fn rewriter_fn_returning_url_with_no_changes_is_pass_through() {
+        // Returning the URL instance unchanged should yield the same href.
+        // Tests both the URL-instance return path and the
+        // `if s == url` shortcut in apply_rewrite.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [
+                    { match: () => true, url: (url) => url },
+                ],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://example.com/path?q=1");
+        assert_eq!(url, "https://example.com/path?q=1");
     }
 
     #[test]

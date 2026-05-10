@@ -152,19 +152,26 @@ define_class!(
             let cli_bench = args.iter().position(|a| a == "--bench");
 
             if let Some(idx) = cli_test {
+                let Some(url) = args.get(idx + 1) else {
+                    // Don't fall through to terminate() with no diagnostic — the
+                    // resident default-browser instance would silently exit on a
+                    // typo, leaving the user wondering where Grinch went.
+                    eprintln!("usage: Grinch --test <url>");
+                    std::process::exit(2);
+                };
                 self.reload_engine();
-                if let Some(url) = args.get(idx + 1) {
-                    self.test_url(url);
-                }
+                self.test_url(url);
                 terminate(self.mtm());
                 return;
             }
             if let Some(idx) = cli_bench {
+                let (Some(n), Some(url)) = (args.get(idx + 1), args.get(idx + 2)) else {
+                    eprintln!("usage: Grinch --bench <iterations> <url>");
+                    std::process::exit(2);
+                };
+                let n: usize = n.parse().unwrap_or(10_000);
                 self.reload_engine();
-                if let (Some(n), Some(url)) = (args.get(idx + 1), args.get(idx + 2)) {
-                    let n: usize = n.parse().unwrap_or(10_000);
-                    self.bench(n, url);
-                }
+                self.bench(n, url);
                 terminate(self.mtm());
                 return;
             }

@@ -5,9 +5,11 @@ each URL to the right browser based on rules in `~/.config/grinch.js` (or
 `~/.grinch.js`).
 
 Inspired by [Finicky](https://github.com/johnste/finicky) and
-[Finch](https://github.com/expelledboy/finch) — most of Finicky's config DSL
-works in Grinch unchanged. Differences are summarised at the bottom of this
-file.
+[Finch](https://github.com/expelledboy/finch) — most of Finicky **v4**'s
+config DSL works in Grinch unchanged. (v3 configs need updating: see the
+[v4 migration guide](https://github.com/johnste/finicky/wiki/Migration-guide)
+upstream, then [Differences from Finicky](#differences-from-finicky)
+below for what's still different in Grinch.)
 
 - **~1500 LOC Rust** + a small embedded JS prelude
 - **5–220 ns** hot-path resolve latency (50–1800× faster than Finch on the
@@ -423,8 +425,15 @@ match is a refcount bump, not a `String + Vec<String>` deep clone.
 
 ## Differences from Finicky
 
-If you're porting a Finicky config, these are the places you'll need to
-adjust:
+Grinch tracks **Finicky v4** (the current line, with `defaultBrowser` /
+`handlers` / `rewrite`). Finicky v3 configs (which used `urlShorteners`,
+`finicky.matchDomains`, `url.url`, `url.urlString`, `url.opener`,
+`url.keys`, etc.) are not supported — port them to v4 syntax first using
+[Finicky's migration guide](https://github.com/johnste/finicky/wiki/Migration-guide),
+then read the list below for what Grinch handles differently.
+
+If you're porting a Finicky v4 config, these are the places you'll need
+to adjust:
 
 1. **`module.exports = { ... }` instead of `export default { ... }`.**
    JavaScriptCore in Grinch evaluates scripts, not modules — `import`/`export`

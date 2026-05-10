@@ -1,21 +1,22 @@
 # Grinch
 
-A tiny, fast macOS browser router. Set it as your default browser; it routes
-each URL to the right browser based on rules in `~/.config/grinch.js` (or
-`~/.grinch.js`).
+A small, fast native macOS browser router. Set it as your default browser
+and it routes each URL to the right one based on rules in
+`~/.config/grinch.js` (or `~/.grinch.js`).
 
-Inspired by [Finicky](https://github.com/johnste/finicky) and
-[Finch](https://github.com/expelledboy/finch) — most of Finicky **v4**'s
-config DSL works in Grinch unchanged. (v3 configs need updating: see the
+Most Finicky **v4** configs work in Grinch unchanged. (Finicky v3 configs
+need updating — see the
 [v4 migration guide](https://github.com/johnste/finicky/wiki/Migration-guide)
-upstream, then [Differences from Finicky](#differences-from-finicky)
-below for what's still different in Grinch.)
+upstream, then [Differences from Finicky](#differences-from-finicky) below
+for the rest.) Inspired by both [Finicky](https://github.com/johnste/finicky)
+and [Finch](https://github.com/expelledboy/finch).
 
 - **~1500 LOC Rust** + a small embedded JS prelude
-- Hot-path resolve in **nanoseconds** (full numbers in [Performance](#performance))
-- **~16 MB** resident memory
-- Native `JavaScriptCore`, no bundler, no transpiler, no Electron
+- **~16 MB** resident memory, **~1.5 MB** universal binary
+- Native `JavaScriptCore` for config eval — no Electron, no bundler, no transpiler
+- Single signed and notarized DMG
 - Config is real JavaScript — simple cases look like data, full power available
+- Hot-path resolve in nanoseconds; full click-to-browser pipeline in single-digit milliseconds
 
 ## Install
 
@@ -168,7 +169,7 @@ hit triggers).
 | `"*.slack.com/*"` | wildcard, full URL | Strings containing `*` or `/` compile to a Finicky-style anchored regex |
 | `"zoom.us/j/*"` | wildcard with implicit `https?://` prefix | |
 | `"slack:*"` | URLs with the slack scheme | |
-| `domain("a.com", "b.com")` | any of the listed hostnames or their subdomains | Compiled to a single fast check |
+| `domain("a.com", "b.com")` | any of the listed hostnames or their subdomains | Compiled to a single byte-level check |
 | `finicky.matchHostnames("github.com")` | exact hostname only — does NOT match subdomains | Finicky-compatible matcher fn. Use this when you specifically need exact-hostname semantics. |
 | `from("com.tinyspeck.slackmacgap")` | URL was opened by this app | Caller bundle ID; matches `ctx.opener.bundleId` |
 | `running("us.zoom.xos")` | this app is currently running | Lazily computed once per resolve |
@@ -196,7 +197,7 @@ If you want the strict Finicky semantics on a port, use either:
 If you want subdomain matching across multiple hosts at once:
 
 - `domain("github.com", "gitlab.com")` — Grinch's helper, matches each host
-  AND its subdomains, compiled to a single fast byte-level check.
+  AND its subdomains, compiled to a single byte-level check.
 | `/regex/` | regex against full URL | Honours `i` and `m` flags from the JS literal (matches Finicky / native `RegExp.test`); without `i`, matching is case-sensitive |
 | `(url, ctx) => bool` | anything | Slow path (~10 µs extra) — full power |
 
@@ -376,21 +377,27 @@ benchmarking).
 
 ## Performance
 
-Measured on Apple Silicon, macOS 25, release build, median of 10 runs at
-100 k–200 k iterations per workload. Reproduce with `bench/run.sh` — the
-configs and URLs that produced these numbers live in `bench/configs/`.
+A few benchmark data points from `bench/run.sh`. Worth knowing that
+real-world click-to-browser latency is dominated by macOS plumbing
+(Apple Event dispatch + `NSWorkspace.openApplicationAtURL`, both in
+the few-millisecond range), so engine-only numbers don't translate
+1:1 into a faster-feeling click — but they're a useful window into
+what the engine is doing on its own.
+
+Apple Silicon, macOS 25, release build, median of 10 runs at 100k–200k
+iterations per workload. Configs and URLs in `bench/configs/`.
 
 ### Hot path (declarative-only configs)
 
-These are the workloads that hit the bulk of the rules-array — domain
-matchers, regex, wildcards. No JS bridge crossings; the URL string is
-borrowed (`Cow::Borrowed`) for the entire resolve when no rewrite fires;
-`quick_host` is skipped when the config has no host-using matcher and
-borrows the host slice when it's already lowercase ASCII.
+Workloads that hit the rules-array — domain matchers, regex, wildcards.
+No JS bridge crossings; the URL string is borrowed (`Cow::Borrowed`)
+for the entire resolve when no rewrite fires; `quick_host` is skipped
+when the config has no host-using matcher and borrows the host slice
+when it's already lowercase ASCII.
 
 | Workload | ns/op |
 |---|---:|
-| Floor: empty rules, no rewrite | **5** |
+| Floor: empty rules, no rewrite | 5 |
 | Default fallback, no query | 67 |
 | Default fallback, strip removes a param | 187 |
 | Bare-hostname match (`"github.com"`) | 42 |
@@ -402,12 +409,12 @@ borrows the host slice when it's already lowercase ASCII.
 ### Slow path (configs with `(url, ctx) => …` fn matchers)
 
 User-written predicates and rewrites cross into JavaScriptCore. URL-only
-predicates (`(url) => …`) skip the `__grinchMakeCtx` build *and* skip
-the LaunchServices IPC for `frontmost_opener()` upstream — only fns
-declaring a second formal arg pay for ctx. The first JS-bridge call in
-a resolve costs ~3 µs (URL polyfill + cached opener-field JSValues);
-subsequent fn calls within the same resolve reuse the cached args. Ctx
-build itself reuses pre-built `true`/`false` JSValues for modifier flags.
+predicates (`(url) => …`) skip the `__grinchMakeCtx` build and skip the
+LaunchServices IPC for `frontmost_opener()` upstream — only fns declaring
+a second formal arg pay for ctx. The first JS-bridge call in a resolve
+costs ~3 µs (URL polyfill + cached opener-field JSValues); subsequent
+fn calls within the same resolve reuse the cached args. Ctx build itself
+reuses pre-built `true`/`false` JSValues for modifier flags.
 
 | Workload | ns/op |
 |---|---:|
@@ -418,71 +425,18 @@ build itself reuses pre-built `true`/`false` JSValues for modifier flags.
 | 4 fn matchers reading `ctx.opener` | 5,159 |
 | Full Slack-web → `slack://` rewrite | 5,494 |
 
-### Memory
+### Footprint
 
-| | Resident | Peak |
-|---|---:|---:|
-| Grinch | **16 MB** | 17 MB |
-
-### Engine resolve cost vs alternatives
-
-`resolve()` benchmarked in isolation, same hardware / config / URLs.
-These numbers measure the engine alone, not click-to-browser latency
-(see the [Click latency](#click-latency-in-practice) section below for
-the full picture).
-
-| Workload | Finch (Swift) | Grinch (Rust) |
-|---|---:|---:|
-| Default fallback, no query | 9,308 ns | 67 ns |
-| Default fallback, strip removes | 10,898 ns | 187 ns |
-| Bare-hostname match | 5,242 ns | 42 ns |
-| Subdomain via `domain()` | 5,784 ns | 48 ns |
-| Regex match | 1,454 ns | 22 ns |
-| Wildcard match | 9,060 ns | 30 ns |
-
-| | Finch | Grinch | Finicky |
+| | Grinch | Finch | Finicky |
 |---|---:|---:|---:|
-| Resident memory | 14.6 MB | 15.5 MB | 142.5 MB |
-| Peak memory | 15.5 MB | 16.6 MB | 391.2 MB |
-| Source LOC | ~700 | ~1,500 | ~2,900 |
+| Resident memory | 15.5 MB | 14.6 MB | 142.5 MB |
+| Peak memory | 16.6 MB | 15.5 MB | 391.2 MB |
+| Source LOC | ~1,500 | ~700 | ~2,900 |
+| JS engine | system JSC | n/a (Swift DSL) | bundled goja |
+| Bundled UI | menu bar only | menu bar only | WebView config app |
 
-Grinch's resolve is faster than Finch's on these workloads largely
-because of native, allocation-aware Rust: the `regex` crate vs
-`NSRegularExpression`, byte-level subdomain matching, `Cow<'_, str>`
-for the URL so a no-rewrite resolve allocates zero bytes, config-time
-runtime-needs analysis that skips `quick_host`, `frontmost_opener()`,
-and `__grinchMakeCtx` for configs that don't read them, `Rc<BrowserSpec>`
-instead of a deep clone on every match, ASCII-only lowercase, and a
-strip short-circuit when nothing changes. On the slow path, fn arity
-is sniffed at config load — `(url) => …` predicates skip the JS ctx
-build *and* the LaunchServices opener IPC entirely. Finicky's higher
-memory footprint is its bundled WebView config UI loading WebKit, not
-engine weight; Finicky uses goja (Go JS) for resolve, which crosses a
-JS bridge for every match.
-
-### Click latency in practice
-
-The `--bench` numbers above measure `resolve()` in isolation. A real
-click adds:
-
-- **macOS Apple Event dispatch**: 1–5 ms from the originating app.
-- **`frontmost_opener()`**: ~100–500 µs of LaunchServices IPC, *only
-  when the engine reports it needs the opener* (any rule using
-  `from()`, `ctx.opener.*`, or any user fn matcher). Configs with
-  pure declarative matchers skip this entirely; configs that only use
-  `from()` matchers take a lite path that fetches just `bundleIdentifier`
-  and skips `localizedName` + `executableURL` IPC.
-- **`current_modifier_flags()`**: ~100 ns kernel call, same gating —
-  skipped unless a fn matcher might read modifiers.
-- **`open_url()`**: ~few ms for `NSWorkspace.openApplicationAtURL` to
-  hand off to the target browser.
-
-End-to-end is in the single-digit-millisecond range and is dominated
-by the macOS-side costs (event dispatch, browser hand-off), not by
-Grinch's engine. The engine differences in the table above are real
-but largely invisible at click-to-browser scope — choose between these
-tools on the basis of features, footprint, and config ergonomics, not
-single-click latency.
+Finicky bundles a WebKit instance for its config UI, which accounts for
+the bulk of its memory footprint.
 
 ### How it works
 

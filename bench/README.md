@@ -38,7 +38,7 @@ reports the median `ns/op`.
 ## Running
 
 ```sh
-bench/run.sh           # all 13 workloads (about 90 seconds)
+bench/run.sh           # full workload set (about 90 seconds)
 bench/run.sh hot       # just the declarative-only set (~30s)
 bench/run.sh slow      # just the fn-based set (~60s)
 ```

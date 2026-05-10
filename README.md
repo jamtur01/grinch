@@ -283,18 +283,20 @@ launch, Grinch will prompt for Accessibility permission; until granted,
 
 ### Globals
 
-The only globals Grinch installs are the marker helpers — `domain()`,
-`from()`, `running()`, `strip()` — and the `URL` polyfill. There is no
-`finicky.*` namespace; the equivalent functionality is on the existing
-primitives:
+Grinch installs the marker helpers — `domain()`, `from()`, `running()`,
+`strip()` — the `URL` polyfill, and the Finicky-compatible `finicky.*`
+namespace (see [Differences from Finicky](#differences-from-finicky)
+for the full inventory). For most routing decisions you can pick either
+the Grinch-native or the Finicky-style form:
 
-| Want | Use |
-|---|---|
-| Match hostname or subdomain | `domain("github.com", ...)` or just `"github.com"` |
-| Match by opener bundle ID | `from("com.microsoft.Outlook")` or `(url, ctx) => ctx.opener.bundleId === "..."` |
-| Match if app is running | `running("us.zoom.xos")` |
-| Read modifier keys | `(url, ctx) => ctx.modifiers.shift` |
-| Read opener metadata | `ctx.opener.{bundleId, name, path, windowTitle}` |
+| Want | Grinch-native | Finicky-style |
+|---|---|---|
+| Match hostname or subdomain | `domain("github.com", ...)` or `"github.com"` | n/a (use bare string) |
+| Match exact hostname only | n/a (use bare string with no `.`) | `finicky.matchHostnames("github.com")` |
+| Match by opener bundle ID | `from("com.microsoft.Outlook")` | `(url, ctx) => ctx.opener.bundleId === "..."` |
+| Match if app is running | `running("us.zoom.xos")` | `finicky.isAppRunning("Zoom")` |
+| Read modifier keys | `(url, ctx) => ctx.modifiers.shift` | `finicky.getModifierKeys()` |
+| Read opener metadata | `ctx.opener.{bundleId, name, path, windowTitle}` | (same — `ctx.opener` is shared) |
 
 `console.log/warn/error/info/debug` are wired to stderr with a
 `grinch [level]:` prefix — call them from anywhere in your config to

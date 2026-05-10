@@ -71,7 +71,7 @@ cargo test --release --bin Grinch
 ```
 
 CI runs the same command on every push and PR (see
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml)). All 39 tests
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The full suite
 should pass on a clean main; if a change of yours breaks one, please
 either fix it or include a paragraph in the PR explaining why the test
 was wrong.
@@ -84,7 +84,7 @@ existing style.
 ### Benchmarks
 
 ```sh
-bench/run.sh                    # all 13 workloads (~90 seconds)
+bench/run.sh                    # full workload set (~90 seconds)
 bench/run.sh hot                # declarative-only (fast)
 bench/run.sh slow               # fn-based (slower)
 ```

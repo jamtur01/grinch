@@ -71,8 +71,9 @@ make run</code></pre>
     { match: from("com.tinyspeck.slackmacgap"),
       open: "Google Chrome" },
 
-    // GitHub goes to a work Chrome profile.
-    { match: finicky.matchHostnames(["github.com", "*.github.com"]),
+    // GitHub goes to a work Chrome profile. Bare-string match covers
+    // `github.com` and all subdomains (api., gist., raw., …).
+    { match: "github.com",
       open: { name: "Google Chrome", profile: "Work" } },
 
     // Zoom links open the native client.

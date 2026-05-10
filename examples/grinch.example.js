@@ -185,10 +185,19 @@ module.exports = {
       open: apps.spotify,
     },
 
-    // Bare hostname string — matches example.com AND any subdomain. Placed
-    // after the regex/wildcard rules so they take precedence on overlapping
-    // URLs.
+    // Bare hostname string — matches github.com AND any subdomain
+    // (api.github.com, gist.github.com, ...). Placed after the regex /
+    // wildcard rules so they take precedence on overlapping URLs.
+    //
+    // **Differs from Finicky v4**: there, a bare string is matched as
+    // an exact `===` on `url.href` (the full URL), so `match: "github.com"`
+    // would never fire. Use `finicky.matchHostnames("github.com")` if
+    // you specifically need the Finicky-style exact-hostname match.
     { match: "github.com", open: browsers.personal },
+
+    // Finicky-style exact-hostname matcher: does NOT match subdomains.
+    // `api.github.com` and `gist.github.com` would NOT route here.
+    { match: finicky.matchHostnames("news.ycombinator.com"), open: browsers.personal },
 
     // from() — match the bundle ID of the app that opened the URL.
     {

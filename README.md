@@ -146,13 +146,39 @@ hit triggers).
 
 | Syntax | Matches | Notes |
 |---|---|---|
-| `"github.com"` | hostname, exactly or as subdomain | Bare strings without `*` or `/` are hostname patterns. Most common form. |
+| `"github.com"` | hostname, exactly or as subdomain | Bare strings without `*` or `/` are hostname patterns. Most common form. **Differs from Finicky**: see "Bare-string matcher semantics" below. |
 | `"*.slack.com/*"` | wildcard, full URL | Strings containing `*` or `/` compile to a Finicky-style anchored regex |
 | `"zoom.us/j/*"` | wildcard with implicit `https?://` prefix | |
 | `"slack:*"` | URLs with the slack scheme | |
 | `domain("a.com", "b.com")` | any of the listed hostnames or their subdomains | Compiled to a single fast check |
+| `finicky.matchHostnames("github.com")` | exact hostname only — does NOT match subdomains | Finicky-compatible matcher fn. Use this when you specifically need exact-hostname semantics. |
 | `from("com.tinyspeck.slackmacgap")` | URL was opened by this app | Caller bundle ID; matches `ctx.opener.bundleId` |
 | `running("us.zoom.xos")` | this app is currently running | Lazily computed once per resolve |
+
+#### Bare-string matcher semantics
+
+Grinch's bare string `"github.com"` is a **hostname-and-subdomain shortcut**:
+it matches `https://github.com/`, `https://api.github.com/`, and
+`https://gist.github.com/` alike. This is the most common case for routing
+configs and is the friendliest default.
+
+Finicky v4's same syntax is different — a bare string with no `*` is matched
+as an `===` against `url.href` (the full URL). So `match: "github.com"`
+in Finicky would never fire on a real URL, and users reach for
+`finicky.matchHostnames("github.com")` (exact hostname) or `domain()`
+helpers instead.
+
+If you want the strict Finicky semantics on a port, use either:
+
+- `finicky.matchHostnames("github.com")` for exact hostname matching, **or**
+- `/^github\.com$/` (regex anchored to the full URL — no, wait: that's the
+  full URL not just hostname; use `(url) => url.hostname === "github.com"`
+  for the hostname-only check).
+
+If you want subdomain matching across multiple hosts at once:
+
+- `domain("github.com", "gitlab.com")` — Grinch's helper, matches each host
+  AND its subdomains, compiled to a single fast byte-level check.
 | `/regex/` | regex against full URL | Honours `i` and `m` flags from the JS literal (matches Finicky / native `RegExp.test`); without `i`, matching is case-sensitive |
 | `(url, ctx) => bool` | anything | Slow path (~10 µs extra) — full power |
 

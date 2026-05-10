@@ -146,6 +146,7 @@ fn invalidate_caches() {
     // case we re-fetch from LaunchServices on the next access.
     *RUNNING_APPS_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *BUNDLE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *IDENTIFIER_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Register a process-lifetime "user-initiated" activity with
@@ -418,23 +419,27 @@ fn flags_from_mask(flags: u64) -> ModifierFlags {
 /// (URLForApplicationWithBundleIdentifier + fullPathForApplication) are
 /// ~50µs each and dominate the slow path when dynamic `open` fns return
 /// browser identifiers per click. Cache lookup is a single HashMap probe
-/// under a Mutex.
+/// under a Mutex. Invalidated alongside the other caches by
+/// `invalidate_caches` (NSWorkspace launch/terminate observer), so a
+/// browser moved/installed/uninstalled doesn't leave stale entries.
+static IDENTIFIER_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
 pub fn resolve_browser_identifier(name: &str) -> String {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
-        std::sync::OnceLock::new();
-    let mutex = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     {
-        let cache = mutex.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(hit) = cache.get(name) {
-            return hit.clone();
+        let cache = IDENTIFIER_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(map) = cache.as_ref() {
+            if let Some(hit) = map.get(name) {
+                return hit.clone();
+            }
         }
     }
-
     let resolved = resolve_browser_identifier_uncached(name);
-    mutex
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(name.to_string(), resolved.clone());
+    {
+        let mut cache = IDENTIFIER_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache
+            .get_or_insert_with(HashMap::new)
+            .insert(name.to_string(), resolved.clone());
+    }
     resolved
 }
 

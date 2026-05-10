@@ -20,6 +20,11 @@ const browsers = {
   brave: { name: "com.brave.Browser" },
   arc: { id: "company.thebrowser.Browser" },
 
+  // Finicky-compatible "Name:Profile" string shorthand. Splits on the
+  // first `:` for Chromium-family browsers; equivalent to
+  // { name: "Google Chrome", profile: "Work" }.
+  workShort: "Google Chrome:Work",
+
   // Chromium `profile` shorthand → --profile-directory=<name>. Recognised for
   // Chrome, Brave, Edge, Vivaldi, Arc, Opera, Chromium.
   personal: { name: "Google Chrome", profile: "Personal" },

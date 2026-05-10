@@ -102,6 +102,7 @@ A browser is one of:
 |---|---|
 | `"Google Chrome"` | App display name; Grinch resolves to bundle ID at config-load |
 | `"com.google.Chrome"` | Bundle ID (any reverse-DNS string is treated as one) |
+| `"Google Chrome:Work"` | `Name:Profile` shorthand (Finicky-compatible) — splits on the first `:`, expands the suffix to `--profile-directory=Work` for Chromium-family browsers. Only applied to literal config strings; fn-returned strings are treated opaquely |
 | `{ name: "..." }` | Same as a bare string |
 | `{ name: "Google Chrome", profile: "Work" }` | Chromium profile shorthand — expanded to `--profile-directory=Work` for Chromium-family bundle IDs |
 | `{ name: "...", args: ["--incognito"] }` | Bundle ID + extra launch args |

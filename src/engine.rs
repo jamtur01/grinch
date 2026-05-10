@@ -289,7 +289,7 @@ impl Engine {
         if is_undef_or_null(&default_val) {
             return Err(EngineError::MissingDefault);
         }
-        let default_browser = resolve_browser(&default_val, &browsers).unwrap_or_else(|| {
+        let default_browser = resolve_browser(&default_val, &browsers, true).unwrap_or_else(|| {
             Rc::new(BrowserSpec::from_bundle_id(
                 js_to_string(&default_val).unwrap_or_default(),
             ))
@@ -428,11 +428,14 @@ impl Engine {
                     let result = unsafe { uf.f.callWithArguments(Some(&args)) };
                     if let Some(r) = result {
                         if !unsafe { r.isUndefined() } && !unsafe { r.isNull() } {
-                            let spec = resolve_browser(&r, &self.browsers).unwrap_or_else(|| {
-                                Rc::new(BrowserSpec::from_bundle_id(
-                                    js_to_string(&r).unwrap_or_default(),
-                                ))
-                            });
+                            // Runtime fn return: don't apply Name:Profile shorthand —
+                            // an opaque debug string like "t:function" must stay literal.
+                            let spec =
+                                resolve_browser(&r, &self.browsers, false).unwrap_or_else(|| {
+                                    Rc::new(BrowserSpec::from_bundle_id(
+                                        js_to_string(&r).unwrap_or_default(),
+                                    ))
+                                });
                             return Resolution {
                                 browser: spec,
                                 url: current,
@@ -1073,6 +1076,38 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
 fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
     if unsafe { v.isString() } {
         let s = js_to_string(v).unwrap_or_default();
+        // Finicky's "Name:Profile" shorthand: a colon separates the app
+        // name (or bundle ID) from a profile name. Bundle IDs use `.` not
+        // `:`, so a `:` after the first character is unambiguously the
+        // shorthand separator. We deliberately don't parse it for URL-
+        // scheme matchers (those go through compile_matcher, a different
+        // code path).
+        if let Some(idx) = s.find(':') {
+            // Don't split on a leading `:` (would give an empty name).
+            if idx > 0 {
+                let (name, rest) = s.split_at(idx);
+                let profile = &rest[1..]; // skip the ':' itself
+                let bundle_id = resolve_browser_identifier(name);
+                if !profile.is_empty() && crate::chromium::is_chromium(&bundle_id) {
+                    let dir = crate::chromium::resolve_profile_dir(&bundle_id, profile);
+                    return BrowserSpec {
+                        bundle_id,
+                        args: vec![format!("--profile-directory={dir}")],
+                        open_in_background: false,
+                        creates_new_instance: true,
+                    };
+                }
+                // Non-Chromium with a profile suffix: warn and fall back
+                // to the bare name (matches the object-form behaviour).
+                if !profile.is_empty() {
+                    eprintln!(
+                        "grinch: ignoring `:profile` shorthand for non-Chromium browser \
+                         {bundle_id} (input was {s:?})"
+                    );
+                }
+                return BrowserSpec::from_bundle_id(bundle_id);
+            }
+        }
         return BrowserSpec::from_bundle_id(resolve_browser_identifier(&s));
     }
     if !unsafe { v.isObject() } {
@@ -1147,14 +1182,32 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
     }
 }
 
+/// Resolve a JSValue to a BrowserSpec.
+///
+/// `apply_string_shorthand` controls whether bare-string browser specs are
+/// parsed for the Finicky `"Name:Profile"` shorthand. `true` for config-
+/// load callers (default browser, rule `open`/`browser` literals), `false`
+/// for runtime callers (Target::Fn return values) — fn-returned strings
+/// should be treated opaquely so a debug string like `"t:function"` doesn't
+/// get split on `:`.
 fn resolve_browser(
     v: &JSValue,
     browsers: &std::collections::HashMap<String, Rc<BrowserSpec>>,
+    apply_string_shorthand: bool,
 ) -> Option<Rc<BrowserSpec>> {
     if unsafe { v.isString() } {
         let s = js_to_string(v)?;
+        // Browsers-map lookup uses the string verbatim (the user wrote
+        // `open: "work"` referring to a key in the map, not a literal app
+        // name). The map key never contains a `:` shorthand, so this
+        // check goes first.
         if let Some(named) = browsers.get(&s) {
             return Some(Rc::clone(named));
+        }
+        if apply_string_shorthand {
+            // `parse_browser_jsval`'s string branch handles bare-name +
+            // "Name:Profile" shorthand.
+            return Some(Rc::new(parse_browser_jsval(v)));
         }
         return Some(Rc::new(BrowserSpec::from_bundle_id(
             resolve_browser_identifier(&s),
@@ -1198,7 +1251,7 @@ fn parse_rule_array(
         let target = match open_val.as_ref() {
             Some(ov) if unsafe { ov.isNull() } => Target::Suppress,
             Some(ov) if is_function(ov, function_ctor) => Target::Fn(UserFn::new(ov.clone())),
-            Some(ov) => match resolve_browser(ov, browsers) {
+            Some(ov) => match resolve_browser(ov, browsers, true) {
                 // Empty bundle_id = explicit no-op browser (e.g. via
                 // `appType: "none"`). Normalise to Target::Suppress so the
                 // resolve path's URL handling matches `open: null` exactly,
@@ -2645,6 +2698,23 @@ mod integration_tests {
             };"#,
         );
         assert_eq!(resolve(&e, "https://x/").0, "com.spotify.client");
+    }
+
+    #[test]
+    fn browser_spec_string_with_profile_shorthand() {
+        // Finicky-style "Name:Profile" shorthand. Splits on first `:`
+        // when the prefix resolves to a Chromium-family browser.
+        let e = build_engine(r#"module.exports = { default: "com.google.Chrome:Work" };"#);
+        // Browser ID survives unchanged; profile expansion is into args
+        // (not directly observable from resolve()'s public surface, but
+        // we can at least verify the bundle ID is right).
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+    }
+
+    #[test]
+    fn browser_spec_string_with_no_colon_unchanged() {
+        let e = build_engine(r#"module.exports = { default: "com.google.Chrome" };"#);
+        assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
     }
 
     #[test]

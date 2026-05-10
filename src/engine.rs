@@ -2029,33 +2029,60 @@ pub(crate) fn strip_params(
         (rest, "")
     };
 
+    // First pass: scan kv pairs, track total + kept-byte count. We bail
+    // before allocating if nothing matches — the common case for URLs
+    // with a query but no tracking params. When we do allocate, the
+    // exact byte count gives `String::with_capacity` no slack.
     let mut total = 0usize;
-    let mut kept: Vec<&str> = Vec::new();
+    let mut stripped = 0usize;
+    let mut kept_bytes = 0usize;
     for kv in qs.split('&') {
         if kv.is_empty() {
             continue;
         }
         total += 1;
         let key = kv.split_once('=').map(|(k, _)| k).unwrap_or(kv);
-        if exact.contains(key) {
+        if exact.contains(key) || prefixes.iter().any(|p| key.starts_with(p)) {
+            stripped += 1;
             continue;
         }
-        if prefixes.iter().any(|p| key.starts_with(p)) {
-            continue;
-        }
-        kept.push(kv);
+        // +1 for the '&' separator we'll prepend before all but the first
+        // kept pair. Tracked here so we don't recompute on the write pass.
+        kept_bytes += kv.len() + 1;
     }
-
-    if kept.len() == total {
-        // Nothing was stripped — caller can keep the original URL.
+    if stripped == 0 {
         return None;
     }
+    let kept = total - stripped;
 
-    Some(if kept.is_empty() {
-        format!("{base}{frag}")
-    } else {
-        format!("{base}?{}{frag}", kept.join("&"))
-    })
+    // `kept_bytes` over-counts by exactly one — it adds a separator for
+    // every kept pair, but we only emit N-1 separators. The leading '?'
+    // we still need to write (when `kept > 0`) cancels that out, so the
+    // total we'll write is `base.len() + kept_bytes + frag.len()` minus
+    // one byte when no params survive.
+    let cap = base.len() + frag.len() + kept_bytes.saturating_sub((kept == 0) as usize);
+    let mut out = String::with_capacity(cap);
+    out.push_str(base);
+    if kept > 0 {
+        out.push('?');
+        let mut first = true;
+        for kv in qs.split('&') {
+            if kv.is_empty() {
+                continue;
+            }
+            let key = kv.split_once('=').map(|(k, _)| k).unwrap_or(kv);
+            if exact.contains(key) || prefixes.iter().any(|p| key.starts_with(p)) {
+                continue;
+            }
+            if !first {
+                out.push('&');
+            }
+            out.push_str(kv);
+            first = false;
+        }
+    }
+    out.push_str(frag);
+    Some(out)
 }
 
 // MARK: - JSValue helpers

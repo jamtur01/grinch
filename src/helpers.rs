@@ -86,6 +86,61 @@ pub const JS_PRELUDE: &str = r##"
     sp.append   = function(k, v) { (sp._m[k] = sp._m[k] || []).push(String(v)); commit(); };
     sp.delete   = function(k) { delete sp._m[k]; commit(); };
     sp.toString = serialize;
+
+    // Iteration: WHATWG URLSearchParams returns an iterator that yields
+    // pairs in insertion order, with multi-value keys yielding once per
+    // value. We materialise the list eagerly because the underlying
+    // `_m` is a plain object (no insertion-order guarantee in spec, but
+    // V8/JSC both honour it for string keys); spec compliance for callers
+    // that care about ordering of mixed-key insertion is best-effort.
+    function snapshotPairs() {
+      var pairs = [];
+      for (var k in sp._m) {
+        for (var i = 0; i < sp._m[k].length; i++) {
+          pairs.push([k, sp._m[k][i]]);
+        }
+      }
+      return pairs;
+    }
+    function makeIter(mapPair) {
+      var pairs = snapshotPairs();
+      var i = 0;
+      var iter = {
+        next: function() {
+          if (i >= pairs.length) return { value: undefined, done: true };
+          var v = mapPair(pairs[i]);
+          i++;
+          return { value: v, done: false };
+        },
+      };
+      // Iterables must return themselves from @@iterator so they can be
+      // re-fed into for...of without losing state.
+      if (typeof Symbol !== "undefined" && Symbol.iterator) {
+        iter[Symbol.iterator] = function() { return iter; };
+      }
+      return iter;
+    }
+    sp.entries = function() { return makeIter(function(p) { return p; }); };
+    sp.keys    = function() { return makeIter(function(p) { return p[0]; }); };
+    sp.values  = function() { return makeIter(function(p) { return p[1]; }); };
+    sp.forEach = function(cb, thisArg) {
+      var pairs = snapshotPairs();
+      for (var i = 0; i < pairs.length; i++) {
+        // WHATWG signature: callback(value, key, parent).
+        cb.call(thisArg, pairs[i][1], pairs[i][0], sp);
+      }
+    };
+    if (typeof Symbol !== "undefined" && Symbol.iterator) {
+      sp[Symbol.iterator] = sp.entries;
+    }
+    Object.defineProperty(sp, "size", {
+      get: function() {
+        var n = 0;
+        for (var k in sp._m) n += sp._m[k].length;
+        return n;
+      },
+    });
+
     return sp;
   }
 

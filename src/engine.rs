@@ -2858,6 +2858,78 @@ mod integration_tests {
     }
 
     #[test]
+    fn polyfill_searchparams_size_property() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: (url) => "n:" + url.searchParams.size,
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/?a=1&b=2&c=3").0, "n:3");
+        assert_eq!(resolve(&e, "https://x/").0, "n:0");
+    }
+
+    #[test]
+    fn polyfill_searchparams_for_of_iterates_pairs() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: (url) => {
+                        var keys = [];
+                        for (var pair of url.searchParams) keys.push(pair[0]);
+                        return "k:" + keys.join(",");
+                    },
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/?a=1&b=2&c=3").0, "k:a,b,c");
+    }
+
+    #[test]
+    fn polyfill_searchparams_for_each_with_value_key_args() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: (url) => {
+                        var seen = [];
+                        url.searchParams.forEach(function(value, key) {
+                            seen.push(key + "=" + value);
+                        });
+                        return "p:" + seen.join("|");
+                    },
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/?a=1&b=2").0, "p:a=1|b=2");
+    }
+
+    #[test]
+    fn polyfill_searchparams_keys_values_iterators() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: (url) => {
+                        var ks = []; var vs = [];
+                        for (var k of url.searchParams.keys())   ks.push(k);
+                        for (var v of url.searchParams.values()) vs.push(v);
+                        return ks.join(",") + "/" + vs.join(",");
+                    },
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/?a=1&b=2").0, "a,b/1,2");
+    }
+
+    #[test]
     fn polyfill_hostname_setter_propagates_to_href() {
         let e = build_engine(
             r#"module.exports = {

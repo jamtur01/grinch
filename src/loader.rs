@@ -85,8 +85,10 @@ pub fn load_config() -> Option<LoadedConfig> {
     }
     // Console blocks must be installed BEFORE the user config evaluates so
     // top-level `console.log("…")` calls land on the wired blocks, not the
-    // prelude's `typeof` no-op fallback.
+    // prelude's `typeof` no-op fallback. Same ordering applies to the
+    // finicky.* bridges (getModifierKeys / isAppRunning / etc.).
     crate::engine::install_console_callbacks(&ctx);
+    crate::engine::install_finicky_callbacks(&ctx);
     let wrapped = wrap_user_config(&source);
     if eval(&ctx, &wrapped).is_none() || *last_error.borrow() {
         return None;

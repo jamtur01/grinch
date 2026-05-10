@@ -273,6 +273,82 @@ console = {
   debug: function() { if (typeof __grinchConsoleDebug === "function") __grinchConsoleDebug(__grinchFormatArgs(arguments)); },
 };
 
+// ---------- finicky.* compatibility namespace ----------
+//
+// Mirrors Finicky v4's `finicky.*` global so configs ported across don't
+// have to be rewritten. Pure-JS helpers live here; the OS-touching ones
+// (getModifierKeys, isAppRunning, getSystemInfo, getPowerInfo) call into
+// Rust blocks installed by `install_finicky_callbacks` — typeof guards
+// keep these safe even on a JSContext where the blocks aren't installed
+// (e.g. integration tests that haven't called the installer).
+//
+// Notable semantic point: `matchHostnames` is *exact* hostname match —
+// `finicky.matchHostnames("github.com")` does NOT match `api.github.com`.
+// That's the inverse of Grinch's bare-string matcher (`match: "github.com"`),
+// which matches subdomains too. Use `domain()` for subdomain semantics.
+var finicky = {
+  matchHostnames: function(matchers) {
+    var arr = Array.isArray(matchers) ? matchers : [matchers];
+    return function(url) {
+      var h = url.hostname;
+      for (var i = 0; i < arr.length; i++) {
+        var m = arr[i];
+        if (typeof m === "string") {
+          if (m === h) return true;
+        } else if (m instanceof RegExp) {
+          if (m.test(h)) return true;
+        } else {
+          throw new TypeError("finicky.matchHostnames: unrecognised matcher type: " + typeof m);
+        }
+      }
+      return false;
+    };
+  },
+
+  matchDomains: function(matchers) {
+    console.warn("finicky.matchDomains is deprecated; use finicky.matchHostnames");
+    return finicky.matchHostnames(matchers);
+  },
+
+  notify: function() {
+    console.error("finicky.notify is not implemented in Grinch — use console.log instead");
+  },
+
+  getBattery: function() {
+    console.error("finicky.getBattery is deprecated — use finicky.getPowerInfo");
+    return { isCharging: false, isPluggedIn: false, chargePercentage: 0 };
+  },
+
+  getModifierKeys: function() {
+    if (typeof __grinchGetModifierKeys === "function") {
+      try { return JSON.parse(__grinchGetModifierKeys()); } catch (_) {}
+    }
+    return { shift: false, option: false, command: false, control: false,
+             capsLock: false, fn: false, function: false };
+  },
+
+  isAppRunning: function(id) {
+    if (typeof __grinchIsAppRunning === "function") {
+      return __grinchIsAppRunning(String(id)) === "1";
+    }
+    return false;
+  },
+
+  getSystemInfo: function() {
+    if (typeof __grinchGetSystemInfo === "function") {
+      try { return JSON.parse(__grinchGetSystemInfo()); } catch (_) {}
+    }
+    return { localizedName: "", name: "" };
+  },
+
+  getPowerInfo: function() {
+    if (typeof __grinchGetPowerInfo === "function") {
+      try { return JSON.parse(__grinchGetPowerInfo()); } catch (_) {}
+    }
+    return { isCharging: false, isConnected: false, percentage: null };
+  },
+};
+
 // ---------- CommonJS scaffolding ----------
 var __grinchModule = { exports: {} };
 "##;

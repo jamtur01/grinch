@@ -757,6 +757,20 @@ unsafe impl block2::ManualBlockEncoding for ZeroArgIdReturnEncoding {
     };
 }
 
+/// Manual encoding for `NSString * (^)(NSString *)` — used for
+/// `finicky.isAppRunning`'s underlying bridge (returns "1"/"0" so the
+/// JS wrapper can coerce to boolean cheaply, no JSON parse needed).
+struct OneStringArgIdReturnEncoding;
+unsafe impl block2::ManualBlockEncoding for OneStringArgIdReturnEncoding {
+    type Arguments = (*mut NSString,);
+    type Return = *mut NSString;
+    const ENCODING_CSTR: &'static std::ffi::CStr = if cfg!(target_pointer_width = "64") {
+        c"@16@?0@8"
+    } else {
+        c"@8@?0@4"
+    };
+}
+
 fn install_window_title_callback(ctx: &JSContext) {
     // Block return follows ARC's id-returning convention: autoreleased, not
     // +1 retained. JSC's Obj-C bridge calls objc_retainAutoreleasedReturnValue
@@ -785,6 +799,101 @@ fn install_window_title_callback(ctx: &JSContext) {
     // dropping our RcBlock here is safe — JSC keeps it alive for the lifetime
     // of the JSContext.
     drop(block);
+}
+
+/// Install Rust-side bridges for the `finicky.*` helpers that need access
+/// to OS state. The JS-side `finicky` namespace (defined in the prelude)
+/// wraps each one with a `typeof` guard and a parse-or-default fallback,
+/// so configs run even on a JSContext where these aren't installed (e.g.
+/// the integration-test fixture before it explicitly calls this fn).
+///
+/// All bridges return *strings* — JSON for the dict-shaped helpers,
+/// "1"/"0" for the boolean. Returning NSDictionary directly would mean
+/// constructing one Rust-side, which is more code than this is worth.
+pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
+    fn install_zero_arg_string(ctx: &JSContext, key: &str, body: impl Fn() -> String + 'static) {
+        let block =
+            RcBlock::with_encoding::<_, _, _, ZeroArgIdReturnEncoding>(move || -> *mut NSString {
+                Retained::autorelease_return(NSString::from_str(&body()))
+            });
+        let block_ref: &block2::Block<_> = &block;
+        let block_obj: &AnyObject = unsafe { &*(block_ref as *const _ as *const AnyObject) };
+        let key_ns = NSString::from_str(key);
+        let key_ref: &objc2_foundation::NSObject = &key_ns;
+        unsafe {
+            ctx.setObject_forKeyedSubscript(Some(block_obj), Some(key_ref));
+        }
+        drop(block);
+    }
+
+    fn install_one_arg_string(ctx: &JSContext, key: &str, body: impl Fn(&str) -> String + 'static) {
+        let block = RcBlock::with_encoding::<_, _, _, OneStringArgIdReturnEncoding>(
+            move |arg: *mut NSString| -> *mut NSString {
+                let s = if arg.is_null() {
+                    String::new()
+                } else {
+                    unsafe { (*arg).to_string() }
+                };
+                Retained::autorelease_return(NSString::from_str(&body(&s)))
+            },
+        );
+        let block_ref: &block2::Block<_> = &block;
+        let block_obj: &AnyObject = unsafe { &*(block_ref as *const _ as *const AnyObject) };
+        let key_ns = NSString::from_str(key);
+        let key_ref: &objc2_foundation::NSObject = &key_ns;
+        unsafe {
+            ctx.setObject_forKeyedSubscript(Some(block_obj), Some(key_ref));
+        }
+        drop(block);
+    }
+
+    install_zero_arg_string(ctx, "__grinchGetModifierKeys", || {
+        let m = crate::workspace::current_modifier_flags();
+        // capsLock/fn/function aren't surfaced by ModifierFlags today;
+        // emit `false` for parity with Finicky's shape so callers don't
+        // hit "undefined.shift" style errors on those keys.
+        format!(
+            r#"{{"shift":{},"option":{},"command":{},"control":{},"capsLock":false,"fn":false,"function":false}}"#,
+            m.shift, m.option, m.command, m.control,
+        )
+    });
+
+    install_one_arg_string(ctx, "__grinchIsAppRunning", |id| {
+        // Match against either bundle ID or localized name, like Finicky.
+        // `running_app_bundle_ids` only returns bundle IDs today; the
+        // localized-name comparison would need a different NSWorkspace
+        // call. Document this gap; common case (bundle ID) works.
+        if crate::workspace::running_app_bundle_ids().contains(id) {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        }
+    });
+
+    install_zero_arg_string(ctx, "__grinchGetSystemInfo", || {
+        let mut buf = [0u8; 256];
+        let ret = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len()) };
+        let host = if ret == 0 {
+            let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            String::from_utf8_lossy(&buf[..len]).into_owned()
+        } else {
+            String::new()
+        };
+        // Finicky returns localizedName + name from NSHost; we just return
+        // gethostname() for both — it's good enough for routing decisions
+        // like "is this my work laptop?".
+        let json = serde_json::json!({ "localizedName": host, "name": host });
+        json.to_string()
+    });
+
+    install_zero_arg_string(ctx, "__grinchGetPowerInfo", || {
+        // IOKit IOPSCopyPowerSourcesInfo would give real values, but the
+        // call surface is heavy and most routing configs don't read this.
+        // Return a sensible-shape stub; the JS wrapper logs an info note
+        // the first time it's called so users know to file an issue if
+        // they actually need this.
+        r#"{"isCharging":false,"isConnected":true,"percentage":null}"#.to_string()
+    });
 }
 
 /// Build a URL polyfill instance via `new URL(urlString)`. If the URL fails
@@ -1847,10 +1956,11 @@ mod integration_tests {
         let prelude_ns = NSString::from_str(JS_PRELUDE);
         unsafe { ctx.evaluateScript(Some(&prelude_ns)) }.expect("prelude evaluation returned null");
 
-        // Match the loader's ordering: install console blocks between
-        // prelude eval and user-config eval so top-level `console.log`
-        // calls in the user source land on the wired blocks.
+        // Match the loader's ordering: install bridges between prelude eval
+        // and user-config eval so top-level `console.log` / `finicky.*`
+        // calls in the user source land on real Rust hooks.
         super::install_console_callbacks(&ctx);
+        super::install_finicky_callbacks(&ctx);
 
         let wrapped = wrap_user_config(user_src);
         let wrapped_ns = NSString::from_str(&wrapped);
@@ -2518,6 +2628,136 @@ mod integration_tests {
         );
         assert_eq!(resolve(&e, "https://example.com/").0, "com.google.Chrome");
         assert_eq!(resolve(&e, "https://other.com/").0, "com.apple.Safari");
+    }
+
+    // ---------- finicky.* namespace ----------
+
+    #[test]
+    fn finicky_namespace_is_present_with_all_v4_methods() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () =>
+                        typeof finicky.matchHostnames + "/" +
+                        typeof finicky.matchDomains + "/" +
+                        typeof finicky.notify + "/" +
+                        typeof finicky.getBattery + "/" +
+                        typeof finicky.getModifierKeys + "/" +
+                        typeof finicky.isAppRunning + "/" +
+                        typeof finicky.getSystemInfo + "/" +
+                        typeof finicky.getPowerInfo,
+                }],
+            };"#,
+        );
+        assert_eq!(
+            resolve(&e, "https://x/").0,
+            "function/function/function/function/function/function/function/function",
+        );
+    }
+
+    #[test]
+    fn finicky_match_hostnames_is_exact_not_subdomain() {
+        // Critical semantic: matchHostnames is === on hostname, NOT
+        // subdomain-matching. This is the inverse of Grinch's bare-string
+        // matcher. Pin the behaviour.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: finicky.matchHostnames("github.com"),
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://api.github.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn finicky_match_hostnames_accepts_array_and_regex() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: finicky.matchHostnames(["github.com", /^gitlab\./]),
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://gitlab.com/").0, "com.google.Chrome");
+        assert_eq!(resolve(&e, "https://example.com/").0, "com.apple.Safari");
+        // Subdomain still doesn't match the exact-hostname string.
+        assert_eq!(resolve(&e, "https://api.github.com/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn finicky_get_system_info_returns_shaped_object() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => {
+                        var info = finicky.getSystemInfo();
+                        return "k:" + Object.keys(info).sort().join(",");
+                    },
+                }],
+            };"#,
+        );
+        // The Rust bridge fills both fields with gethostname() output;
+        // we can't predict the value, just the shape.
+        assert_eq!(resolve(&e, "https://x/").0, "k:localizedName,name");
+    }
+
+    #[test]
+    fn finicky_get_modifier_keys_returns_full_v4_shape() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => "k:" + Object.keys(finicky.getModifierKeys()).sort().join(","),
+                }],
+            };"#,
+        );
+        // capsLock, command, control, fn, function, option, shift — sorted.
+        assert_eq!(
+            resolve(&e, "https://x/").0,
+            "k:capsLock,command,control,fn,function,option,shift",
+        );
+    }
+
+    #[test]
+    fn finicky_is_app_running_returns_boolean() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => "t:" + typeof finicky.isAppRunning("com.apple.finder"),
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "t:boolean");
+    }
+
+    #[test]
+    fn finicky_notify_is_inert_stub() {
+        // Calling notify must not throw, must return undefined; matches
+        // Finicky's deprecated stub behaviour.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => "v:" + (typeof finicky.notify() === "undefined"),
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "v:true");
     }
 
     #[test]

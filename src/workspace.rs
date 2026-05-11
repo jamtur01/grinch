@@ -279,6 +279,79 @@ pub fn opener_from_pid(pid: i32) -> Option<Opener> {
     })
 }
 
+/// One row of `list_http_browsers()` output — the bundle ID a user would
+/// write in their config plus the display name the OS shows.
+pub struct BrowserListing {
+    pub bundle_id: String,
+    pub name: String,
+}
+
+/// List every app registered to handle `https://` URLs, deduplicated by
+/// bundle ID in LaunchServices preference order. Backs the
+/// `Grinch --list-browsers` CLI: the bundle ID is the value a user writes
+/// in a config (`open: "com.brave.Browser"`), the display name is what
+/// the OS shows in the Default Browser picker.
+///
+/// LaunchServices returns one entry per installed `.app` bundle, so the
+/// same browser can appear multiple times if the user has it in both
+/// `/Applications` and `~/Downloads` (or both an installer copy and a
+/// translocated copy under `/private/var/folders/.../AppTranslocation`).
+/// We collapse to the first occurrence per bundle ID — the LSpref-ordered
+/// first entry is the one macOS would actually launch.
+///
+/// Returns an empty vector if the LaunchServices probe URL fails to parse
+/// (shouldn't happen — the URL is a constant) or if no http handlers are
+/// registered (vanishingly rare; even a fresh macOS install has Safari).
+pub fn list_http_browsers() -> Vec<BrowserListing> {
+    let probe = NSURL::URLWithString(&NSString::from_str("https://example.com/"));
+    let Some(probe) = probe else {
+        return Vec::new();
+    };
+    let workspace = NSWorkspace::sharedWorkspace();
+    let urls = workspace.URLsForApplicationsToOpenURL(&probe);
+    let count = urls.count();
+    let mut out = Vec::with_capacity(count);
+    let mut seen: HashSet<String> = HashSet::with_capacity(count);
+    for i in 0..count {
+        let url = urls.objectAtIndex(i);
+        let Some(bundle) = NSBundle::bundleWithURL(&url) else {
+            continue;
+        };
+        let bundle_id = bundle
+            .bundleIdentifier()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if bundle_id.is_empty() || !seen.insert(bundle_id.clone()) {
+            continue;
+        }
+        // Display-name resolution prefers CFBundleDisplayName (what the
+        // user sees in Finder, may be localised), falls back to
+        // CFBundleName, then to the URL's basename without `.app`.
+        let display_name = bundle_string(&bundle, "CFBundleDisplayName")
+            .or_else(|| bundle_string(&bundle, "CFBundleName"))
+            .unwrap_or_else(|| {
+                url.lastPathComponent()
+                    .map(|s| s.to_string().trim_end_matches(".app").to_string())
+                    .unwrap_or_default()
+            });
+        out.push(BrowserListing {
+            bundle_id,
+            name: display_name,
+        });
+    }
+    out
+}
+
+fn bundle_string(bundle: &NSBundle, key: &str) -> Option<String> {
+    let key_ns = NSString::from_str(key);
+    let value = bundle.objectForInfoDictionaryKey(&key_ns)?;
+    // Info-plist strings ARE NSString at runtime, but defensive downcast
+    // beats transmute-style casts if a vendored bundle hands us something
+    // exotic (CFAttributedString from a buggy localisation).
+    let s: Retained<NSString> = value.downcast().ok()?;
+    Some(s.to_string())
+}
+
 pub fn frontmost_opener() -> Opener {
     let workspace = NSWorkspace::sharedWorkspace();
     let Some(app) = workspace.frontmostApplication() else {

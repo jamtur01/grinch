@@ -30,7 +30,7 @@ use crate::engine::{Engine, ModifierFlags};
 use crate::loader::{find_config_path, load_config};
 use crate::workspace::{
     current_modifier_flags, ensure_accessibility_permission, frontmost_opener, frontmost_opener_id,
-    open_url, opener_from_pid, Opener,
+    list_http_browsers, open_url, opener_from_pid, Opener,
 };
 
 // SMAppService lives in ServiceManagement.framework; not transitively pulled
@@ -163,6 +163,7 @@ define_class!(
             let cli_test = args.iter().position(|a| a == "--test");
             let cli_bench = args.iter().position(|a| a == "--bench");
             let cli_list_rules = args.iter().any(|a| a == "--list-rules");
+            let cli_list_browsers = args.iter().any(|a| a == "--list-browsers");
 
             if let Some(idx) = cli_test {
                 let Some(url) = args.get(idx + 1) else {
@@ -191,6 +192,11 @@ define_class!(
             if cli_list_rules {
                 self.reload_engine();
                 self.list_rules();
+                terminate(self.mtm());
+                return;
+            }
+            if cli_list_browsers {
+                self.list_browsers();
                 terminate(self.mtm());
                 return;
             }
@@ -414,6 +420,25 @@ impl Delegate {
         }
         for line in lines {
             println!("{line}");
+        }
+    }
+
+    fn list_browsers(&self) {
+        let browsers = list_http_browsers();
+        if browsers.is_empty() {
+            println!("grinch: no http handlers registered with LaunchServices");
+            return;
+        }
+        // Two-column layout: bundle ID (the value you write in a config)
+        // and the display name (what System Settings shows). Width derived
+        // from the longest bundle id so all names line up.
+        let id_width = browsers
+            .iter()
+            .map(|b| b.bundle_id.chars().count())
+            .max()
+            .unwrap_or(0);
+        for b in &browsers {
+            println!("{:<width$}  {}", b.bundle_id, b.name, width = id_width);
         }
     }
 

@@ -571,72 +571,316 @@ var __grinchModule = { exports: {} };
 /// Three transforms:
 /// - `export default <expr>;` → `module.exports = <expr>;`
 ///   (covers `export default { ... }`, `export default function …`, etc.)
-/// - `import …` lines emit a config-load error pointing at module.exports
-///   — JSC isn't a module evaluator and there's nowhere for the import to
-///   resolve to even if we could parse it.
+/// - `import …` statements emit a config-load error pointing at
+///   module.exports — JSC isn't a module evaluator and there's nowhere
+///   for the import to resolve to even if we could parse it.
 /// - `export const X = …` / `export function X` etc. emit the same error;
-///   Grinch only loads a single default export, named exports have no place
-///   to land.
+///   Grinch only loads a single default export, named exports have no
+///   place to land.
 ///
-/// The replacement is intentionally regex-based and per-line — handling
-/// the full ESM grammar would mean shipping a parser, and the only ESM
-/// shape we actually care about for Finicky-config porting is
-/// `export default { … }`.
+/// Driven by a tiny state-machine tokenizer that tracks string, template,
+/// and comment context — keywords inside `/* … */`, `// …`, `'…'`, `"…"`,
+/// or `` `…` `` are intentionally ignored. `import.meta` and dynamic
+/// `import(…)` are not flagged because neither is followed by whitespace
+/// (the import-statement shape we look for). Substituting a real parser
+/// would mean shipping `swc` / `oxc` and multi-MB of binary; the
+/// tokenizer covers the cases that bite real configs without the bloat.
 ///
 /// Returns the transformed source on success, or `Err(message)` on the
 /// unsupported-syntax cases. Callers (loader.rs) print the message via the
 /// usual `grinch: …` channel and abort the load.
 pub fn preprocess_es_module_syntax(src: &str) -> Result<String, String> {
-    // Detect unsupported `import …` lines first — hint vs JSC's bare
-    // "Unexpected identifier 'from'" syntax error.
-    for (i, line) in src.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("import ") || trimmed.starts_with("import\t") {
-            return Err(format!(
-                "ES module `import` syntax is not supported (line {}). Grinch \
-                 evaluates the config as a script, not a module — inline what \
-                 you need or load it before invoking Grinch.",
-                i + 1
-            ));
-        }
-        // Non-default named exports: `export const`, `export function`,
-        // `export class`, `export {…}`. `export default` is the one shape
-        // we DO accept, so guard for it before flagging.
-        if (trimmed.starts_with("export ") || trimmed.starts_with("export\t"))
-            && !trimmed.starts_with("export default")
-        {
-            return Err(format!(
-                "Named ES module `export` syntax is not supported (line {}). \
-                 Grinch only consumes a single config object — use \
-                 `export default {{ … }}` or `module.exports = {{ … }}`.",
-                i + 1
-            ));
+    let tokens = scan_module_tokens(src);
+
+    // First pass: any disallowed shape? Bail with a helpful, line-anchored
+    // error rather than letting JSC raise a generic SyntaxError.
+    for tok in &tokens {
+        match tok.kind {
+            ModuleTokenKind::Import => {
+                return Err(format!(
+                    "ES module `import` syntax is not supported (line {}). Grinch \
+                     evaluates the config as a script, not a module — inline what \
+                     you need or load it before invoking Grinch.",
+                    tok.line
+                ));
+            }
+            ModuleTokenKind::NamedExport => {
+                return Err(format!(
+                    "Named ES module `export` syntax is not supported (line {}). \
+                     Grinch only consumes a single config object — use \
+                     `export default {{ … }}` or `module.exports = {{ … }}`.",
+                    tok.line
+                ));
+            }
+            ModuleTokenKind::ExportDefault => {}
         }
     }
 
-    // Rewrite `export default` → `module.exports =`. Only the literal
-    // keyword sequence at the start of a line (after optional whitespace)
-    // is rewritten, to avoid touching strings or comments containing the
-    // phrase. The trailing `=` sits where `default` was, preserving the
-    // user's column offsets within the declaration body — important
-    // because JSC's exception line/column numbers are user-visible.
-    let mut out = String::with_capacity(src.len());
-    for line in src.lines() {
-        let leading_ws = line.len() - line.trim_start().len();
-        let rest = &line[leading_ws..];
-        if let Some(after) = rest.strip_prefix("export default ") {
-            // Replace "export default " (15 chars) with "module.exports = "
-            // (17 chars) — two extra columns. Acceptable: it's a one-line
-            // shift only on the export line itself.
-            out.push_str(&line[..leading_ws]);
-            out.push_str("module.exports = ");
-            out.push_str(after);
-        } else {
-            out.push_str(line);
+    // Second pass: splice each `export default` → `module.exports =`. Any
+    // newlines inside the replaced span are preserved (re-emitted after
+    // the equals) so JSC's exception line numbers in downstream code still
+    // line up with the user's source.
+    let mut out = String::with_capacity(src.len() + tokens.len() * 8);
+    let mut cursor = 0;
+    for tok in &tokens {
+        if !matches!(tok.kind, ModuleTokenKind::ExportDefault) {
+            continue;
         }
+        out.push_str(&src[cursor..tok.start]);
+        out.push_str("module.exports =");
+        let newlines = src[tok.start..tok.end]
+            .bytes()
+            .filter(|&b| b == b'\n')
+            .count();
+        for _ in 0..newlines {
+            out.push('\n');
+        }
+        cursor = tok.end;
+    }
+    out.push_str(&src[cursor..]);
+    // Trailing newline — historical behaviour; harmless for downstream
+    // string concat and keeps fixtures that omit a final newline working.
+    if !out.ends_with('\n') {
         out.push('\n');
     }
     Ok(out)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ModuleTokenKind {
+    Import,
+    NamedExport,
+    ExportDefault,
+}
+
+struct ModuleToken {
+    kind: ModuleTokenKind,
+    /// Byte offset of the leading `i`/`e` of the matched keyword.
+    start: usize,
+    /// Byte offset just past the keyword block. For `ExportDefault` this
+    /// is the position right after the `t` of `default`; for the others
+    /// it's right after `import` / `export`.
+    end: usize,
+    /// 1-based line number where the keyword starts.
+    line: usize,
+}
+
+enum ScanState {
+    Code,
+    LineComment,
+    BlockComment,
+    SingleString,
+    DoubleString,
+    /// Treat backtick template literals as opaque. `${…}` interpolations
+    /// nominally contain expressions, but ES syntax doesn't allow `import`
+    /// or `export` statements in expression position — skipping straight
+    /// through to the closing backtick is cheaper than tracking nested
+    /// braces and is correct for any real config.
+    TemplateString,
+}
+
+fn scan_module_tokens(src: &str) -> Vec<ModuleToken> {
+    let bytes = src.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    let mut line = 1usize;
+    let mut state = ScanState::Code;
+    // True when only whitespace and comments have appeared since the last
+    // newline (or file start). Approximates "statement-start position";
+    // false negatives on rare layouts like `;export default …` are
+    // acceptable — that pattern is vanishingly rare for module exports.
+    let mut stmt_start = true;
+
+    while i < bytes.len() {
+        match state {
+            ScanState::Code => {
+                let b = bytes[i];
+                if b == b'\n' {
+                    line += 1;
+                    stmt_start = true;
+                    i += 1;
+                    continue;
+                }
+                if matches!(b, b' ' | b'\t' | b'\r') {
+                    i += 1;
+                    continue;
+                }
+                if b == b'/' && i + 1 < bytes.len() {
+                    match bytes[i + 1] {
+                        b'/' => {
+                            state = ScanState::LineComment;
+                            i += 2;
+                            continue;
+                        }
+                        b'*' => {
+                            state = ScanState::BlockComment;
+                            i += 2;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+                if b == b'\'' {
+                    state = ScanState::SingleString;
+                    stmt_start = false;
+                    i += 1;
+                    continue;
+                }
+                if b == b'"' {
+                    state = ScanState::DoubleString;
+                    stmt_start = false;
+                    i += 1;
+                    continue;
+                }
+                if b == b'`' {
+                    state = ScanState::TemplateString;
+                    stmt_start = false;
+                    i += 1;
+                    continue;
+                }
+                if stmt_start {
+                    if let Some((kind, end)) = try_match_module_keyword(bytes, i) {
+                        let token_line = line;
+                        // Update the line counter for any newlines inside
+                        // the span (e.g. `export\ndefault`) so subsequent
+                        // tokens get the right line number.
+                        for &x in &bytes[i..end] {
+                            if x == b'\n' {
+                                line += 1;
+                            }
+                        }
+                        tokens.push(ModuleToken {
+                            kind,
+                            start: i,
+                            end,
+                            line: token_line,
+                        });
+                        i = end;
+                        stmt_start = false;
+                        continue;
+                    }
+                }
+                stmt_start = false;
+                i += 1;
+            }
+            ScanState::LineComment => {
+                if bytes[i] == b'\n' {
+                    // Let Code state re-process the newline so the line
+                    // counter + stmt_start flip happen in one place.
+                    state = ScanState::Code;
+                } else {
+                    i += 1;
+                }
+            }
+            ScanState::BlockComment => {
+                if bytes[i] == b'\n' {
+                    line += 1;
+                    i += 1;
+                } else if bytes[i] == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    state = ScanState::Code;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            ScanState::SingleString | ScanState::DoubleString => {
+                let close = if matches!(state, ScanState::SingleString) {
+                    b'\''
+                } else {
+                    b'"'
+                };
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    if bytes[i + 1] == b'\n' {
+                        line += 1;
+                    }
+                    i += 2;
+                } else if bytes[i] == close {
+                    state = ScanState::Code;
+                    i += 1;
+                } else {
+                    if bytes[i] == b'\n' {
+                        line += 1;
+                    }
+                    i += 1;
+                }
+            }
+            ScanState::TemplateString => {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    if bytes[i + 1] == b'\n' {
+                        line += 1;
+                    }
+                    i += 2;
+                } else if bytes[i] == b'`' {
+                    state = ScanState::Code;
+                    i += 1;
+                } else {
+                    if bytes[i] == b'\n' {
+                        line += 1;
+                    }
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    tokens
+}
+
+/// Match `import …` / `export …` / `export default …` at position `i`.
+/// Returns `(kind, end_offset)` when the bytes at `i` form one of the
+/// recognised shapes, with `end_offset` pointing just past the last
+/// keyword byte (for `ExportDefault`, just past the `t` of `default`).
+fn try_match_module_keyword(bytes: &[u8], i: usize) -> Option<(ModuleTokenKind, usize)> {
+    if matches_keyword(bytes, i, b"import") {
+        let after = i + 6;
+        // Followed by ASCII whitespace = import STATEMENT shape. The
+        // `import(...)` / `import.meta` forms have `(` or `.` next, which
+        // is_ws() rejects, so they fall through cleanly.
+        if after < bytes.len() && is_module_ws(bytes[after]) {
+            return Some((ModuleTokenKind::Import, after));
+        }
+    }
+    if matches_keyword(bytes, i, b"export") {
+        let after = i + 6;
+        if after >= bytes.len() || !is_module_ws(bytes[after]) {
+            return None;
+        }
+        // Walk over inter-keyword whitespace to see if `default` follows.
+        // ES grammar allows arbitrary whitespace (including newlines)
+        // between `export` and `default`.
+        let mut j = after;
+        while j < bytes.len() && is_module_ws(bytes[j]) {
+            j += 1;
+        }
+        if matches_keyword(bytes, j, b"default") {
+            return Some((ModuleTokenKind::ExportDefault, j + 7));
+        }
+        return Some((ModuleTokenKind::NamedExport, after));
+    }
+    None
+}
+
+fn matches_keyword(bytes: &[u8], start: usize, kw: &[u8]) -> bool {
+    if start + kw.len() > bytes.len() {
+        return false;
+    }
+    if &bytes[start..start + kw.len()] != kw {
+        return false;
+    }
+    // Word-boundary: the byte after must not be an identifier-continue
+    // char. Stops `importable` / `exported_` / `default$x` from matching.
+    let after = start + kw.len();
+    if after < bytes.len() {
+        let c = bytes[after];
+        if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_module_ws(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r')
 }
 
 // Wrap user source so module/exports are scoped locally and don't pollute globals.
@@ -694,9 +938,109 @@ mod tests {
     #[test]
     fn preprocess_does_not_match_export_inside_string() {
         // `"export default"` as a string literal must NOT trigger the
-        // rewrite — the regex anchors on indentation + literal token.
+        // rewrite — the tokenizer tracks string state and ignores it.
         let src = r#"const s = "export default { fake: true }";"#;
         let out = preprocess_es_module_syntax(src).unwrap();
         assert!(out.contains(r#""export default"#));
+    }
+
+    #[test]
+    fn preprocess_ignores_export_inside_block_comment() {
+        // Multi-line `/* … */` containing module-syntax keywords must not
+        // trigger the unsupported-syntax error. This is the canonical
+        // false positive the line-based predecessor produced.
+        let src = "/*\n * import foo from 'bar';\n * export const x = 1;\n */\nexport default { default: \"x\" };";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        assert!(
+            out.contains("module.exports = { default: \"x\" };"),
+            "got: {out}"
+        );
+        // The comment text survives intact.
+        assert!(out.contains("import foo"), "got: {out}");
+        assert!(out.contains("export const x"), "got: {out}");
+    }
+
+    #[test]
+    fn preprocess_ignores_import_inside_line_comment() {
+        let src = "// import foo from 'bar';\nexport default { default: \"x\" };";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        assert!(out.contains("module.exports = { default: \"x\" };"));
+    }
+
+    #[test]
+    fn preprocess_ignores_export_inside_template_literal() {
+        // Template literal spans multiple lines and contains text that
+        // would line-trigger as a named export. Must be left alone.
+        let src =
+            "const help = `\n  export default { ... }\n`;\nexport default { default: \"x\" };";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        assert!(out.contains("module.exports = { default: \"x\" };"));
+        // The template content survives intact (the inner "export default"
+        // is still a literal string, not rewritten).
+        assert!(out.contains("  export default { ... }"));
+    }
+
+    #[test]
+    fn preprocess_handles_export_default_after_block_comment_on_same_line() {
+        // `/* hi */ export default {…}` — comments at line-start should
+        // leave the keyword in statement position.
+        let src = "/* hi */ export default { x: 1 };";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        assert_eq!(out, "/* hi */ module.exports = { x: 1 };\n");
+    }
+
+    #[test]
+    fn preprocess_handles_export_default_followed_by_newline_before_expression() {
+        // `export default\n{…}` — the keyword block spans two lines.
+        // Newlines inside the replaced span are preserved so JSC sees
+        // the expression on the same line number it was on in the source.
+        let src = "export default\n{ x: 1 };\nfoo();";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        // Replacement preserves the one newline that was inside
+        // "export default" → "module.exports =\n", so `{ x: 1 };`
+        // still lands on line 2 and `foo();` on line 3.
+        assert_eq!(out, "module.exports =\n{ x: 1 };\nfoo();\n");
+    }
+
+    #[test]
+    fn preprocess_handles_export_default_with_extra_whitespace() {
+        // Multiple spaces / tabs between `export` and `default` —
+        // tokenizer walks the gap, treats them as one keyword block.
+        let src = "export   \tdefault { x: 1 };";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        assert!(out.starts_with("module.exports = { x: 1 };"), "got: {out}");
+    }
+
+    #[test]
+    fn preprocess_ignores_import_meta_and_dynamic_import() {
+        // `import.meta` and `import(…)` are expressions, not statements,
+        // and their next byte (`.` or `(`) isn't whitespace — so they're
+        // never tokenized as Import.
+        let src = "const u = import.meta.url;\nconst m = import('./x.js');\nexport default { default: \"x\" };";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        assert!(out.contains("import.meta.url"));
+        assert!(out.contains("import('./x.js')"));
+        assert!(out.contains("module.exports = { default: \"x\" };"));
+    }
+
+    #[test]
+    fn preprocess_rejects_named_export_after_comment_block() {
+        // Real named exports past a comment block still get flagged — the
+        // comment-skipping doesn't accidentally swallow legitimate errors.
+        let src = "/* preamble */\nexport const x = 1;";
+        let err = preprocess_es_module_syntax(src).unwrap_err();
+        assert!(err.contains("Named ES module `export`"), "got: {err}");
+        assert!(err.contains("line 2"), "got: {err}");
+    }
+
+    #[test]
+    fn preprocess_word_boundary_protects_identifiers() {
+        // `importable` / `exportFn` shouldn't tokenize as module keywords.
+        let src =
+            "function exportFn() {}\nconst importable = true;\nmodule.exports = { exportFn };";
+        let out = preprocess_es_module_syntax(src).unwrap();
+        // Source survives — no rewrite, no error.
+        assert!(out.contains("function exportFn()"));
+        assert!(out.contains("const importable = true;"));
     }
 }

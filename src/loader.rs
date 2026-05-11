@@ -2,11 +2,15 @@
 // URL polyfill pre-injected, and returns the module.exports JSValue plus the
 // context that owns it (must be kept alive — JSValues retain their context).
 //
-// Three config locations are checked, in order. First file found wins:
-//   1. ~/.grinch.js                         (legacy/dotfile)
-//   2. ~/.config/grinch.js                  (flat XDG)
-//   3. ~/.config/grinch/grinch.js           (XDG subdir, mirrors Finicky)
-// The subdir form is for users who keep one folder per tool under ~/.config.
+// Four config locations are checked, in order. First file found wins:
+//   1. ~/.grinch.js                                    (legacy/dotfile)
+//   2. ~/.config/grinch.js                             (flat XDG)
+//   3. ~/.config/grinch/grinch.js                      (XDG subdir, Finicky-style)
+//   4. /Library/Application Support/Grinch/grinch.js   (system-wide / MDM)
+// The XDG subdir form is for users who keep one folder per tool under
+// ~/.config. The system-wide path is last so user configs always win;
+// it's there so MDM-managed machines can ship a baseline config without
+// per-user provisioning.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -49,7 +53,8 @@ pub fn load_config() -> Result<LoadedConfig, String> {
         }
         ReadOutcome::Missing => {
             let msg = "no config at any of: ~/.grinch.js, ~/.config/grinch.js, \
-                       ~/.config/grinch/grinch.js — create one"
+                       ~/.config/grinch/grinch.js, \
+                       /Library/Application Support/Grinch/grinch.js — create one"
                 .to_string();
             eprintln!("grinch: {msg}");
             return Err(msg);
@@ -190,16 +195,21 @@ fn eval(ctx: &JSContext, script: &str) -> Option<Retained<JSValue>> {
     unsafe { ctx.evaluateScript_withSourceURL(Some(&s), Some(&url)) }
 }
 
+/// System-wide config location. Last in the search order so user paths
+/// always win, but present so MDM-managed Macs can drop a baseline config
+/// here and have Grinch pick it up without per-user setup.
+const SYSTEM_CONFIG_PATH: &str = "/Library/Application Support/Grinch/grinch.js";
+
 fn config_paths() -> Vec<PathBuf> {
-    let Ok(home) = std::env::var("HOME") else {
-        return vec![];
-    };
-    let home = PathBuf::from(home);
-    vec![
-        home.join(".grinch.js"),
-        home.join(".config/grinch.js"),
-        home.join(".config/grinch/grinch.js"),
-    ]
+    let mut paths = Vec::with_capacity(4);
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        paths.push(home.join(".grinch.js"));
+        paths.push(home.join(".config/grinch.js"));
+        paths.push(home.join(".config/grinch/grinch.js"));
+    }
+    paths.push(PathBuf::from(SYSTEM_CONFIG_PATH));
+    paths
 }
 
 enum ReadOutcome {
@@ -241,5 +251,58 @@ fn read_first_existing(paths: &[PathBuf]) -> ReadOutcome {
         ReadOutcome::Unreadable { path, error }
     } else {
         ReadOutcome::Missing
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_paths_search_order() {
+        // HOME is process-global, so the two-state assertion (with HOME
+        // set vs unset) runs in one test to avoid Rust's parallel-test
+        // runner racing on the env var.
+        let prev = std::env::var_os("HOME");
+
+        // With HOME set: four paths, system last.
+        unsafe {
+            std::env::set_var("HOME", "/Users/testuser");
+        }
+        let with_home = config_paths();
+        assert_eq!(with_home.len(), 4);
+        assert_eq!(with_home[0], PathBuf::from("/Users/testuser/.grinch.js"));
+        assert_eq!(
+            with_home[1],
+            PathBuf::from("/Users/testuser/.config/grinch.js")
+        );
+        assert_eq!(
+            with_home[2],
+            PathBuf::from("/Users/testuser/.config/grinch/grinch.js")
+        );
+        assert_eq!(
+            with_home[3],
+            PathBuf::from("/Library/Application Support/Grinch/grinch.js"),
+            "system path must be last so user paths win"
+        );
+
+        // Without HOME: the system path is still searched. Covers sandboxed
+        // test runners and some launchd jobs that strip HOME.
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        let without_home = config_paths();
+        assert_eq!(without_home.len(), 1);
+        assert_eq!(
+            without_home[0],
+            PathBuf::from("/Library/Application Support/Grinch/grinch.js")
+        );
+
+        // Restore.
+        unsafe {
+            if let Some(h) = prev {
+                std::env::set_var("HOME", h);
+            }
+        }
     }
 }

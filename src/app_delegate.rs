@@ -361,7 +361,8 @@ impl Delegate {
         let Some(path) = path_ref.as_ref() else {
             eprintln!(
                 "grinch: no config to open — create one at ~/.grinch.js, \
-                 ~/.config/grinch.js, or ~/.config/grinch/grinch.js"
+                 ~/.config/grinch.js, ~/.config/grinch/grinch.js, or \
+                 /Library/Application Support/Grinch/grinch.js (system-wide)"
             );
             return;
         };

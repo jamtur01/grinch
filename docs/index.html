@@ -97,7 +97,7 @@ make run</code></pre>
 <section id="diagnostics">
   <h2>When a click goes the wrong way</h2>
 
-  <p>Two built-in tools answer "why did <em>that</em> click go <em>there</em>?":</p>
+  <p>A handful of CLI flags + a JSONL log answer "why did <em>that</em> click go <em>there</em>?":</p>
 
   <h3>List the loaded rules</h3>
   <p><code>Grinch --list-rules</code> prints every rule with its index, label, and target — pair with the JSONL log to map a <code>matchedRule.index</code> back to the actual entry in your config.</p>
@@ -120,6 +120,32 @@ make run</code></pre>
   "matchedRule": { "index": 2, "name": "github.com" }
 }</code></pre>
   <p class="note">The opener is identified via the GURL Apple Event's <code>keySenderPIDAttr</code>, so it's the app that actually sent the URL — not whichever app happens to be frontmost when Grinch's callback fires.</p>
+
+  <h3>Headless checks</h3>
+  <p><code>Grinch --validate</code> loads the config and exits 0 (with the resolved path and rule count) or 1 (with the captured load error). Designed for editor save-hooks and CI:</p>
+<pre><code>$ Grinch --validate
+grinch: config OK — /Users/james/.config/grinch.js
+rules:  12
+
+$ Grinch --validate
+grinch: config invalid — SyntaxError: Unexpected identifier 'rules'. (line 4)
+path:   /Users/james/.config/grinch.js
+$ echo $?
+1</code></pre>
+
+  <h3>Discovering browser bundle IDs</h3>
+  <p><code>Grinch --list-browsers</code> prints every app registered with LaunchServices to handle <code>https://</code> URLs, with the bundle ID you'd write in a config alongside the display name the OS shows:</p>
+<pre><code>com.apple.Safari               Safari
+com.google.Chrome              Google Chrome
+com.brave.Browser              Brave Browser
+com.microsoft.edgemac          Microsoft Edge
+app.zen-browser.zen            Zen
+...</code></pre>
+
+  <h3>Routing arbitrary URLs from scripts</h3>
+  <p>Grinch registers a <code>grinch:</code> URL scheme so external tools (Shortcuts, AppleScript, shell scripts) can ask it to route a URL through the user's rules without setting it as the system default:</p>
+<pre><code>open grinch:https://example.com/path
+open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</code></pre>
 </section>
 
 <section id="performance">
@@ -134,13 +160,13 @@ make run</code></pre>
     <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
     <tbody>
       <tr><td>Floor: empty rules, no rewrite</td><td>6</td></tr>
-      <tr><td>Default fallback, no query</td><td>65</td></tr>
-      <tr><td>Default fallback, strip removes a param</td><td>191</td></tr>
-      <tr><td>Bare-hostname match (<code>"github.com"</code>)</td><td>41</td></tr>
-      <tr><td><code>domain()</code> match</td><td>45</td></tr>
-      <tr><td>Regex match</td><td>26</td></tr>
-      <tr><td>Wildcard match (<code>"zoom.us/j/*"</code>)</td><td>30</td></tr>
-      <tr><td>50 bare-hostname rules, last one wins</td><td>288</td></tr>
+      <tr><td>Default fallback, no query</td><td>69</td></tr>
+      <tr><td>Default fallback, strip removes a param</td><td>194</td></tr>
+      <tr><td>Bare-hostname match (<code>"github.com"</code>)</td><td>44</td></tr>
+      <tr><td><code>domain()</code> match</td><td>50</td></tr>
+      <tr><td>Regex match</td><td>24</td></tr>
+      <tr><td>Wildcard match (<code>"zoom.us/j/*"</code>)</td><td>32</td></tr>
+      <tr><td>50 bare-hostname rules, last one wins</td><td>302</td></tr>
     </tbody>
   </table>
 
@@ -148,12 +174,12 @@ make run</code></pre>
   <table>
     <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
     <tbody>
-      <tr><td>Native rule wins early (no fn fires)</td><td>42</td></tr>
-      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,681</td></tr>
-      <tr><td>HTTP→HTTPS via URL mutation</td><td>4,465</td></tr>
-      <tr><td><code>?browser=</code> dynamic open fn</td><td>4,699</td></tr>
-      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>5,292</td></tr>
-      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>5,551</td></tr>
+      <tr><td>Native rule wins early (no fn fires)</td><td>43</td></tr>
+      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,870</td></tr>
+      <tr><td>HTTP→HTTPS via URL mutation</td><td>4,760</td></tr>
+      <tr><td><code>?browser=</code> dynamic open fn</td><td>5,080</td></tr>
+      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>5,800</td></tr>
+      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>6,000</td></tr>
     </tbody>
   </table>
 

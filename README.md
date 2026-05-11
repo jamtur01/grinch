@@ -87,6 +87,10 @@ Drop a JavaScript file at one of (checked in this order, first found wins):
 1. `~/.grinch.js` — legacy / dotfile
 2. `~/.config/grinch.js` — flat XDG
 3. `~/.config/grinch/grinch.js` — XDG subdir, mirrors Finicky's layout
+4. `/Library/Application Support/Grinch/grinch.js` — system-wide, last in
+   the search order so user paths always win. Intended for MDM-managed
+   Macs and shared workstations where a baseline config gets dropped
+   centrally without per-user provisioning.
 
 It must export a config object via CommonJS:
 
@@ -440,11 +444,31 @@ make test URL="https://..."         # dry-run a URL through the rules
 make clean
 ```
 
-The binary also has `--version` (prints the crate version), `--test <url>`
-(dry-run a URL through the rules), `--bench N <url>` (in-process resolve
-benchmarking), and `--list-rules` (print the loaded rules with their
-indices and targets — pair with `logRequests` to map `matchedRule.index`
-back to the entry in your config).
+The binary also accepts:
+
+| Flag | Effect |
+|---|---|
+| `--version` | Print the crate version. |
+| `--test <url>` | Dry-run a URL through the rules. `grinch:<inner>` URLs are unwrapped, so `--test grinch:tel:+15551234567` exercises the routing for `tel:+15551234567`. |
+| `--bench N <url>` | In-process resolve benchmarking, N iterations. |
+| `--list-rules` | Print the loaded rules with their indices, labels, and targets — pair with `logRequests` to map `matchedRule.index` back to the entry in your config. |
+| `--list-browsers` | List every app registered to handle `https://` URLs, one bundle ID per line with its display name. Useful for finding the right bundle ID when writing a config. |
+| `--validate` | Load the config and print whether it parses cleanly. Exits 0 on success, 1 on any load error (with the captured message + the path it was reading). Designed for editor save-hooks and CI. |
+
+Beyond the standard `http` / `https` / `mailto` Grinch handles natively,
+the bundle also registers `tel:`, `webcal:`, and `feed:` so those schemes
+route through the same rules engine. A custom `grinch:` scheme lets
+external tools invoke Grinch's resolver explicitly:
+
+```sh
+open grinch:https://example.com/path        # route through your rules
+open 'grinch:tel:+15551234567'              # route a non-web URL
+```
+
+The handler strips the `grinch:` prefix before resolve, so the inner
+URL is what your rules match against. Useful for Shortcuts, AppleScript,
+and `open(1)` flows where you want to route through Grinch even if it
+isn't the system default browser.
 
 ## Performance
 
@@ -469,13 +493,13 @@ when it's already lowercase ASCII.
 | Workload | ns/op |
 |---|---:|
 | Floor: empty rules, no rewrite | 6 |
-| Default fallback, no query | 65 |
-| Default fallback, strip removes a param | 191 |
-| Bare-hostname match (`"github.com"`) | 41 |
-| `domain()` match | 45 |
-| Regex match | 26 |
-| Wildcard match (`"zoom.us/j/*"`) | 30 |
-| 50 bare-hostname rules, last one wins | 288 |
+| Default fallback, no query | 69 |
+| Default fallback, strip removes a param | 194 |
+| Bare-hostname match (`"github.com"`) | 44 |
+| `domain()` match | 50 |
+| Regex match | 24 |
+| Wildcard match (`"zoom.us/j/*"`) | 32 |
+| 50 bare-hostname rules, last one wins | 302 |
 
 ### Slow path (configs with `(url, ctx) => …` fn matchers)
 
@@ -489,12 +513,12 @@ reuses pre-built `true`/`false` JSValues for modifier flags.
 
 | Workload | ns/op |
 |---|---:|
-| Native rule wins early (no fn fires) | 42 |
-| Drop URL via `() => null` (url-only) | 2,681 |
-| HTTP→HTTPS via URL mutation (url-only) | 4,465 |
-| `?browser=` dynamic open fn (url-only matcher) | 4,699 |
-| 4 fn matchers reading `ctx.opener` | 5,292 |
-| Full Slack-web → `slack://` rewrite | 5,551 |
+| Native rule wins early (no fn fires) | 43 |
+| Drop URL via `() => null` (url-only) | 2,870 |
+| HTTP→HTTPS via URL mutation (url-only) | 4,760 |
+| `?browser=` dynamic open fn (url-only matcher) | 5,080 |
+| 4 fn matchers reading `ctx.opener` | 5,800 |
+| Full Slack-web → `slack://` rewrite | 6,000 |
 
 ### Footprint
 

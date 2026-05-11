@@ -164,6 +164,7 @@ define_class!(
             let cli_bench = args.iter().position(|a| a == "--bench");
             let cli_list_rules = args.iter().any(|a| a == "--list-rules");
             let cli_list_browsers = args.iter().any(|a| a == "--list-browsers");
+            let cli_validate = args.iter().any(|a| a == "--validate");
 
             if let Some(idx) = cli_test {
                 let Some(url) = args.get(idx + 1) else {
@@ -199,6 +200,11 @@ define_class!(
                 self.list_browsers();
                 terminate(self.mtm());
                 return;
+            }
+            if cli_validate {
+                self.reload_engine();
+                let code = self.report_validation();
+                std::process::exit(code);
             }
 
             // Normal app-mode startup: load config, build the menu bar,
@@ -422,6 +428,35 @@ impl Delegate {
         for line in lines {
             println!("{line}");
         }
+    }
+
+    /// `--validate` body: returns the process exit code. 0 = config loaded
+    /// cleanly, 1 = load error (already printed to stderr by the loader
+    /// AND captured into the menu-bar error string via reload_engine).
+    fn report_validation(&self) -> i32 {
+        let path = self
+            .ivars()
+            .config_path
+            .borrow()
+            .as_ref()
+            .map(|p| p.display().to_string());
+        if let Some(err) = self.ivars().load_error.borrow().as_ref() {
+            println!("grinch: config invalid — {err}");
+            if let Some(path) = path {
+                println!("path:   {path}");
+            }
+            return 1;
+        }
+        match path {
+            Some(path) => println!("grinch: config OK — {path}"),
+            None => println!("grinch: config OK (no path resolved)"),
+        }
+        let engine_ref = self.ivars().engine.borrow();
+        if let Some(engine) = engine_ref.as_ref() {
+            let rules = engine.rule_listing().len();
+            println!("rules:  {rules}");
+        }
+        0
     }
 
     fn list_browsers(&self) {

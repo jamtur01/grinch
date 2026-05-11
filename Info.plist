@@ -35,6 +35,12 @@
         <string>NSUserActivityTypeBrowsingWeb</string>
     </array>
 
+    <!-- Schemes Grinch claims via LaunchServices. The engine routes anything
+         that arrives at application:openURLs: through resolve() regardless
+         of scheme, so adding entries here just lets the OS deliver them.
+         http/https/mailto are the core set; tel/webcal/feed extend
+         coverage at zero engine cost; `grinch` is the scripting hook for
+         `open grinch:<inner-url>` (see handle_url for the unwrap). -->
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
@@ -56,6 +62,46 @@
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>mailto</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>Telephone</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>tel</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>Calendar Subscription</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>webcal</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>Feed</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>feed</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>Grinch routing scheme</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>grinch</string>
             </array>
         </dict>
     </array>

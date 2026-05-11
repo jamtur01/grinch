@@ -128,7 +128,8 @@ define_class!(
                 let url = urls.objectAtIndex(i);
                 let Some(raw) = url.absoluteString() else { continue };
                 let raw = raw.to_string();
-                let result = engine.resolve(&raw, &opener, modifiers);
+                let inner = unwrap_grinch_scheme(&raw);
+                let result = engine.resolve(inner, &opener, modifiers);
                 if result.browser.bundle_id.is_empty() {
                     continue;
                 }
@@ -242,7 +243,8 @@ define_class!(
                 );
             }
 
-            let result = engine.resolve(&raw, &opener, modifiers);
+            let inner = unwrap_grinch_scheme(&raw);
+            let result = engine.resolve(inner, &opener, modifiers);
 
             if debug_enabled() {
                 eprintln!(
@@ -427,8 +429,15 @@ impl Delegate {
             path: String::new(),
             pid: 0,
         };
-        let result = engine.resolve(raw, &opener, ModifierFlags::default());
+        // Mirror the real URL-handler path: `grinch:<inner>` strips to <inner>
+        // before resolve, so `--test grinch:https://x/` exercises the same
+        // routing the user would get from `open grinch:https://x/`.
+        let inner = unwrap_grinch_scheme(raw);
+        let result = engine.resolve(inner, &opener, ModifierFlags::default());
         println!("URL:     {raw}");
+        if inner != raw {
+            println!("Routed:  {inner}");
+        }
         println!("Final:   {}", result.url);
         println!("Browser: {}", result.browser.bundle_id);
         if !result.browser.args.is_empty() {
@@ -594,6 +603,25 @@ impl Delegate {
 fn terminate(mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
     app.terminate(None);
+}
+
+/// If `url` uses the `grinch:` scheme (an opt-in routing hook for scripts:
+/// `open grinch:https://example.com/`), strip the `grinch:` prefix so the
+/// engine resolves the inner URL through the user's rules as if it had
+/// arrived normally. Otherwise return the input unchanged.
+///
+/// Accepts both `grinch:<inner>` (RFC 3986 opaque form) and `grinch://<inner>`
+/// (the form `open(1)` synthesises when invoked with `--background`). Empty
+/// `grinch:` payloads route as `""`, which falls through to the default
+/// browser — same as any other no-op URL would.
+fn unwrap_grinch_scheme(url: &str) -> &str {
+    if let Some(rest) = url.strip_prefix("grinch://") {
+        return rest;
+    }
+    if let Some(rest) = url.strip_prefix("grinch:") {
+        return rest;
+    }
+    url
 }
 
 /// Read the sender pid attribute (`'spid'`) off a GURL Apple Event. Returns
@@ -794,5 +822,80 @@ fn sm_open_login_items_settings() {
     unsafe {
         let cls = class!(SMAppService);
         let _: () = msg_send![cls, openSystemSettingsLoginItems];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unwrap_grinch_scheme_strips_opaque_prefix() {
+        assert_eq!(
+            unwrap_grinch_scheme("grinch:https://example.com/"),
+            "https://example.com/"
+        );
+        assert_eq!(
+            unwrap_grinch_scheme("grinch:slack://team/channel"),
+            "slack://team/channel"
+        );
+    }
+
+    #[test]
+    fn unwrap_grinch_scheme_strips_authority_form() {
+        // `open grinch://...` on macOS sometimes synthesises the authority
+        // form; we accept both shapes since the URL normaliser may collapse
+        // `grinch:` against `grinch://`.
+        assert_eq!(
+            unwrap_grinch_scheme("grinch://https://example.com/"),
+            "https://example.com/"
+        );
+    }
+
+    #[test]
+    fn unwrap_grinch_scheme_passes_through_unrelated_urls() {
+        assert_eq!(
+            unwrap_grinch_scheme("https://example.com/"),
+            "https://example.com/"
+        );
+        // Scheme suffix only — must not partial-match.
+        assert_eq!(unwrap_grinch_scheme("notgrinch:foo"), "notgrinch:foo");
+    }
+
+    #[test]
+    fn unwrap_grinch_scheme_handles_empty_payload() {
+        // `grinch:` with nothing after is harmless: the engine resolves
+        // the empty string and falls through to default.
+        assert_eq!(unwrap_grinch_scheme("grinch:"), "");
+        assert_eq!(unwrap_grinch_scheme("grinch://"), "");
+    }
+
+    #[test]
+    fn truncate_for_menu_returns_short_strings_unchanged() {
+        assert_eq!(truncate_for_menu("hello", 80), "hello");
+    }
+
+    #[test]
+    fn truncate_for_menu_trims_to_first_line() {
+        assert_eq!(
+            truncate_for_menu("first line\nsecond line\nthird line", 80),
+            "first line"
+        );
+    }
+
+    #[test]
+    fn truncate_for_menu_caps_long_lines_with_ellipsis() {
+        let long = "x".repeat(200);
+        let got = truncate_for_menu(&long, 10);
+        assert_eq!(got.chars().count(), 11); // 10 chars + '…'
+        assert!(got.ends_with('…'), "got: {got}");
+    }
+
+    #[test]
+    fn truncate_for_menu_counts_chars_not_bytes() {
+        // Multi-byte chars: each counts as one toward the cap.
+        let s = "äöü".repeat(20); // 60 chars, 120 bytes
+        let got = truncate_for_menu(&s, 5);
+        assert_eq!(got.chars().count(), 6); // 5 chars + '…'
     }
 }

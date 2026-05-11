@@ -22,7 +22,7 @@ jobs:
       MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag || github.ref }}
           # Full history + all tags so scripts/release-notes.sh can diff
@@ -170,7 +170,7 @@ jobs:
           echo "--- end ---"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Grinch ${{ steps.meta.outputs.tag }}

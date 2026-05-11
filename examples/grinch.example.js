@@ -76,6 +76,12 @@ module.exports = {
           "utm_content", "fbclid", "gclid", "mc_eid", "ref", "referrer"),
     strip("utm_*"),
 
+    // safelinks(): unwrap Microsoft Defender / Teams / Proofpoint URL
+    // wrappers in one line. Pass-through on every other host, so it's
+    // safe to leave on. Composes with strip() — put safelinks() first
+    // so utm_* cleanup runs on the inner URL, not the wrapper.
+    safelinks(),
+
     // Conditional literal rewrite.
     {
       match: "old.example.com/*",

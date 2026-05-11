@@ -179,6 +179,10 @@ enum Rewriter {
     },
     Literal(String),
     Fn(UserFn),
+    /// Unwrap a corporate SafeLinks / URL-defense wrapper. Recognises the
+    /// Microsoft Defender, Teams, and Proofpoint wrapper shapes; passes
+    /// through on hosts it doesn't recognise. See `unwrap_safelink`.
+    Safelinks,
 }
 
 enum Target {
@@ -1381,7 +1385,130 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
                 RewriteOutcome::Changed(s)
             }
         }
+        Rewriter::Safelinks => match unwrap_safelink(url) {
+            Some(new_url) => RewriteOutcome::Changed(new_url),
+            None => RewriteOutcome::Unchanged,
+        },
     }
+}
+
+/// Unwrap a corporate "SafeLinks"-style URL wrapper to its real
+/// destination. Recognises three of the most common shapes:
+///
+/// - Microsoft 365 Defender SafeLinks
+///   (`*.safelinks.protection.outlook.com/?url=<encoded>&data=…`)
+/// - Microsoft Teams external-link interstitial
+///   (`statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…`)
+/// - Proofpoint URL Defense v2
+///   (`urldefense.proofpoint.com/v2/url?u=<encoded>&…`)
+///
+/// Returns `Some(unwrapped)` only when the host matches a recognised
+/// wrapper AND the inner URL extracts + percent-decodes cleanly. Anything
+/// else (unknown host, missing param, malformed encoding) returns `None`
+/// so the rewriter passes the URL through untouched.
+///
+/// Idempotent: re-runs up to two unwrap passes so a double-wrapped link
+/// (Defender forwarding to Proofpoint, etc.) lands at the real target.
+fn unwrap_safelink(url: &str) -> Option<String> {
+    let mut current = url.to_string();
+    let mut changed = false;
+    for _ in 0..2 {
+        let Some(next) = unwrap_safelink_once(&current) else {
+            break;
+        };
+        current = next;
+        changed = true;
+    }
+    changed.then_some(current)
+}
+
+fn unwrap_safelink_once(url: &str) -> Option<String> {
+    let host = quick_host(url)?;
+    let query_start = url.find('?')?;
+    // Path = everything between the host and the '?'. We already know the
+    // scheme + authority by the time `quick_host` succeeded, so locate the
+    // path slice via the scheme offset + host length rather than rescanning.
+    let scheme_end = url.find("://").map(|i| i + 3).unwrap_or(0);
+    let path_start = (scheme_end + host.len()).min(query_start);
+    let path = &url[path_start..query_start];
+    // Drop any URL fragment from the query — SafeLinks wrappers don't use
+    // fragments for the inner URL, but a stray `#` later in the query
+    // shouldn't pollute the param search.
+    let query = &url[query_start + 1..];
+    let query = query.split('#').next().unwrap_or(query);
+
+    let is_microsoft_safelinks = host.ends_with(".safelinks.protection.outlook.com")
+        || host.as_ref() == "safelinks.protection.outlook.com";
+    let is_teams_safelink = host.as_ref() == "statics.teams.cdn.office.net"
+        && path.starts_with("/evergreen-assets/safelinks/");
+    let is_proofpoint_v2 =
+        host.as_ref() == "urldefense.proofpoint.com" && path.starts_with("/v2/url");
+
+    let param = if is_microsoft_safelinks || is_teams_safelink {
+        "url"
+    } else if is_proofpoint_v2 {
+        "u"
+    } else {
+        return None;
+    };
+
+    let encoded = find_query_param(query, param)?;
+    let decoded = percent_decode(encoded)?;
+    if decoded.is_empty() || !looks_like_url(&decoded) {
+        return None;
+    }
+    Some(decoded)
+}
+
+fn find_query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
+    for kv in query.split('&') {
+        let (k, v) = kv.split_once('=')?;
+        if k == name {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Percent-decode a query-string value. Returns None when the input contains
+/// a malformed `%XX` escape or the decoded bytes aren't valid UTF-8.
+/// Treats `+` as a literal `+` (not space) — SafeLinks wrappers use proper
+/// percent-encoding throughout, and form-encoding `+→ ` translation would
+/// corrupt encoded URLs that legitimately contain `+`.
+fn percent_decode(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return None;
+            }
+            let hi = (bytes[i + 1] as char).to_digit(16)?;
+            let lo = (bytes[i + 2] as char).to_digit(16)?;
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Cheap sanity check that the decoded string looks like a URL — at least a
+/// scheme followed by `://`. Defends against wrappers whose `url` param
+/// happens to carry something else (a tracking token, an email address)
+/// from being routed as a URL.
+fn looks_like_url(s: &str) -> bool {
+    let Some(scheme_end) = s.find("://") else {
+        return false;
+    };
+    let scheme = &s[..scheme_end];
+    !scheme.is_empty()
+        && scheme
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'-' || b == b'.')
 }
 
 // MARK: - Compilation
@@ -1984,6 +2111,17 @@ fn parse_rewrite_array(arr: &JSValue, function_ctor: &JSValue) -> Vec<RewriteRul
                     rewriter: r,
                 });
             }
+            continue;
+        }
+
+        // Bare safelinks() marker — also "always run". The rewriter itself
+        // no-ops on hosts it doesn't recognise, so leaving the matcher as
+        // Always is correct.
+        if is_marker(&item, "safelinks") {
+            out.push(RewriteRule {
+                matchers: vec![Matcher::Always],
+                rewriter: Rewriter::Safelinks,
+            });
             continue;
         }
 
@@ -2671,6 +2809,115 @@ mod tests {
         // `?a&b=1` — `a` has no `=`. Stripping `a` leaves `b=1`.
         let r = strip_params("https://x/?a&b=1", &strset(["a"]), &[]);
         assert_eq!(r.as_deref(), Some("https://x/?b=1"));
+    }
+
+    // -------- unwrap_safelink --------
+
+    #[test]
+    fn safelink_unwraps_microsoft_defender_wrapper() {
+        let wrapped = "https://emea01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fdocs.example.com%2Fpage&data=tracking";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://docs.example.com/page")
+        );
+    }
+
+    #[test]
+    fn safelink_unwraps_apex_safelinks_host() {
+        // Some tenants emit URLs straight off `safelinks.protection.outlook.com`
+        // without a regional subdomain — must match the same as the subdomain form.
+        let wrapped =
+            "https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fdocs.example.com%2Fpage";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://docs.example.com/page")
+        );
+    }
+
+    #[test]
+    fn safelink_unwraps_teams_evergreen_safelink() {
+        let wrapped = "https://statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=https%3A%2F%2Fexample.com%2Ffoo%3Fa%3D1";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/foo?a=1")
+        );
+    }
+
+    #[test]
+    fn safelink_unwraps_proofpoint_v2() {
+        let wrapped =
+            "https://urldefense.proofpoint.com/v2/url?u=https%3A%2F%2Fexample.com%2Fa&d=foo&c=bar";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/a")
+        );
+    }
+
+    #[test]
+    fn safelink_passes_through_unrelated_hosts() {
+        // Untouched URLs return None so the rewriter pipeline emits
+        // RewriteOutcome::Unchanged (no allocation).
+        assert!(unwrap_safelink("https://example.com/?url=https%3A%2F%2Felsewhere/").is_none());
+        assert!(unwrap_safelink("https://example.com/page").is_none());
+    }
+
+    #[test]
+    fn safelink_passes_through_teams_path_mismatch() {
+        // The Teams CDN host serves more than just safelinks — only the
+        // `/evergreen-assets/safelinks/` path qualifies for unwrapping.
+        let unrelated =
+            "https://statics.teams.cdn.office.net/evergreen-assets/other/?url=https%3A%2F%2Fexample.com";
+        assert!(unwrap_safelink(unrelated).is_none());
+    }
+
+    #[test]
+    fn safelink_rejects_malformed_inner_url() {
+        // Decoded value isn't a valid URL — must pass through, not route as one.
+        let bad = "https://safelinks.protection.outlook.com/?url=not-a-url";
+        assert!(unwrap_safelink(bad).is_none());
+
+        // Decoded value missing entirely.
+        let empty = "https://safelinks.protection.outlook.com/?url=";
+        assert!(unwrap_safelink(empty).is_none());
+    }
+
+    #[test]
+    fn safelink_rejects_invalid_percent_escape() {
+        // %ZZ is not valid hex — decoder bails, wrapper passes through.
+        let bad = "https://safelinks.protection.outlook.com/?url=https%ZZ";
+        assert!(unwrap_safelink(bad).is_none());
+    }
+
+    #[test]
+    fn safelink_handles_double_wrap_up_to_two_levels() {
+        // Defender → Proofpoint chain. The Defender layer's `url` param
+        // contains a percent-encoded Proofpoint URL; safelinks() should
+        // unwrap both passes and yield the innermost link.
+        let inner = "https://example.com/landing";
+        let proofpoint = format!(
+            "https://urldefense.proofpoint.com/v2/url?u={}&d=tag",
+            urlencode(inner)
+        );
+        let defender = format!(
+            "https://emea01.safelinks.protection.outlook.com/?url={}",
+            urlencode(&proofpoint)
+        );
+        assert_eq!(unwrap_safelink(&defender).as_deref(), Some(inner));
+    }
+
+    /// Test-local URL-encoder for the double-wrap fixture. Encodes everything
+    /// outside ASCII alphanumerics — heavier than necessary but trivially
+    /// correct, and tests don't need to be efficient.
+    fn urlencode(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() * 3);
+        for &b in s.as_bytes() {
+            if b.is_ascii_alphanumeric() {
+                out.push(b as char);
+            } else {
+                out.push_str(&format!("%{:02X}", b));
+            }
+        }
+        out
     }
 
     // -------- pattern_has_protocol_prefix --------

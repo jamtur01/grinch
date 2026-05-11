@@ -323,6 +323,15 @@ function strip() {
   return { __type: "strip", params: params };
 }
 
+// Rewrite that unwraps corporate "SafeLinks" / URL-defense wrappers — the
+// outer-host-with-encoded-inner-URL pattern Microsoft Defender, Teams, and
+// Proofpoint use to hide the real destination. Pass-through on hosts it
+// doesn't recognise, so it's safe at the top of a rewrite array.
+//   rewrite: [ safelinks(), strip("utm_*") ]
+function safelinks() {
+  return { __type: "safelinks" };
+}
+
 // Build the ctx object passed to user `(url, ctx) => ...` predicates.
 //
 // ctx is built once per resolve and reused across all fn callbacks within

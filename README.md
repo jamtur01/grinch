@@ -247,9 +247,24 @@ on the hot path for user-written `(url, ctx) => ...` predicates.
 | Form | Effect |
 |---|---|
 | `strip("utm_*", "fbclid")` | Strip these query params (trailing `*` is a prefix wildcard) |
+| `safelinks()` | Unwrap corporate SafeLinks / URL-defense wrappers — see below |
 | `{ match: ..., url: "https://..." }` | Replace URL when match hits |
 | `{ match: ..., url: (url, ctx) => ... }` | Transform URL via JS |
 | `{ match: ..., url: () => null }` | Drop the URL (suppress, open nothing) |
+
+`safelinks()` is a bare top-level entry (no `match:` field) that recognises
+three of the most common corporate URL wrappers and extracts the real
+destination from the encoded `url` / `u` query parameter:
+
+- **Microsoft 365 Defender SafeLinks** — `*.safelinks.protection.outlook.com/?url=…`
+- **Microsoft Teams external-link interstitial** — `statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…`
+- **Proofpoint URL Defense v2** — `urldefense.proofpoint.com/v2/url?u=…`
+
+Pass-through on every other host, so it's safe at the top of the rewrite
+chain. Composes cleanly with `strip()` — `[safelinks(), strip("utm_*")]`
+unwraps a Defender-tracked Outlook link, then strips `utm_*` off the
+inner URL. Double-wrapped chains (Defender → Proofpoint and similar) are
+unwrapped up to two levels deep.
 
 A `url` rewrite function receives a URL instance as its first argument and
 the ctx as its second. It can return:

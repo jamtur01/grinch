@@ -30,7 +30,7 @@ use crate::engine::{Engine, ModifierFlags};
 use crate::loader::{find_config_path, load_config};
 use crate::workspace::{
     current_modifier_flags, ensure_accessibility_permission, frontmost_opener, frontmost_opener_id,
-    open_url, Opener,
+    open_url, opener_from_pid, Opener,
 };
 
 // SMAppService lives in ServiceManagement.framework; not transitively pulled
@@ -60,6 +60,13 @@ const K_INTERNET_EVENT_CLASS: AEEventClass = fourcc(b"GURL");
 const K_AE_GET_URL: AEEventID = fourcc(b"GURL");
 // Direct-object keyword '----' (the standard "main parameter" key).
 const KEY_DIRECT_OBJECT: u32 = fourcc(b"----");
+// keySenderPIDAttr ('spid'): the Apple-Event attribute carrying the pid of
+// the process that sent the event. Set by LaunchServices when an app calls
+// the standard openURL APIs, so it identifies the *real* opener even after
+// macOS activates Grinch ahead of our open-URL callback. The frontmost-app
+// snapshot can't do that — by the time we read it, Grinch is in front.
+// Constant value from CarbonCore/AEDataModel.h; not exposed by objc2 yet.
+const KEY_SENDER_PID_ATTR: u32 = fourcc(b"spid");
 
 #[derive(Default)]
 pub struct DelegateIvars {
@@ -71,6 +78,13 @@ pub struct DelegateIvars {
     // Held so `toggle_start_at_login` can flip the checkmark after a
     // successful (un)register.
     start_at_login_item: RefCell<Option<Retained<NSMenuItem>>>,
+    // Last reload error message, or None on success. Drives the menu-bar
+    // icon (🎄 vs ⚠️) and the disabled "Config error: …" item at the top of
+    // the menu. Stderr is `/dev/null` for LaunchServices-launched apps, so
+    // without this the user gets no signal that a reload failed.
+    load_error: RefCell<Option<String>>,
+    // Pre-built menu item that renders `load_error` — hidden when no error.
+    error_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
 }
 
 define_class!(
@@ -105,13 +119,10 @@ define_class!(
             // click, one drop, one open-with), so they share an opener and
             // modifier state by intent. Per-URL re-reads would also race
             // against the user releasing the key while the batch resolves.
-            let opener = if !engine.needs_opener() {
-                Opener::default()
-            } else if engine.needs_opener_full() {
-                frontmost_opener()
-            } else {
-                frontmost_opener_id()
-            };
+            let sender_pid = NSAppleEventManager::sharedAppleEventManager()
+                .currentAppleEvent()
+                .and_then(|e| sender_pid_from_event(&e));
+            let opener = resolve_opener(engine, sender_pid);
             let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
             for i in 0..count {
                 let url = urls.objectAtIndex(i);
@@ -150,6 +161,7 @@ define_class!(
             let args: Vec<String> = std::env::args().collect();
             let cli_test = args.iter().position(|a| a == "--test");
             let cli_bench = args.iter().position(|a| a == "--bench");
+            let cli_list_rules = args.iter().any(|a| a == "--list-rules");
 
             if let Some(idx) = cli_test {
                 let Some(url) = args.get(idx + 1) else {
@@ -172,6 +184,12 @@ define_class!(
                 let n: usize = n.parse().unwrap_or(10_000);
                 self.reload_engine();
                 self.bench(n, url);
+                terminate(self.mtm());
+                return;
+            }
+            if cli_list_rules {
+                self.reload_engine();
+                self.list_rules();
                 terminate(self.mtm());
                 return;
             }
@@ -209,13 +227,8 @@ define_class!(
 
             let engine_ref = self.ivars().engine.borrow();
             let Some(engine) = engine_ref.as_ref() else { return };
-            let opener = if !engine.needs_opener() {
-                Opener::default()
-            } else if engine.needs_opener_full() {
-                frontmost_opener()
-            } else {
-                frontmost_opener_id()
-            };
+            let sender_pid = sender_pid_from_event(event);
+            let opener = resolve_opener(engine, sender_pid);
             let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
 
             // Diagnostic — gated by GRINCH_DEBUG=1 in env. Prints opener and
@@ -274,12 +287,64 @@ impl Delegate {
         // Refresh the path even if loading fails — keeps "Open Config"
         // pointed at the actual file the user wants to fix.
         *self.ivars().config_path.borrow_mut() = find_config_path();
-        let Some(loaded) = load_config() else { return };
-        match Engine::new(loaded) {
-            Ok(e) => {
-                *self.ivars().engine.borrow_mut() = Some(e);
+        let result = match load_config() {
+            Ok(loaded) => Engine::new(loaded)
+                .map(|e| {
+                    *self.ivars().engine.borrow_mut() = Some(e);
+                })
+                .map_err(|e| {
+                    let msg = format!("engine init failed: {e}");
+                    eprintln!("grinch: {msg}");
+                    msg
+                }),
+            Err(msg) => Err(msg),
+        };
+        self.set_load_error(result.err());
+    }
+
+    fn set_load_error(&self, err: Option<String>) {
+        *self.ivars().load_error.borrow_mut() = err;
+        // Skip the AppKit calls if the menu bar hasn't been built yet —
+        // setup_menu_bar() re-applies the current state at the end.
+        if self.ivars().status_item.borrow().is_none() {
+            return;
+        }
+        self.refresh_status_item();
+        self.refresh_error_menu_item();
+    }
+
+    fn refresh_status_item(&self) {
+        let item_ref = self.ivars().status_item.borrow();
+        let Some(item) = item_ref.as_ref() else {
+            return;
+        };
+        let Some(button) = item.button(self.mtm()) else {
+            return;
+        };
+        let title = if self.ivars().load_error.borrow().is_some() {
+            "⚠️"
+        } else {
+            "🎄"
+        };
+        button.setTitle(&NSString::from_str(title));
+    }
+
+    fn refresh_error_menu_item(&self) {
+        let item_ref = self.ivars().error_menu_item.borrow();
+        let Some(item) = item_ref.as_ref() else {
+            return;
+        };
+        let err_ref = self.ivars().load_error.borrow();
+        match err_ref.as_ref() {
+            Some(msg) => {
+                // Menu titles wrap awkwardly past ~80 chars in the macOS
+                // status bar; the full message is still on stderr / in
+                // `Console.app` if the user wants the whole thing.
+                let truncated = truncate_for_menu(msg, 80);
+                item.setTitle(&NSString::from_str(&format!("⚠ Config error: {truncated}")));
+                item.setHidden(false);
             }
-            Err(e) => eprintln!("grinch: engine init failed: {e}"),
+            None => item.setHidden(true),
         }
     }
 
@@ -332,6 +397,22 @@ impl Delegate {
             NS_CONTROL_STATE_VALUE_OFF
         };
         item.setState(state);
+    }
+
+    fn list_rules(&self) {
+        let engine_ref = self.ivars().engine.borrow();
+        let Some(engine) = engine_ref.as_ref() else {
+            println!("grinch: no config loaded");
+            return;
+        };
+        let lines = engine.rule_listing();
+        if lines.is_empty() {
+            println!("grinch: no rules in config (everything falls through to default)");
+            return;
+        }
+        for line in lines {
+            println!("{line}");
+        }
     }
 
     fn test_url(&self, raw: &str) {
@@ -428,6 +509,23 @@ impl Delegate {
         let menu = NSMenu::new(mtm);
         let me: &AnyObject = self.as_ref();
 
+        // Pre-built "Config error: …" item at the top of the menu. Hidden
+        // by default; flipped on by refresh_error_menu_item() when a reload
+        // captures an error. Disabled (no action) so it reads as status,
+        // not a button. The separator after it is hidden too so the menu
+        // is visually unchanged in the healthy case.
+        let error_item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str(""),
+                None,
+                &NSString::from_str(""),
+            )
+        };
+        error_item.setHidden(true);
+        menu.addItem(&error_item);
+        *self.ivars().error_menu_item.borrow_mut() = Some(error_item);
+
         let open_config = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(mtm),
@@ -484,12 +582,65 @@ impl Delegate {
 
         item.setMenu(Some(&menu));
         *self.ivars().status_item.borrow_mut() = Some(item);
+
+        // The first reload_engine() runs *before* the menu bar exists, so
+        // any startup load error is already in ivars without UI. Apply it
+        // now that the icon and error item are live.
+        self.refresh_status_item();
+        self.refresh_error_menu_item();
     }
 }
 
 fn terminate(mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
     app.terminate(None);
+}
+
+/// Read the sender pid attribute (`'spid'`) off a GURL Apple Event. Returns
+/// None when the attribute is absent or zero — the caller falls back to the
+/// frontmost-app heuristic, which is wrong but better than nothing.
+fn sender_pid_from_event(event: &NSAppleEventDescriptor) -> Option<i32> {
+    let pid = event
+        .attributeDescriptorForKeyword(KEY_SENDER_PID_ATTR)?
+        .int32Value();
+    (pid > 0).then_some(pid)
+}
+
+/// Pick the opener for this resolve given the engine's runtime needs and
+/// the sender pid from the Apple Event (if any). Sender pid is the canonical
+/// signal — it survives LaunchServices activating Grinch ahead of our
+/// callback. Fall back to `frontmost_opener()` only when the attribute is
+/// absent or the pid no longer maps to a running app (process exited).
+fn resolve_opener(engine: &Engine, sender_pid: Option<i32>) -> Opener {
+    if !engine.needs_opener() {
+        return Opener::default();
+    }
+    if engine.needs_opener_full() {
+        if let Some(opener) = sender_pid.and_then(opener_from_pid) {
+            return opener;
+        }
+        return frontmost_opener();
+    }
+    if let Some(opener) = sender_pid.and_then(opener_from_pid) {
+        return Opener {
+            bundle_id: opener.bundle_id,
+            ..Opener::default()
+        };
+    }
+    frontmost_opener_id()
+}
+
+/// Trim a multi-line error message to a single line capped at `max_chars`
+/// characters. The macOS menu bar renders titles single-line and clips wide
+/// items; this gives users the first sentence of the error inline with the
+/// status item without truncating mid-codepoint.
+fn truncate_for_menu(msg: &str, max_chars: usize) -> String {
+    let single_line = msg.split('\n').next().unwrap_or(msg).trim();
+    if single_line.chars().count() <= max_chars {
+        return single_line.to_string();
+    }
+    let prefix: String = single_line.chars().take(max_chars).collect();
+    format!("{prefix}…")
 }
 
 // MARK: - SIGHUP handling

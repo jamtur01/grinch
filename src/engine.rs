@@ -79,6 +79,12 @@ pub struct Resolution<'u> {
     /// owned otherwise. Avoids ~one heap allocation per resolve on the
     /// declarative-only fast path.
     pub url: Cow<'u, str>,
+    /// Zero-based index of the rule whose matcher fired, or `None` for
+    /// default-fallback / top-level rewriter Drop. Only the index is
+    /// carried on the hot path — the corresponding name/label is looked
+    /// up against `Engine.rules` inside the (cold) log writer so resolves
+    /// without `logRequests` don't pay for a String clone per click.
+    pub matched_rule: Option<usize>,
 }
 
 /// User-supplied JS callback packaged with the metadata we sniff at config
@@ -187,6 +193,16 @@ struct Rule {
     /// Mirrors Finicky's combined `{match, url, browser}` handler entries.
     rewriter: Option<Rewriter>,
     target: Target,
+    /// Optional user-supplied `name:` field on the rule entry. Surfaced in
+    /// the JSONL request log under `matchedRule.name` and in `--list-rules`
+    /// output. None when the user didn't tag the rule.
+    name: Option<String>,
+    /// Auto-derived label describing the matcher(s) — set even when `name`
+    /// is None so logs always have something readable. For declarative
+    /// matchers this is the source pattern (`"github.com"`, `"slack:*"`,
+    /// `"domain:foo,bar"`); for fn matchers, the first ~60 chars of
+    /// `f.toString()` collapsed to one line.
+    label: String,
 }
 
 struct RewriteRule {
@@ -470,6 +486,27 @@ impl Engine {
     /// menu-bar status item. Reloads don't toggle the icon mid-session
     /// (no NSStatusItem add/remove dance) — that's consistent with how
     /// most macOS background apps surface this setting.
+    /// Human-readable lines describing the loaded rules — one per rule,
+    /// in the order they're evaluated. Format:
+    /// `<idx>: [<name>] <match-label> → <target-summary>`. The optional
+    /// `[name]` segment is dropped when the rule has no user-supplied name.
+    /// Used by `Grinch --list-rules`; safe to call any time.
+    pub fn rule_listing(&self) -> Vec<String> {
+        self.rules
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let name = r
+                    .name
+                    .as_ref()
+                    .map(|n| format!("[{n}] "))
+                    .unwrap_or_default();
+                let target = describe_target(&r.target);
+                format!("{i}: {name}{label} → {target}", label = r.label)
+            })
+            .collect()
+    }
+
     pub fn hide_icon(&self) -> bool {
         self.options.hide_icon
     }
@@ -498,15 +535,29 @@ impl Engine {
     ) -> Resolution<'u> {
         let res = self.resolve_inner(url_string, opener, modifiers);
         if self.options.log_requests {
-            self.write_log_entry(url_string, opener, &res);
+            self.write_log_entry(url_string, opener, modifiers, &res);
         }
         res
     }
 
     #[cold]
     #[inline(never)]
-    fn write_log_entry(&self, url_string: &str, opener: &Opener, res: &Resolution<'_>) {
-        let entry = format_log_entry(url_string, opener, res);
+    fn write_log_entry(
+        &self,
+        url_string: &str,
+        opener: &Opener,
+        modifiers: ModifierFlags,
+        res: &Resolution<'_>,
+    ) {
+        // Look up the rule's name/label here — cold path, so the resolve
+        // hot path doesn't pay for the String clone when logging is off.
+        let matched = res.matched_rule.and_then(|idx| {
+            self.rules.get(idx).map(|r| {
+                let name = r.name.as_deref().unwrap_or(r.label.as_str());
+                (idx, name)
+            })
+        });
+        let entry = format_log_entry(url_string, opener, modifiers, res, matched);
         if let Some(w) = self.log_writer.borrow_mut().as_mut() {
             w.write(&entry);
         }
@@ -574,7 +625,7 @@ impl Engine {
         // Handlers — first match wins. A matched rule may carry its own
         // rewriter (Finicky-style combined entry); apply it before resolving
         // the target.
-        for rule in &self.rules {
+        for (idx, rule) in self.rules.iter().enumerate() {
             if !any_match(&rule.matchers, &current, host.as_deref(), &rc) {
                 continue;
             }
@@ -589,7 +640,7 @@ impl Engine {
                         };
                     }
                     RewriteOutcome::Unchanged => {}
-                    RewriteOutcome::Drop => return suppressed(),
+                    RewriteOutcome::Drop => return suppressed_at(Some(idx)),
                 }
             }
             match &rule.target {
@@ -597,10 +648,11 @@ impl Engine {
                     return Resolution {
                         browser: Rc::clone(b),
                         url: current,
+                        matched_rule: Some(idx),
                     };
                 }
                 Target::Suppress => {
-                    return suppressed();
+                    return suppressed_at(Some(idx));
                 }
                 Target::Fn(uf) => {
                     let Some(args) = rc.fn_args(&current, uf.needs_ctx) else {
@@ -620,6 +672,7 @@ impl Engine {
                             return Resolution {
                                 browser: spec,
                                 url: current,
+                                matched_rule: Some(idx),
                             };
                         }
                     }
@@ -635,6 +688,7 @@ impl Engine {
             DefaultBrowser::Static(b) => Resolution {
                 browser: Rc::clone(b),
                 url: current,
+                matched_rule: None,
             },
             DefaultBrowser::Suppress => suppressed(),
             DefaultBrowser::Fn(uf) => 'fn_default: {
@@ -650,6 +704,7 @@ impl Engine {
                             break 'fn_default Resolution {
                                 browser: spec,
                                 url: current,
+                                matched_rule: None,
                             };
                         }
                     }
@@ -743,9 +798,17 @@ fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> RuntimeNee
 }
 
 fn suppressed() -> Resolution<'static> {
+    suppressed_at(None)
+}
+
+/// Same as [`suppressed`] but records which rule fired the suppression
+/// (rule-rewriter Drop or `Target::Suppress`). `None` means no rule was
+/// involved — top-level rewriter Drop or `defaultBrowser: null`.
+fn suppressed_at(matched_rule: Option<usize>) -> Resolution<'static> {
     Resolution {
         browser: Rc::new(BrowserSpec::empty()),
         url: Cow::Borrowed("about:blank"),
+        matched_rule,
     }
 }
 
@@ -1606,24 +1669,58 @@ impl LogWriter {
     }
 }
 
-/// One JSONL entry per resolve. Format:
-/// `{"ts": <unix-seconds-with-millis>, "url": "<input>", "final":
-/// "<rewritten>", "browser": "<bundle-id>", "args": [...], "opener":
-/// "<opener-bundle-id>"}`. Empty `browser` (== suppressed) and empty
-/// `opener` (== unknown source app) are emitted as-is so callers can
-/// distinguish the two cases at parse time.
-fn format_log_entry(input_url: &str, opener: &Opener, res: &Resolution<'_>) -> String {
+/// One JSONL entry per resolve. Schema:
+///
+/// - `ts`: unix seconds with millisecond fractional precision
+/// - `url` / `final`: input URL and post-rewrite URL (equal when no
+///   rewriter fired)
+/// - `rewritten`: bool — true iff `url != final`. Pre-computed so log
+///   consumers don't have to string-compare.
+/// - `browser` / `args`: target bundle id and launch args. Empty
+///   `browser` (== suppressed) is emitted as-is so callers can
+///   distinguish a hit from "open: null".
+/// - `opener`: `{bundleId, name, pid}` of the app that sent the URL.
+///   Bundle id is empty when neither the sender PID nor the frontmost
+///   snapshot identified one (rare).
+/// - `modifiers`: `{shift, option, command, control}` at resolve time —
+///   the four keys Grinch's rules actually expose to JS.
+/// - `matchedRule`: `{index, name}` for the rule whose matcher fired, where
+///   `name` is the user-supplied `name:` field when present, otherwise an
+///   auto-derived label (string pattern, `domain:foo,bar`, or first line of
+///   the fn source for fn matchers). `null` when the URL fell through to
+///   the default browser.
+fn format_log_entry(
+    input_url: &str,
+    opener: &Opener,
+    modifiers: ModifierFlags,
+    res: &Resolution<'_>,
+    matched: Option<(usize, &str)>,
+) -> String {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
+    let final_url = res.url.as_ref();
+    let matched_json = matched.map(|(idx, name)| serde_json::json!({"index": idx, "name": name}));
     let entry = serde_json::json!({
         "ts": ts,
         "url": input_url,
-        "final": res.url.as_ref(),
+        "final": final_url,
+        "rewritten": final_url != input_url,
         "browser": res.browser.bundle_id,
         "args": res.browser.args,
-        "opener": opener.bundle_id,
+        "opener": {
+            "bundleId": opener.bundle_id,
+            "name": opener.name,
+            "pid": opener.pid,
+        },
+        "modifiers": {
+            "shift": modifiers.shift,
+            "option": modifiers.option,
+            "command": modifiers.command,
+            "control": modifiers.control,
+        },
+        "matchedRule": matched_json,
     });
     entry.to_string()
 }
@@ -1772,13 +1869,100 @@ fn parse_rule_array(
                 continue;
             }
         };
+        let name = key(&item, "name")
+            .and_then(|v| js_to_string(&v))
+            .filter(|s| !s.is_empty());
+        let label = derive_match_label(match_val.as_deref());
         out.push(Rule {
             matchers,
             rewriter,
             target,
+            name,
+            label,
         });
     }
     out
+}
+
+/// Build a human-readable label for a rule's `match:` value at parse time.
+/// String / array matchers turn into themselves; `domain()`/`from()`/`running()`
+/// objects render as `kind:items`; fn matchers fall back to the first line of
+/// their source. Returns `"*"` for `match: () => true` shorthand (no match key).
+fn derive_match_label(v: Option<&JSValue>) -> String {
+    const MAX: usize = 80;
+    let Some(v) = v else { return "*".to_string() };
+    if is_undef_or_null(v) {
+        return "*".to_string();
+    }
+    if unsafe { v.isString() } {
+        return js_to_string(v).unwrap_or_default();
+    }
+    if unsafe { v.isArray() } {
+        let count = js_array_len(v);
+        let parts: Vec<String> = (0..count)
+            .filter_map(|i| js_array_at(v, i))
+            .map(|item| describe_single_matcher(&item))
+            .collect();
+        return truncate_label(&parts.join(" | "), MAX);
+    }
+    truncate_label(&describe_single_matcher(v), MAX)
+}
+
+/// Single-matcher description. Recognises the `domain()/from()/running()`
+/// helper shape (objects with a `__type` tag set by the prelude) and falls
+/// back to `f.toString()` for plain functions.
+fn describe_single_matcher(v: &JSValue) -> String {
+    if unsafe { v.isString() } {
+        return js_to_string(v).unwrap_or_default();
+    }
+    if unsafe { v.isObject() } {
+        if let Some(t) = key(v, "__type").and_then(|t| js_to_string(&t)) {
+            let items_key = match t.as_str() {
+                "domain" => "hosts",
+                "from" | "running" => "apps",
+                _ => "",
+            };
+            if !items_key.is_empty() {
+                if let Some(arr) = key(v, items_key) {
+                    let items = js_array_to_strings(&arr).join(",");
+                    return format!("{t}:{items}");
+                }
+            }
+            return t;
+        }
+        // Plain JS function: toString() returns the source. Collapse to a
+        // single line so the label renders cleanly in JSONL / --list-rules.
+        if let Some(src) = js_to_string(v) {
+            let one_line = src.split('\n').map(str::trim).collect::<Vec<_>>().join(" ");
+            return format!("fn: {one_line}");
+        }
+    }
+    "?".to_string()
+}
+
+/// Short, human-readable rendering of a rule's target — used by
+/// `rule_listing()` for `--list-rules` output.
+fn describe_target(t: &Target) -> String {
+    match t {
+        Target::Browser(b) if b.bundle_id.is_empty() => "(suppress)".to_string(),
+        Target::Browser(b) => {
+            if b.args.is_empty() {
+                b.bundle_id.clone()
+            } else {
+                format!("{} {}", b.bundle_id, b.args.join(" "))
+            }
+        }
+        Target::Fn(_) => "fn".to_string(),
+        Target::Suppress => "(suppress)".to_string(),
+    }
+}
+
+fn truncate_label(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let prefix: String = s.chars().take(max_chars).collect();
+    format!("{prefix}…")
 }
 
 fn parse_rewrite_array(arr: &JSValue, function_ctor: &JSValue) -> Vec<RewriteRule> {
@@ -2588,6 +2772,8 @@ mod tests {
             matchers: ms,
             rewriter: None,
             target: Target::Suppress,
+            name: None,
+            label: "test".to_string(),
         }
     }
 
@@ -2796,6 +2982,59 @@ mod integration_tests {
         assert!(!e.hide_icon());
     }
 
+    #[test]
+    fn rule_listing_describes_each_rule_with_index_and_target() {
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                browsers: { work: { name: "com.google.Chrome", profile: "Work" } },
+                rules: [
+                    { match: "github.com", open: "com.google.Chrome", name: "code-hosts" },
+                    { match: "slack:*", open: "com.tinyspeck.slackmacgap" },
+                    { match: (url) => url.searchParams.has("incognito"), open: null },
+                ],
+            };"#,
+        );
+        let lines = e.rule_listing();
+        assert_eq!(lines.len(), 3, "expected three rules: {lines:?}");
+        // user-supplied name takes precedence, target is the bundle id
+        assert_eq!(lines[0], "0: [code-hosts] github.com → com.google.Chrome");
+        // no name → auto-derived label from the string pattern
+        assert_eq!(lines[1], "1: slack:* → com.tinyspeck.slackmacgap");
+        // fn matcher → first line of f.toString(); open:null → "(suppress)"
+        assert!(
+            lines[2].starts_with("2: fn:") && lines[2].ends_with("→ (suppress)"),
+            "fn rule line had unexpected shape: {}",
+            lines[2]
+        );
+    }
+
+    #[test]
+    fn matched_rule_in_log_uses_user_name_when_present() {
+        let tmp = unique_tmp("log-name");
+        let _ = std::fs::remove_dir_all(&tmp);
+        with_home(&tmp, || {
+            let e = build_engine(
+                r#"module.exports = {
+                    default: "com.apple.Safari",
+                    options: { logRequests: true },
+                    rules: [{ match: "github.com", open: "com.google.Chrome", name: "code-hosts" }],
+                };"#,
+            );
+            assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+        });
+        let log_dir = tmp.join("Library/Logs/Grinch");
+        let entries: Vec<_> = std::fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        let body = std::fs::read_to_string(entries[0].path()).unwrap();
+        let row: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
+        assert_eq!(row["matchedRule"]["index"], 0);
+        assert_eq!(row["matchedRule"]["name"], "code-hosts");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     /// HOME is process-global. The two log tests serialise via this
     /// mutex so neither sees the other's HOME mid-engine-init. Other
     /// integration tests don't read HOME from inside Engine::new (no
@@ -2859,10 +3098,32 @@ mod integration_tests {
         let body = std::fs::read_to_string(entries[0].path()).unwrap();
         let lines: Vec<&str> = body.lines().collect();
         assert_eq!(lines.len(), 2, "expected two log lines, got: {body}");
-        assert!(lines[0].contains(r#""url":"https://github.com/""#));
-        assert!(lines[0].contains(r#""browser":"com.google.Chrome""#));
-        assert!(lines[1].contains(r#""url":"https://example.com/""#));
-        assert!(lines[1].contains(r#""browser":"com.apple.Safari""#));
+        let row0: serde_json::Value = serde_json::from_str(lines[0]).expect("line 0 is JSON");
+        let row1: serde_json::Value = serde_json::from_str(lines[1]).expect("line 1 is JSON");
+        // Rule-hit row: matchedRule object with index + auto-derived name,
+        // opener nested, modifiers nested with all four booleans,
+        // rewritten = false.
+        assert_eq!(row0["url"], "https://github.com/");
+        assert_eq!(row0["final"], "https://github.com/");
+        assert_eq!(row0["rewritten"], false);
+        assert_eq!(row0["browser"], "com.google.Chrome");
+        assert_eq!(row0["matchedRule"]["index"], 0);
+        assert_eq!(row0["matchedRule"]["name"], "github.com");
+        assert!(row0["opener"].is_object(), "opener should be an object");
+        assert!(row0["opener"]["bundleId"].is_string());
+        assert!(row0["opener"]["name"].is_string());
+        assert!(row0["opener"]["pid"].is_number());
+        assert_eq!(row0["modifiers"]["shift"], false);
+        assert_eq!(row0["modifiers"]["option"], false);
+        assert_eq!(row0["modifiers"]["command"], false);
+        assert_eq!(row0["modifiers"]["control"], false);
+        // Default-fallback row: matchedRule = null, browser = default.
+        assert_eq!(row1["url"], "https://example.com/");
+        assert_eq!(row1["browser"], "com.apple.Safari");
+        assert!(
+            row1["matchedRule"].is_null(),
+            "matchedRule should be null when default fired"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

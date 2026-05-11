@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Grinch — a small, fast macOS browser router</title>
-<meta name="description" content="Routes each URL to the right browser based on rules in a JavaScript config. Most Finicky v4 configs work unchanged. Native Rust + JavaScriptCore.">
+<meta name="description" content="A small, fast native macOS browser router. Routes each URL to the right browser via a JavaScript config. Most Finicky v4 configs work unchanged. Native Rust + JavaScriptCore, ~16 MB resident.">
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="Grinch — a small, fast macOS browser router">
@@ -18,8 +18,9 @@
 
 <header class="hero">
   <div class="container">
+    <p class="hero-mark" aria-hidden="true">🎄</p>
     <h1>Grinch</h1>
-    <p class="tagline">A small, fast native macOS browser router. Routes each URL to the right browser based on rules in a JavaScript config. Most Finicky v4 configs work unchanged.</p>
+    <p class="tagline">A small, fast macOS browser router. Sends each URL to the right browser via a JavaScript config — most Finicky v4 configs work unchanged.</p>
     <div class="ctas">
       <a class="cta primary" href="https://github.com/jamtur01/grinch/releases/latest">Download&nbsp;DMG</a>
       <a class="cta" href="https://github.com/jamtur01/grinch">View on GitHub</a>
@@ -38,8 +39,9 @@
     <li><strong>~16 MB resident memory, ~1.5 MB universal binary.</strong></li>
     <li><strong>Native JavaScriptCore</strong> for config eval — no Electron, no bundler, no transpiler.</li>
     <li><strong>Single signed and notarized DMG.</strong> Universal binary (Apple Silicon + Intel).</li>
-    <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar.</li>
+    <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar. Parse errors surface as <code>⚠️</code> with the failing line inline.</li>
     <li><strong>Hot-path resolve in nanoseconds</strong>, full click-to-browser pipeline in single-digit milliseconds.</li>
+    <li><strong>Debuggable.</strong> Every resolve can be logged as JSONL with the matched rule, opener, and modifier state. <code>--list-rules</code> prints the loaded rule table for cross-reference.</li>
   </ul>
 </section>
 
@@ -67,9 +69,11 @@ make run</code></pre>
   default: "org.mozilla.firefox",
 
   rules: [
-    // Slack invitations open in Chrome.
+    // Slack invitations open in Chrome. `name:` is optional — it labels
+    // the rule in --list-rules and the request log; doesn't affect routing.
     { match: from("com.tinyspeck.slackmacgap"),
-      open: "Google Chrome" },
+      open: "Google Chrome",
+      name: "slack-to-chrome" },
 
     // GitHub goes to a work Chrome profile. Bare-string match covers
     // `github.com` and all subdomains (api., gist., raw., …).
@@ -90,6 +94,34 @@ make run</code></pre>
   <p>Reload after editing: <code>kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)</code> — or click <em>Reload Config</em> in the menu.</p>
 </section>
 
+<section id="diagnostics">
+  <h2>When a click goes the wrong way</h2>
+
+  <p>Two built-in tools answer "why did <em>that</em> click go <em>there</em>?":</p>
+
+  <h3>List the loaded rules</h3>
+  <p><code>Grinch --list-rules</code> prints every rule with its index, label, and target — pair with the JSONL log to map a <code>matchedRule.index</code> back to the actual entry in your config.</p>
+<pre><code>0: zoom.us/j/* | *.zoom.us/j/* → us.zoom.xos
+1: [slack-to-chrome] from:com.tinyspeck.slackmacgap → com.google.Chrome
+2: github.com → com.google.Chrome --profile-directory=Work
+3: fn: (url, ctx) =&gt; ctx.modifiers.shift → com.google.Chrome --profile-directory=Work</code></pre>
+
+  <h3>Trace every resolve</h3>
+  <p>Set <code>options: { logRequests: true }</code> and Grinch writes one JSONL line per click to <code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code>:</p>
+<pre><code>{
+  "ts": 1778518645.634,
+  "url": "https://github.com/foo",
+  "final": "https://github.com/foo",
+  "rewritten": false,
+  "browser": "com.google.Chrome",
+  "args": ["--profile-directory=Work"],
+  "opener": { "bundleId": "com.tinyspeck.slackmacgap", "name": "Slack", "pid": 731 },
+  "modifiers": { "shift": false, "option": false, "command": false, "control": false },
+  "matchedRule": { "index": 2, "name": "github.com" }
+}</code></pre>
+  <p class="note">The opener is identified via the GURL Apple Event's <code>keySenderPIDAttr</code>, so it's the app that actually sent the URL — not whichever app happens to be frontmost when Grinch's callback fires.</p>
+</section>
+
 <section id="performance">
   <h2>Performance</h2>
 
@@ -101,14 +133,14 @@ make run</code></pre>
   <table>
     <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
     <tbody>
-      <tr><td>Floor: empty rules, no rewrite</td><td>5</td></tr>
-      <tr><td>Default fallback, no query</td><td>67</td></tr>
-      <tr><td>Default fallback, strip removes a param</td><td>187</td></tr>
-      <tr><td>Bare-hostname match (<code>"github.com"</code>)</td><td>42</td></tr>
-      <tr><td><code>domain()</code> match</td><td>48</td></tr>
-      <tr><td>Regex match</td><td>22</td></tr>
+      <tr><td>Floor: empty rules, no rewrite</td><td>6</td></tr>
+      <tr><td>Default fallback, no query</td><td>65</td></tr>
+      <tr><td>Default fallback, strip removes a param</td><td>191</td></tr>
+      <tr><td>Bare-hostname match (<code>"github.com"</code>)</td><td>41</td></tr>
+      <tr><td><code>domain()</code> match</td><td>45</td></tr>
+      <tr><td>Regex match</td><td>26</td></tr>
       <tr><td>Wildcard match (<code>"zoom.us/j/*"</code>)</td><td>30</td></tr>
-      <tr><td>50 bare-hostname rules, last one wins</td><td>295</td></tr>
+      <tr><td>50 bare-hostname rules, last one wins</td><td>288</td></tr>
     </tbody>
   </table>
 
@@ -117,11 +149,11 @@ make run</code></pre>
     <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
     <tbody>
       <tr><td>Native rule wins early (no fn fires)</td><td>42</td></tr>
-      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,597</td></tr>
-      <tr><td>HTTP→HTTPS via URL mutation</td><td>4,327</td></tr>
-      <tr><td><code>?browser=</code> dynamic open fn</td><td>4,855</td></tr>
-      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>5,159</td></tr>
-      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>5,494</td></tr>
+      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,681</td></tr>
+      <tr><td>HTTP→HTTPS via URL mutation</td><td>4,465</td></tr>
+      <tr><td><code>?browser=</code> dynamic open fn</td><td>4,699</td></tr>
+      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>5,292</td></tr>
+      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>5,551</td></tr>
     </tbody>
   </table>
 

@@ -11,7 +11,7 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send, MainThreadMarker};
 use objc2_app_kit::{
-    NSWorkspace, NSWorkspaceDidLaunchApplicationNotification,
+    NSRunningApplication, NSWorkspace, NSWorkspaceDidLaunchApplicationNotification,
     NSWorkspaceDidTerminateApplicationNotification, NSWorkspaceOpenConfiguration,
 };
 use objc2_application_services::{
@@ -245,6 +245,38 @@ pub fn is_app_running(id: &str) -> bool {
         }
     }
     false
+}
+
+/// Build an [`Opener`] from a process ID by looking up the corresponding
+/// `NSRunningApplication`. Used by the GURL Apple Event handler to identify
+/// the app that *sent* the URL, since `frontmostApplication()` is wrong
+/// once LaunchServices activates Grinch itself ahead of our open-URL
+/// callback. Returns `None` when no running app has that pid (process
+/// exited, or the event lacked the `keySenderPIDAttr` and we got 0).
+pub fn opener_from_pid(pid: i32) -> Option<Opener> {
+    if pid <= 0 {
+        return None;
+    }
+    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+    let bundle_id = app
+        .bundleIdentifier()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let name = app
+        .localizedName()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let path = app
+        .executableURL()
+        .and_then(|u| u.path())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    Some(Opener {
+        bundle_id,
+        name,
+        path,
+        pid,
+    })
 }
 
 pub fn frontmost_opener() -> Opener {

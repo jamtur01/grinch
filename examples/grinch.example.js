@@ -203,9 +203,15 @@ module.exports = {
     { match: finicky.matchHostnames("news.ycombinator.com"), open: browsers.personal },
 
     // from() — match the bundle ID of the app that opened the URL.
+    //
+    // The optional `name:` field labels this rule in --list-rules output
+    // and in matchedRule.name of the logRequests JSONL. Doesn't affect
+    // routing. Especially handy for fn matchers, whose auto-derived
+    // label is just the first line of `f.toString()`.
     {
       match: from("com.microsoft.Outlook"),
       open: browsers.work,
+      name: "outlook-to-work",
     },
 
     // running() — match if any of these apps is currently running. Lazy:

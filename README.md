@@ -110,12 +110,40 @@ The `options` block accepts Finicky v4's five keys. Two are wired up:
   toggle the icon mid-session; restart Grinch to apply.
 - **`logRequests: true`** — write a JSONL trace to
   `~/Library/Logs/Grinch/Grinch_<timestamp>.log` with one line per
-  resolve: `{"ts": <unix-secs>, "url": "<input>", "final":
-  "<after-rewrites>", "browser": "<bundle-id>", "args": [...],
-  "opener": "<bundle-id>"}`. The file is opened lazily on the first
-  resolve and appended to thereafter; one file per app launch.
-  Useful for figuring out *why* a particular click went where it did
-  without enabling the broader `GRINCH_DEBUG=1` stderr trace.
+  resolve. The file is opened lazily on the first resolve and appended
+  to thereafter; one file per app launch. Useful for figuring out *why*
+  a particular click went where it did without enabling the broader
+  `GRINCH_DEBUG=1` stderr trace.
+
+  ```json
+  {
+    "ts": 1778518645.634,
+    "url": "https://example.com/",
+    "final": "https://example.com/",
+    "rewritten": false,
+    "browser": "com.google.Chrome",
+    "args": ["--profile-directory=Profile 10"],
+    "opener": {
+      "bundleId": "com.tinyspeck.slackmacgap",
+      "name": "Slack",
+      "pid": 731
+    },
+    "modifiers": {"shift": true, "option": false, "command": false, "control": false},
+    "matchedRule": {"index": 11, "name": "shift-override"}
+  }
+  ```
+
+  Field notes:
+  - `rewritten` — true iff `final != url` (a rewrite fired).
+  - `opener` — the app that *sent* the URL, identified via the GURL Apple
+    Event's sender PID. Empty `bundleId` means neither the sender PID
+    nor the frontmost-app fallback identified one (rare).
+  - `matchedRule` — `{index, name}` of the rule whose matcher fired, or
+    `null` when the URL fell through to `default`. `name` is the rule's
+    user-supplied `name:` if present, otherwise an auto-derived label
+    (string pattern, `domain:foo,bar`, or first line of the fn source
+    for fn matchers). Pair with `Grinch --list-rules` to map indices
+    to their full source.
 
 The other three are inert: `urlShorteners` (expects
 [external expansion](#working-with-url-shorteners)), `checkForUpdates`
@@ -247,10 +275,18 @@ rules: [
   { match: ..., open: ... },                    // route to a browser
   { match: ..., open: null },                   // suppress (open nothing)
   { match: ..., url: ..., open: ... },          // rewrite on match, then route
+  { match: ..., open: ..., name: "label" },     // optional human label (see below)
 ]
 ```
 
 `open` (Grinch) and `browser` (Finicky) are aliases.
+
+Each rule entry accepts an optional **`name`** string. It doesn't affect
+routing — it labels the rule in `Grinch --list-rules` output and in the
+`matchedRule.name` field of the `logRequests` JSONL. Useful when chasing
+"why did this click go there?" through a config with a dozen fn matchers,
+since the auto-derived label for fn rules is just the first line of
+`f.toString()`.
 
 ### The `ctx` object
 
@@ -276,8 +312,12 @@ The second argument to every user fn is `ctx`:
 intermediate rewrites. The first argument (a URL instance) is the *current*
 URL and is rebuilt per fn call.
 
-`ctx.opener` is `null` when the source app couldn't be detected (e.g. the
-URL came from a non-app dispatcher). Always guard with
+`ctx.opener` is identified via the GURL Apple Event's sender PID
+(`keySenderPIDAttr`), so it survives LaunchServices activating Grinch
+ahead of our open-URL callback — the frontmost-app heuristic would
+otherwise report Grinch itself once macOS shifted focus. `ctx.opener`
+is `null` only when the event lacks the sender attribute or the sending
+process exited between event delivery and lookup. Always guard with
 `if (ctx.opener) { ... }` or optional chaining (`ctx.opener?.bundleId`)
 in fns that read it. This matches Finicky v4's `options.opener` semantics.
 
@@ -319,6 +359,12 @@ Click the 🎄 in the menu bar:
 | **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
 | **Quit Grinch** (⌘Q) | Exit. |
+
+If a reload fails (syntax error, unreadable file, missing `default`),
+the menu bar icon flips to **⚠️** and a non-clickable "Config error:
+…" item appears at the top of the menu with the first line of the
+failure. The previous engine stays in place so routing keeps working
+until the config is fixed; the next successful reload restores 🎄.
 
 ## Working with URL shorteners
 
@@ -380,8 +426,10 @@ make clean
 ```
 
 The binary also has `--version` (prints the crate version), `--test <url>`
-(dry-run a URL through the rules), and `--bench N <url>` (in-process resolve
-benchmarking).
+(dry-run a URL through the rules), `--bench N <url>` (in-process resolve
+benchmarking), and `--list-rules` (print the loaded rules with their
+indices and targets — pair with `logRequests` to map `matchedRule.index`
+back to the entry in your config).
 
 ## Performance
 
@@ -405,14 +453,14 @@ when it's already lowercase ASCII.
 
 | Workload | ns/op |
 |---|---:|
-| Floor: empty rules, no rewrite | 5 |
-| Default fallback, no query | 67 |
-| Default fallback, strip removes a param | 187 |
-| Bare-hostname match (`"github.com"`) | 42 |
-| `domain()` match | 48 |
-| Regex match | 22 |
+| Floor: empty rules, no rewrite | 6 |
+| Default fallback, no query | 65 |
+| Default fallback, strip removes a param | 191 |
+| Bare-hostname match (`"github.com"`) | 41 |
+| `domain()` match | 45 |
+| Regex match | 26 |
 | Wildcard match (`"zoom.us/j/*"`) | 30 |
-| 50 bare-hostname rules, last one wins | 295 |
+| 50 bare-hostname rules, last one wins | 288 |
 
 ### Slow path (configs with `(url, ctx) => …` fn matchers)
 
@@ -427,11 +475,11 @@ reuses pre-built `true`/`false` JSValues for modifier flags.
 | Workload | ns/op |
 |---|---:|
 | Native rule wins early (no fn fires) | 42 |
-| Drop URL via `() => null` (url-only) | 2,597 |
-| HTTP→HTTPS via URL mutation (url-only) | 4,327 |
-| `?browser=` dynamic open fn (url-only matcher) | 4,855 |
-| 4 fn matchers reading `ctx.opener` | 5,159 |
-| Full Slack-web → `slack://` rewrite | 5,494 |
+| Drop URL via `() => null` (url-only) | 2,681 |
+| HTTP→HTTPS via URL mutation (url-only) | 4,465 |
+| `?browser=` dynamic open fn (url-only matcher) | 4,699 |
+| 4 fn matchers reading `ctx.opener` | 5,292 |
+| Full Slack-web → `slack://` rewrite | 5,551 |
 
 ### Footprint
 

@@ -33,7 +33,7 @@ pub fn find_config_path() -> Option<PathBuf> {
     config_paths().into_iter().find(|p| p.is_file())
 }
 
-pub fn load_config() -> Option<LoadedConfig> {
+pub fn load_config() -> Result<LoadedConfig, String> {
     let (path, source) = match read_first_existing(&config_paths()) {
         ReadOutcome::Found { path, source } => (path, source),
         ReadOutcome::Unreadable { path, error } => {
@@ -43,58 +43,70 @@ pub fn load_config() -> Option<LoadedConfig> {
             // collapsed both into the latter, leaving users staring at
             // a "no config found" message while their config sat right
             // there at the path it claimed didn't exist.
-            eprintln!(
-                "grinch: couldn't read config at {}: {error}",
-                path.display()
-            );
-            return None;
+            let msg = format!("couldn't read config at {}: {error}", path.display());
+            eprintln!("grinch: {msg}");
+            return Err(msg);
         }
         ReadOutcome::Missing => {
-            eprintln!(
-                "grinch: no config at any of: ~/.grinch.js, ~/.config/grinch.js, \
-                 ~/.config/grinch/grinch.js — create one"
-            );
-            return None;
+            let msg = "no config at any of: ~/.grinch.js, ~/.config/grinch.js, \
+                       ~/.config/grinch/grinch.js — create one"
+                .to_string();
+            eprintln!("grinch: {msg}");
+            return Err(msg);
         }
     };
     let path_str = path.display().to_string();
 
     let ctx: Retained<JSContext> = unsafe { JSContext::new() };
 
-    // Exception handler: log the message + line, mark error so we abort the load.
-    // The path is captured so users see which config file the error came from
-    // (matters now that we accept two locations).
-    let last_error = Rc::new(RefCell::new(false));
+    // Exception handler: capture the first JS error so callers can surface
+    // it (menu bar, log file). Also logs to stderr — invisible when stderr
+    // is wired to /dev/null (LaunchServices-launched daemons), but useful
+    // when grinch is run from a terminal.
+    let last_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     {
         let last_error = last_error.clone();
         let path_for_handler = path_str.clone();
         let handler = RcBlock::new(move |_ctx_ptr: *mut JSContext, ex_ptr: *mut JSValue| {
-            *last_error.borrow_mut() = true;
-            if ex_ptr.is_null() {
-                eprintln!("grinch: js error in {path_for_handler}: unknown");
-                return;
-            }
-            unsafe {
-                let ex = &*ex_ptr;
-                let msg = ex
-                    .toString()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let line_key = NSString::from_str("line");
-                let line_ref: &AnyObject = &line_key;
-                let line = ex
-                    .objectForKeyedSubscript(Some(line_ref))
-                    .and_then(|v| v.toString())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "?".to_string());
-                eprintln!("grinch: js error in {path_for_handler}: {msg} (line {line})");
+            let detail = if ex_ptr.is_null() {
+                "unknown".to_string()
+            } else {
+                unsafe {
+                    let ex = &*ex_ptr;
+                    let msg = ex
+                        .toString()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let line_key = NSString::from_str("line");
+                    let line_ref: &AnyObject = &line_key;
+                    let line = ex
+                        .objectForKeyedSubscript(Some(line_ref))
+                        .and_then(|v| v.toString())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "?".to_string());
+                    format!("{msg} (line {line})")
+                }
+            };
+            eprintln!("grinch: js error in {path_for_handler}: {detail}");
+            // First error wins — chained exceptions during a single load
+            // typically all stem from the first parse failure.
+            let mut slot = last_error.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(detail);
             }
         });
         unsafe { ctx.setExceptionHandler(Some(&handler)) };
     }
 
-    if eval(&ctx, JS_PRELUDE).is_none() || *last_error.borrow() {
-        return None;
+    let take_error = |fallback: &str| -> String {
+        last_error
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| fallback.to_string())
+    };
+
+    if eval(&ctx, JS_PRELUDE).is_none() || last_error.borrow().is_some() {
+        return Err(take_error("prelude eval failed"));
     }
     // Console blocks must be installed BEFORE the user config evaluates so
     // top-level `console.log("…")` calls land on the wired blocks, not the
@@ -110,24 +122,27 @@ pub fn load_config() -> Option<LoadedConfig> {
         Ok(s) => s,
         Err(msg) => {
             eprintln!("grinch: js error in {path_str}: {msg}");
-            return None;
+            return Err(msg);
         }
     };
     let wrapped = wrap_user_config(&preprocessed);
-    if eval(&ctx, &wrapped).is_none() || *last_error.borrow() {
-        return None;
+    if eval(&ctx, &wrapped).is_none() || last_error.borrow().is_some() {
+        return Err(take_error("config eval failed"));
     }
 
     // Pull __grinchModule.exports off the global object.
     let module_key = NSString::from_str("__grinchModule");
     let module_ref: &AnyObject = &module_key;
-    let module = unsafe { ctx.objectForKeyedSubscript(Some(module_ref)) }?;
+    let module = unsafe { ctx.objectForKeyedSubscript(Some(module_ref)) }
+        .ok_or_else(|| "__grinchModule missing from global".to_string())?;
     let exports_key = NSString::from_str("exports");
     let exports_ref: &AnyObject = &exports_key;
-    let exports = unsafe { module.objectForKeyedSubscript(Some(exports_ref)) }?;
+    let exports = unsafe { module.objectForKeyedSubscript(Some(exports_ref)) }
+        .ok_or_else(|| "__grinchModule.exports missing".to_string())?;
     if unsafe { exports.isUndefined() } || unsafe { exports.isNull() } {
-        eprintln!("grinch: config did not export anything (use module.exports = {{...}})");
-        return None;
+        let msg = "config did not export anything (use module.exports = {...})".to_string();
+        eprintln!("grinch: {msg}");
+        return Err(msg);
     }
 
     // Swap the loud load-time exception handler for a quiet resolve-time
@@ -144,7 +159,7 @@ pub fn load_config() -> Option<LoadedConfig> {
     // per-exception logging when chasing a bad rule.
     install_resolve_exception_handler(&ctx, path_str.clone());
 
-    Some(LoadedConfig { exports, ctx })
+    Ok(LoadedConfig { exports, ctx })
 }
 
 fn install_resolve_exception_handler(ctx: &JSContext, path: String) {

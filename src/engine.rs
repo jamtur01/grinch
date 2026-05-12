@@ -2778,6 +2778,17 @@ fn read_nonempty_string_property(ctx: &JSContext, v: &JSValue, key: &str) -> Opt
     let key_ns = NSString::from_str(key);
     let key_ref: &AnyObject = &key_ns;
     let prop = unsafe { v.objectForKeyedSubscript(Some(key_ref)) }?;
+    // Property access can trigger a throwing getter — JSC stashes the
+    // thrown value on `ctx.exception` and returns a JS-undefined here.
+    // The type check below correctly rejects the undefined, but the
+    // exception state would persist through any subsequent JSC call
+    // in the same resolve (next matcher, next rewriter), producing
+    // confusing "matcher mysteriously returned false" symptoms. Clear
+    // it so downstream calls see a fresh context.
+    if unsafe { ctx.exception() }.is_some() {
+        unsafe { ctx.setException(None) };
+        return None;
+    }
     if js_value_type(ctx, &prop) != JSType::String {
         return None;
     }
@@ -4179,6 +4190,43 @@ mod integration_tests {
         );
         let (_, url) = resolve(&e, "https://example.com/path?q=1");
         assert_eq!(url, "https://example.com/path?q=1");
+    }
+
+    #[test]
+    fn rewriter_with_throwing_href_getter_doesnt_poison_next_matcher() {
+        // Regression: when a fn rewriter returns an object whose .href
+        // getter throws, the JSC bridge stashes the thrown value on
+        // ctx.exception. The fast-path bypass correctly rejected the
+        // bad object (type check), but didn't clear the exception state
+        // — so the *next* JS call in the same resolve (the next matcher
+        // or the helper fall-through) inherited the exception and
+        // produced "unexpected fall-through to default" symptoms.
+        //
+        // The setup: a fn rewriter returns `{get href() { throw … }}`.
+        // The fast-path read of `.href` triggers the throw. After the
+        // exception is cleared, the next rule's matcher runs and routes
+        // normally.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [
+                    {
+                        match: "trigger.example.com",
+                        url: (url) => ({ get href() { throw new Error("nope"); } }),
+                    },
+                ],
+                rules: [
+                    { match: "trigger.example.com", open: "com.google.Chrome" },
+                ],
+            };"#,
+        );
+        // The rewrite returns a poisoned object; fast-path bypass sees
+        // the throwing getter, rejects, leaves URL unchanged. The rule's
+        // matcher then evaluates against the original URL and fires.
+        assert_eq!(
+            resolve(&e, "https://trigger.example.com/").0,
+            "com.google.Chrome"
+        );
     }
 
     #[test]

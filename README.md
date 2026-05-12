@@ -15,15 +15,14 @@ and [Finch](https://github.com/expelledboy/finch).
 - **~1500 LOC Rust** + a small embedded JS prelude
 - **~16 MB** resident memory, **~1.5 MB** universal binary
 - Native `JavaScriptCore` for config eval — no Electron, no bundler, no transpiler
-- Single signed and notarized DMG
+- Single DMG, universal binary (Apple Silicon + Intel)
 - Config is real JavaScript — simple cases look like data, full power available
 - Hot-path resolve in nanoseconds; full click-to-browser pipeline in single-digit milliseconds
 
 ## Install
 
 Requires macOS 13 or later. The release build is a universal binary
-(Apple Silicon + Intel) signed and notarized with a Developer ID, so
-Gatekeeper won't warn on first launch.
+(Apple Silicon + Intel).
 
 ### From a release (recommended)
 

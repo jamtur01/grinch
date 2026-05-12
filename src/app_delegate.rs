@@ -772,6 +772,29 @@ extern "C" fn reload_on_main(_ctx: *mut c_void) {
     }
 }
 
+/// Outcome of a `read(2)` on the SIGHUP self-pipe. Pulled out of the
+/// reader thread so the EOF / EINTR / fatal-error classification is
+/// testable without spawning a real thread or invoking syscalls.
+enum PipeReadOutcome {
+    Data,
+    Interrupted,
+    Eof,
+    Fatal(std::io::Error),
+}
+
+fn classify_pipe_read(n: isize, err: std::io::Error) -> PipeReadOutcome {
+    if n > 0 {
+        return PipeReadOutcome::Data;
+    }
+    if n == 0 {
+        return PipeReadOutcome::Eof;
+    }
+    if err.kind() == std::io::ErrorKind::Interrupted {
+        return PipeReadOutcome::Interrupted;
+    }
+    PipeReadOutcome::Fatal(err)
+}
+
 fn install_sighup_handler(delegate: &Delegate) {
     // Idempotency: if called twice (e.g., a future refactor that reloads
     // the delegate without restarting the process), don't open a second
@@ -799,15 +822,23 @@ fn install_sighup_handler(delegate: &Delegate) {
         loop {
             let n =
                 unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-            if n <= 0 {
-                // EOF or error — pipe is gone, nothing more to do.
-                eprintln!("grinch: SIGHUP self-pipe closed; reload disabled");
-                return;
-            }
-            // Off the signal handler now — libdispatch + Obj-C are safe.
-            let queue = DispatchQueue::main();
-            unsafe {
-                queue.exec_async_f(std::ptr::null_mut(), reload_on_main);
+            match classify_pipe_read(n, std::io::Error::last_os_error()) {
+                PipeReadOutcome::Data => {
+                    // Off the signal handler now — libdispatch + Obj-C are safe.
+                    let queue = DispatchQueue::main();
+                    unsafe {
+                        queue.exec_async_f(std::ptr::null_mut(), reload_on_main);
+                    }
+                }
+                PipeReadOutcome::Interrupted => continue,
+                PipeReadOutcome::Eof => {
+                    eprintln!("grinch: SIGHUP self-pipe closed; reload disabled");
+                    return;
+                }
+                PipeReadOutcome::Fatal(err) => {
+                    eprintln!("grinch: SIGHUP self-pipe read error: {err}; reload disabled");
+                    return;
+                }
             }
         }
     });
@@ -958,5 +989,34 @@ mod tests {
         let s = "äöü".repeat(20); // 60 chars, 120 bytes
         let got = truncate_for_menu(&s, 5);
         assert_eq!(got.chars().count(), 6); // 5 chars + '…'
+    }
+
+    #[test]
+    fn classify_pipe_read_distinguishes_data_eof_eintr_fatal() {
+        // Positive byte count → data ready, post a reload.
+        assert!(matches!(
+            classify_pipe_read(64, std::io::Error::from_raw_os_error(0)),
+            PipeReadOutcome::Data
+        ));
+        // 0 bytes → true EOF, write end closed. Don't reload, exit thread.
+        assert!(matches!(
+            classify_pipe_read(0, std::io::Error::from_raw_os_error(0)),
+            PipeReadOutcome::Eof
+        ));
+        // -1 with EINTR → keep looping; the syscall was interrupted by
+        // an unrelated signal, the pipe is still open. Regression
+        // against the pre-fix behaviour that treated this as fatal and
+        // silently disabled SIGHUP reload for the rest of the process.
+        let eintr = std::io::Error::from_raw_os_error(libc::EINTR);
+        assert!(matches!(
+            classify_pipe_read(-1, eintr),
+            PipeReadOutcome::Interrupted
+        ));
+        // -1 with anything else (EBADF, EIO, etc.) → fatal, exit thread.
+        let ebadf = std::io::Error::from_raw_os_error(libc::EBADF);
+        assert!(matches!(
+            classify_pipe_read(-1, ebadf),
+            PipeReadOutcome::Fatal(_)
+        ));
     }
 }

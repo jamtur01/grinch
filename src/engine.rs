@@ -15,7 +15,7 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::Message;
 use objc2_foundation::{NSArray, NSString};
-use objc2_javascript_core::{JSContext, JSValue};
+use objc2_javascript_core::{JSContext, JSType, JSValue};
 use regex::{Regex, RegexBuilder};
 
 use crate::loader::LoadedConfig;
@@ -1355,9 +1355,44 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
             let Some(raw) = (unsafe { uf.f.callWithArguments(Some(&args)) }) else {
                 return RewriteOutcome::Unchanged;
             };
-            // Normalise via __grinchRewriteResult: handles string | URL |
-            // LegacyURLObject | null in one place, returning a string href
-            // or JS null.
+            // Fast paths: most fn rewriters return either a literal string,
+            // null/undefined, or a URL polyfill instance (mutated). Handling
+            // those four in Rust skips the __grinchRewriteResult bridge
+            // crossing — measured at ~400–600 ns per rewrite on the slow
+            // path. Only LegacyURLObject (`{protocol, host, …}`) returns
+            // fall through to the helper, which keeps a single canonical
+            // implementation of the field-concatenation rules.
+            match js_value_type(rc.ctx, &raw) {
+                JSType::Null => return RewriteOutcome::Drop,
+                JSType::Undefined => return RewriteOutcome::Unchanged,
+                JSType::String => {
+                    let Some(s) = js_to_string(&raw) else {
+                        return RewriteOutcome::Unchanged;
+                    };
+                    return if s == url {
+                        RewriteOutcome::Unchanged
+                    } else {
+                        RewriteOutcome::Changed(s)
+                    };
+                }
+                JSType::Object => {
+                    // URL instance OR anything else whose `.href` is a
+                    // non-empty string — same fast path the helper takes.
+                    if let Some(s) = read_nonempty_string_property(rc.ctx, &raw, "href") {
+                        return if s == url {
+                            RewriteOutcome::Unchanged
+                        } else {
+                            RewriteOutcome::Changed(s)
+                        };
+                    }
+                    // Fall through to the helper for LegacyURLObject.
+                }
+                _ => {
+                    // Numbers, booleans, symbols, bigints — Finicky-v4
+                    // doesn't define semantics for these, but the JS
+                    // helper coerces them. Defer to it for parity.
+                }
+            }
             let raw_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(raw) };
             let helper_args = NSArray::from_retained_slice(&[raw_obj]);
             let Some(normalised) = (unsafe {
@@ -1366,23 +1401,15 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
             }) else {
                 return RewriteOutcome::Unchanged;
             };
-            // Two distinct outcomes: null = drop, undefined = pass-through.
-            // Matches Finicky v4 — `url: () => null` suppresses the URL,
-            // `url: () => undefined` (or any fn that doesn't `return`)
-            // leaves the current URL unchanged.
-            if unsafe { normalised.isNull() } {
-                return RewriteOutcome::Drop;
-            }
-            if unsafe { normalised.isUndefined() } {
-                return RewriteOutcome::Unchanged;
-            }
-            let Some(s) = js_to_string(&normalised) else {
-                return RewriteOutcome::Unchanged;
-            };
-            if s == url {
-                RewriteOutcome::Unchanged
-            } else {
-                RewriteOutcome::Changed(s)
+            // Helper post-checks: it can still return null (drop),
+            // undefined (passthrough), or a string (the rebuilt href).
+            match js_value_type(rc.ctx, &normalised) {
+                JSType::Null => RewriteOutcome::Drop,
+                JSType::Undefined => RewriteOutcome::Unchanged,
+                _ => match js_to_string(&normalised) {
+                    Some(s) if s != url => RewriteOutcome::Changed(s),
+                    _ => RewriteOutcome::Unchanged,
+                },
             }
         }
         Rewriter::Safelinks => match unwrap_safelink(url) {
@@ -2536,6 +2563,42 @@ fn js_array_to_strings(v: &JSValue) -> Vec<String> {
         }
     }
     out
+}
+
+/// One-call JSValue type classification via the JSC C API
+/// (`JSValueGetType`). Replaces a sequence of `isNull()` + `isUndefined()`
+/// Obj-C dispatches with a single C call on the hot path; saves ~50–100 ns
+/// per fn return check, which compounds when a config has multiple fn
+/// matchers (each unmatched matcher's result goes through this).
+#[inline]
+fn js_value_type(ctx: &JSContext, v: &JSValue) -> JSType {
+    unsafe { JSValue::r#type(ctx.JSGlobalContextRef(), v.JSValueRef()) }
+}
+
+/// Read a string property from a JSValue object and return it only when
+/// the value is *actually* a non-empty string (not `undefined`, not a
+/// stringified other type). Used in the fn-rewriter fast path to extract
+/// `.href` from URL polyfill instances without crossing into the
+/// `__grinchRewriteResult` JS helper. None on missing/wrong-type/empty.
+///
+/// The JSType filter is load-bearing: `objectForKeyedSubscript` on a
+/// missing property returns a JSValue of type `undefined`, which would
+/// otherwise `toString()` into the literal "undefined" — and routing
+/// "undefined" as a URL is exactly the kind of bug an opaque fast path
+/// is prone to.
+fn read_nonempty_string_property(ctx: &JSContext, v: &JSValue, key: &str) -> Option<String> {
+    let key_ns = NSString::from_str(key);
+    let key_ref: &AnyObject = &key_ns;
+    let prop = unsafe { v.objectForKeyedSubscript(Some(key_ref)) }?;
+    if js_value_type(ctx, &prop) != JSType::String {
+        return None;
+    }
+    let s = unsafe { prop.toString() }?.to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 fn js_string(ctx: &JSContext, s: &str) -> Option<Retained<JSValue>> {

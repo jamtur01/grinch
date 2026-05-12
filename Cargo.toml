@@ -66,6 +66,10 @@ features = [
 
 [dependencies.objc2-javascript-core]
 version = "0.3.2"
+# JSValueRef = the C-level JSValue type APIs (JSValueGetType, JSValueIsNull,
+# etc.). Lets the slow path classify fn-return values with one C call
+# instead of two-or-three Obj-C dispatches per check.
+features = ["JSBase", "JSValueRef"]
 
 [profile.release]
 lto = "thin"

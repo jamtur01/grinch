@@ -4182,6 +4182,49 @@ mod integration_tests {
     }
 
     #[test]
+    fn url_polyfill_parses_ipv6_host_literal() {
+        // Regression: the URL polyfill regex's hostname class was
+        // `[^:\/?#]*`, which stopped at the first `:` inside an IPv6
+        // literal — `https://[::1]:8080/path` parsed with hostname=`[`
+        // and the rest of the address leaked into pathname. A user fn
+        // matcher reading `url.hostname` could never match an IPv6 URL
+        // correctly. After the fix, the regex alternates between an
+        // IPv6-bracket branch and the bare-host branch.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: (url) => url.hostname === "[::1]" && url.port === "8080",
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        );
+        assert_eq!(
+            resolve(&e, "https://[::1]:8080/path").0,
+            "com.google.Chrome"
+        );
+    }
+
+    #[test]
+    fn url_polyfill_serialises_ipv6_round_trip() {
+        // After parsing IPv6, rebuildHref must keep the brackets so
+        // `url.href` round-trips. Verify via a no-op rewrite that
+        // returns the polyfill instance — Grinch reads .href via the
+        // fast-path bypass and resolves with that string.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rewrite: [{
+                    match: (url) => url.hostname === "[2001:db8::1]",
+                    url: (url) => url,
+                }],
+            };"#,
+        );
+        let (_, url) = resolve(&e, "https://[2001:db8::1]/api?q=1");
+        assert_eq!(url, "https://[2001:db8::1]/api?q=1");
+    }
+
+    #[test]
     fn rewriter_chain_applies_in_order() {
         let e = build_engine(
             r#"module.exports = {

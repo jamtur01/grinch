@@ -23,7 +23,12 @@ pub const JS_PRELUDE: &str = r##"
 (function(g) {
   if (g.URL && g.URL.__grinchPolyfill) return;
 
-  var URL_RE = /^([a-z][a-z0-9+.-]*:)(?:\/\/(?:([^:@\/]*)(?::([^@\/]*))?@)?([^:\/?#]*)(?::(\d+))?)?([^?#]*)(\?[^#]*)?(#.*)?$/i;
+  // Host group is an alternation: IPv6 literals (`[2001:db8::1]`) keep
+  // their brackets, then any non-IPv6 host falls back to the regular
+  // bare-host pattern. Without the IPv6 branch, the `[^:\/?#]*` class
+  // stopped at the first `:` inside a `[::1]` address, leaking the
+  // rest of the address into the pathname slot.
+  var URL_RE = /^([a-z][a-z0-9+.-]*:)(?:\/\/(?:([^:@\/]*)(?::([^@\/]*))?@)?(\[[^\]]+\]|[^:\/?#]*)(?::(\d+))?)?([^?#]*)(\?[^#]*)?(#.*)?$/i;
 
   function parseInto(self, href) {
     var m = URL_RE.exec(href);

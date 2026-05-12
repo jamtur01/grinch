@@ -803,13 +803,32 @@ fn install_sighup_handler(delegate: &Delegate) {
     let ptr: *const Delegate = delegate;
     let any_ptr: *mut AnyObject = ptr as *mut AnyObject;
     DELEGATE_PTR.store(any_ptr, Ordering::Relaxed);
-    if INSTALLED.swap(true, Ordering::SeqCst) {
+    if INSTALLED.load(Ordering::SeqCst) {
         return;
     }
 
     let mut fds: [libc::c_int; 2] = [-1; 2];
     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        // INSTALLED is intentionally NOT set on this failure path — a
+        // later retry (e.g. after the process recovers from FD
+        // exhaustion) can re-attempt. Previously the swap-before-pipe
+        // ordering set INSTALLED=true first, so a single pipe() failure
+        // permanently disabled SIGHUP reload for the rest of the
+        // process's life with no way back.
         eprintln!("grinch: pipe() failed for SIGHUP self-pipe; reload disabled");
+        return;
+    }
+    // Past the fallible setup — mark installed before spawning the
+    // reader thread + registering the signal handler so a concurrent
+    // call (unlikely on the main thread, but cheap to guard) doesn't
+    // double-install.
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        // Lost the race; another call beat us. Close the redundant
+        // fds and bail.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
         return;
     }
     SIGHUP_PIPE_WRITE.store(fds[1], Ordering::Relaxed);

@@ -2353,12 +2353,26 @@ fn compile_matcher(v: &JSValue, regexp_ctor: &JSValue, function_ctor: &JSValue) 
                 let multi_line = key(v, "multiline")
                     .map(|p| unsafe { p.toBool() })
                     .unwrap_or(false);
-                if let Ok(re) = RegexBuilder::new(&pattern)
+                match RegexBuilder::new(&pattern)
                     .case_insensitive(ignore_case)
                     .multi_line(multi_line)
                     .build()
                 {
-                    return Some(Matcher::Regex(re));
+                    Ok(re) => return Some(Matcher::Regex(re)),
+                    Err(e) => {
+                        // The Rust `regex` crate doesn't speak JS-specific
+                        // regex syntax (lookbehinds, `\b` in some contexts).
+                        // Silently dropping the matcher meant rules whose
+                        // only pattern was a regex would never fire with
+                        // no diagnostic. Surface the failure at load time
+                        // so users can port the pattern to a supported
+                        // form (e.g. wildcards, fn matchers).
+                        eprintln!(
+                            "grinch: rule matcher regex /{pattern}/ failed to compile: \
+                             {e}. The rule will never match — replace with a wildcard, \
+                             a `domain()` helper, or a `(url, ctx) => …` fn matcher."
+                        );
+                    }
                 }
             }
         }
@@ -4196,6 +4210,29 @@ mod integration_tests {
         );
         let (_, url) = resolve(&e, "https://example.com/path?q=1");
         assert_eq!(url, "https://example.com/path?q=1");
+    }
+
+    #[test]
+    fn invalid_regex_matcher_drops_and_warns_but_engine_still_loads() {
+        // The Rust regex crate doesn't support JS lookbehind `(?<=…)`.
+        // Pre-fix, compile_matcher silently dropped the matcher and the
+        // rule loaded with `matchers: []`, meaning the rule never fired
+        // with no diagnostic. Verify the engine still loads (we don't
+        // panic the config-load on a bad regex — other rules might be
+        // fine), the bad rule is inert, and a later valid rule fires
+        // as a fallback.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [
+                    // Lookbehind: unsupported by `regex` crate.
+                    { match: /(?<=test\.)github\.com/, open: "com.brave.Browser" },
+                    // Fallback that should still match the URL.
+                    { match: "github.com", open: "com.google.Chrome" },
+                ],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/foo").0, "com.google.Chrome");
     }
 
     #[test]

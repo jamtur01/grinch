@@ -174,12 +174,12 @@ open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</
   <table>
     <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
     <tbody>
-      <tr><td>Native rule wins early (no fn fires)</td><td>43</td></tr>
-      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,870</td></tr>
-      <tr><td>HTTP→HTTPS via URL mutation</td><td>4,760</td></tr>
-      <tr><td><code>?browser=</code> dynamic open fn</td><td>5,080</td></tr>
-      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>5,800</td></tr>
-      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>6,000</td></tr>
+      <tr><td>Native rule wins early (no fn fires)</td><td>44</td></tr>
+      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,400</td></tr>
+      <tr><td>HTTP→HTTPS via URL mutation</td><td>3,725</td></tr>
+      <tr><td><code>?browser=</code> dynamic open fn</td><td>4,640</td></tr>
+      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>4,745</td></tr>
+      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>5,750</td></tr>
     </tbody>
   </table>
 

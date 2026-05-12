@@ -191,6 +191,25 @@ enum Target {
     Suppress,
 }
 
+/// A run of consecutive rules whose `matchers` is exactly one fn — the
+/// shape that's eligible for batched JS-side dispatch. At engine init we
+/// compile a single JS function that runs all the matchers in sequence
+/// and returns the first hit's offset (or -1). One bridge crossing
+/// replaces N — measured at ~700 ns saved per skipped matcher. See
+/// `analyse_fn_matcher_runs` + `compile_fn_matcher_dispatcher`.
+struct FnMatcherRun {
+    /// Inclusive index of the first rule in the run.
+    start: usize,
+    /// Exclusive end — rule indices `[start, end)` are covered.
+    end: usize,
+    /// JS function: `(url, ctx) → number`. Returns the 0-based offset
+    /// within the run of the first matching matcher, or -1.
+    dispatcher: Retained<JSValue>,
+    /// True if any matcher in the run takes a ctx arg. When false, we can
+    /// skip the `__grinchMakeCtx` build and pass undefined for ctx.
+    needs_ctx: bool,
+}
+
 struct Rule {
     matchers: Vec<Matcher>,
     /// If set, applied to the URL when the rule matches, before resolving target.
@@ -243,6 +262,12 @@ pub struct Engine {
     browsers: std::collections::HashMap<String, Rc<BrowserSpec>>,
     rewrites: Vec<RewriteRule>,
     rules: Vec<Rule>,
+    /// Pre-compiled JS dispatchers for runs of fn-only rules (rules whose
+    /// `matchers` is exactly one `Matcher::Fn`). Empty for configs that
+    /// have no such runs of length ≥ 2; non-empty configs save N–1
+    /// JSC bridge crossings per such run on resolves where none of those
+    /// rules match. See `FnMatcherRun` for the per-run details.
+    fn_matcher_runs: Vec<FnMatcherRun>,
     /// JSContext owns every JSValue we still hold after compilation (user
     /// predicate functions, prelude helpers). Must outlive them.
     ctx: Retained<JSContext>,
@@ -411,6 +436,12 @@ impl Engine {
             .map(|arr| parse_rule_array(&arr, &browsers, &regexp_ctor, &function_ctor))
             .unwrap_or_default();
 
+        // Pre-compile JS dispatchers for any runs of consecutive fn-only
+        // rules in the rule list. Failure to build a dispatcher (e.g. JSC
+        // OOM) silently falls back to the per-matcher path for that run —
+        // we never want a perf-only optimisation to break load.
+        let fn_matcher_runs = build_fn_matcher_runs(&ctx, &rules);
+
         let mut needs = analyse_runtime_needs(&rewrites, &rules);
         // A dynamic default (fn) is always reachable when no rule matches,
         // and it could read any of url/opener/modifiers. Force them all on.
@@ -435,6 +466,7 @@ impl Engine {
             browsers,
             rewrites,
             rules,
+            fn_matcher_runs,
             ctx,
             rewrite_result_helper,
             make_ctx_helper,
@@ -629,10 +661,39 @@ impl Engine {
         // Handlers — first match wins. A matched rule may carry its own
         // rewriter (Finicky-style combined entry); apply it before resolving
         // the target.
-        for (idx, rule) in self.rules.iter().enumerate() {
-            if !any_match(&rule.matchers, &current, host.as_deref(), &rc) {
-                continue;
+        //
+        // Manual index management (rather than `for ... in enumerate`) so
+        // we can jump past a whole run of fn-only rules in one dispatcher
+        // call instead of N per-matcher bridge crossings. The dispatcher
+        // for each run is pre-compiled at engine init — see
+        // `build_fn_matcher_runs`. URL doesn't change during fn-matcher
+        // iteration (rewrites only fire after a rule matches), so the
+        // dispatcher result is consumed immediately and not cached
+        // across iterations.
+        let mut idx = 0;
+        'rules: while idx < self.rules.len() {
+            // If we're standing at the start of a fn-only run, dispatch
+            // the whole run in one JS call. The result is either "rule
+            // (start + offset) matched" or "skip past the run entirely".
+            if let Some(run) = self.fn_matcher_runs.iter().find(|r| r.start == idx) {
+                match call_fn_matcher_dispatcher(run, &rc, &current) {
+                    Some(offset) => {
+                        idx = run.start + offset;
+                        // Fall through — `idx` now points at the matched
+                        // rule. Skip the standard any_match check (which
+                        // would redundantly re-invoke the same fn) and
+                        // jump straight to rule-processing.
+                    }
+                    None => {
+                        idx = run.end;
+                        continue 'rules;
+                    }
+                }
+            } else if !any_match(&self.rules[idx].matchers, &current, host.as_deref(), &rc) {
+                idx += 1;
+                continue 'rules;
             }
+            let rule = &self.rules[idx];
             if let Some(rw) = &rule.rewriter {
                 match apply_rewrite(rw, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
@@ -660,11 +721,15 @@ impl Engine {
                 }
                 Target::Fn(uf) => {
                     let Some(args) = rc.fn_args(&current, uf.needs_ctx) else {
-                        continue;
+                        idx += 1;
+                        continue 'rules;
                     };
                     let result = unsafe { uf.f.callWithArguments(Some(&args)) };
                     if let Some(r) = result {
-                        if !unsafe { r.isUndefined() } && !unsafe { r.isNull() } {
+                        // Combined null-or-undefined check via the C API —
+                        // one call replaces two Obj-C dispatches per rule.
+                        let kind = js_value_type(&self.ctx, &r);
+                        if !matches!(kind, JSType::Null | JSType::Undefined) {
                             // Runtime fn return: don't apply Name:Profile shorthand —
                             // an opaque debug string like "t:function" must stay literal.
                             let spec =
@@ -682,6 +747,11 @@ impl Engine {
                     }
                 }
             }
+            // Target::Fn fell through (null/undefined return or args
+            // build failed) — advance to the next rule. Target::Browser
+            // / Target::Suppress have returned by now; this `idx += 1`
+            // is unreachable on those arms but cheap to guard the Fn path.
+            idx += 1;
         }
 
         // Default fallback. Static = the pre-resolved spec; Fn = invoke
@@ -2575,6 +2645,104 @@ fn js_value_type(ctx: &JSContext, v: &JSValue) -> JSType {
     unsafe { JSValue::r#type(ctx.JSGlobalContextRef(), v.JSValueRef()) }
 }
 
+/// Identify runs of consecutive rules whose `matchers` is exactly one
+/// `Matcher::Fn`, then compile a JS dispatcher for each run of length ≥ 2.
+/// Single-fn-matcher runs (length 1) aren't worth batching — the wrapper
+/// would add overhead vs the direct call. Mixed-matcher rules (regex +
+/// fn, domain() + fn, etc.) also stay on the per-matcher path; the
+/// dispatcher only knows how to call fn matchers.
+///
+/// Returns an empty vec on JSC failures (factory eval, dispatcher call) —
+/// the resolve path checks for run coverage by `start` index, so a
+/// missing run silently falls through to the per-rule loop.
+fn build_fn_matcher_runs(ctx: &JSContext, rules: &[Rule]) -> Vec<FnMatcherRun> {
+    let factory_src = r#"
+        (function() {
+            return function() {
+                var ms = arguments;
+                return function(url, ctx) {
+                    for (var i = 0; i < ms.length; i++) {
+                        try {
+                            if (ms[i](url, ctx)) return i;
+                        } catch (e) {
+                            // Matcher threw — treat as no-match, same as the
+                            // Rust loop's `result.map(...).unwrap_or(false)`.
+                        }
+                    }
+                    return -1;
+                };
+            };
+        })()
+    "#;
+    let factory_ns = NSString::from_str(factory_src);
+    let Some(factory) = (unsafe { ctx.evaluateScript(Some(&factory_ns)) }) else {
+        return Vec::new();
+    };
+    if unsafe { factory.isUndefined() } || unsafe { factory.isNull() } {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < rules.len() {
+        if !is_fn_only_rule(&rules[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < rules.len() && is_fn_only_rule(&rules[i]) {
+            i += 1;
+        }
+        let end = i;
+        if end - start < 2 {
+            continue;
+        }
+        // Collect the matcher fns + their needs_ctx flag.
+        let mut needs_ctx = false;
+        let mut matcher_objs: Vec<Retained<AnyObject>> = Vec::with_capacity(end - start);
+        for r in &rules[start..end] {
+            let Matcher::Fn(uf) = &r.matchers[0] else {
+                unreachable!("is_fn_only_rule guarantees Matcher::Fn");
+            };
+            if uf.needs_ctx {
+                needs_ctx = true;
+            }
+            matcher_objs.push(unsafe { Retained::cast_unchecked(uf.f.clone()) });
+        }
+        let args = NSArray::from_retained_slice(&matcher_objs);
+        let Some(dispatcher) = (unsafe { factory.callWithArguments(Some(&args)) }) else {
+            continue;
+        };
+        if unsafe { dispatcher.isUndefined() } || unsafe { dispatcher.isNull() } {
+            continue;
+        }
+        out.push(FnMatcherRun {
+            start,
+            end,
+            dispatcher,
+            needs_ctx,
+        });
+    }
+    out
+}
+
+fn is_fn_only_rule(rule: &Rule) -> bool {
+    rule.matchers.len() == 1 && matches!(rule.matchers[0], Matcher::Fn(_))
+}
+
+/// Call a run's dispatcher. Returns the 0-based offset within the run of
+/// the first matching matcher, or None on no-match / dispatch failure.
+fn call_fn_matcher_dispatcher(run: &FnMatcherRun, rc: &ResolveCtx, url: &str) -> Option<usize> {
+    let args = rc.fn_args(url, run.needs_ctx)?;
+    let result = unsafe { run.dispatcher.callWithArguments(Some(&args)) }?;
+    let n = unsafe { result.toInt32() };
+    if n < 0 {
+        None
+    } else {
+        Some(n as usize)
+    }
+}
+
 /// Read a string property from a JSValue object and return it only when
 /// the value is *actually* a non-empty string (not `undefined`, not a
 /// stringified other type). Used in the fn-rewriter fast path to extract
@@ -3967,6 +4135,67 @@ mod integration_tests {
         let (browser, url) = resolve(&e, "https://tracking.com/pixel");
         assert_eq!(browser, "");
         assert_eq!(url, "about:blank");
+    }
+
+    #[test]
+    fn fn_matcher_dispatcher_picks_first_matching_rule_in_a_run() {
+        // Four consecutive fn-only rules — the second one matches. The
+        // dispatcher must return offset 1 (not 0, 2, or 3) so the right
+        // rule fires. Regression test for the build_fn_matcher_runs path.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [
+                    { match: (url) => url.hostname === "miss-a", open: "com.apple.Mail" },
+                    { match: (url) => url.hostname === "github.com", open: "com.google.Chrome" },
+                    { match: (url) => url.hostname === "miss-c", open: "com.brave.Browser" },
+                    { match: (url) => url.hostname === "miss-d", open: "com.microsoft.edgemac" },
+                ],
+            };"#,
+        );
+        let (b, _) = resolve(&e, "https://github.com/foo");
+        assert_eq!(b, "com.google.Chrome");
+    }
+
+    #[test]
+    fn fn_matcher_dispatcher_falls_through_to_default_when_nothing_matches() {
+        // Same shape as the slow-native bench. No matcher matches; dispatcher
+        // returns -1 and the engine skips past the whole run to the default.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [
+                    { match: (url, ctx) => ctx.opener && ctx.opener.bundleId === "a.example",
+                      open: "com.google.Chrome" },
+                    { match: (url, ctx) => ctx.opener && ctx.opener.bundleId === "b.example",
+                      open: "com.google.Chrome" },
+                    { match: (url, ctx) => ctx.opener && ctx.opener.bundleId === "c.example",
+                      open: "com.google.Chrome" },
+                    { match: (url, ctx) => ctx.opener && ctx.opener.bundleId === "d.example",
+                      open: "com.google.Chrome" },
+                ],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+    }
+
+    #[test]
+    fn fn_matcher_dispatcher_isolates_throwing_matcher_from_neighbours() {
+        // A matcher that throws in the middle of a run must not poison
+        // matchers around it — the dispatcher's per-matcher try/catch
+        // treats a throw as no-match, same as the per-matcher path's
+        // `result.map(...).unwrap_or(false)`.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [
+                    { match: (url) => url.hostname === "miss-a", open: "com.apple.Mail" },
+                    { match: (url) => { throw new Error("boom"); }, open: "com.brave.Browser" },
+                    { match: (url) => url.hostname === "github.com", open: "com.google.Chrome" },
+                ],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/foo").0, "com.google.Chrome");
     }
 
     #[test]

@@ -507,18 +507,30 @@ User-written predicates and rewrites cross into JavaScriptCore. URL-only
 predicates (`(url) => …`) skip the `__grinchMakeCtx` build and skip the
 LaunchServices IPC for `frontmost_opener()` upstream — only fns declaring
 a second formal arg pay for ctx. The first JS-bridge call in a resolve
-costs ~3 µs (URL polyfill + cached opener-field JSValues); subsequent
+costs ~2.5 µs (URL polyfill + cached opener-field JSValues); subsequent
 fn calls within the same resolve reuse the cached args. Ctx build itself
 reuses pre-built `true`/`false` JSValues for modifier flags.
 
+A few smaller wins compound on this path: `apply_rewrite` short-circuits
+in Rust for the common fn-return shapes (string, null, undefined, URL
+polyfill instance with non-empty `.href`) instead of always going
+through the `__grinchRewriteResult` JS helper — the LegacyURLObject
+case still does. Result-checks use `JSValueGetType` (one C call) in
+place of paired `isNull()` + `isUndefined()` Obj-C dispatches. And
+runs of two-or-more consecutive fn-only rules are batched into a
+single pre-compiled JS dispatcher at engine init, so a config with N
+fn matchers that all fall through pays for one JS bridge crossing
+instead of N — the *"4 fn matchers reading `ctx.opener`"* row below
+exercises that path.
+
 | Workload | ns/op |
 |---|---:|
-| Native rule wins early (no fn fires) | 43 |
-| Drop URL via `() => null` (url-only) | 2,870 |
-| HTTP→HTTPS via URL mutation (url-only) | 4,760 |
-| `?browser=` dynamic open fn (url-only matcher) | 5,080 |
-| 4 fn matchers reading `ctx.opener` | 5,800 |
-| Full Slack-web → `slack://` rewrite | 6,000 |
+| Native rule wins early (no fn fires) | 44 |
+| Drop URL via `() => null` (url-only) | 2,400 |
+| HTTP→HTTPS via URL mutation (url-only) | 3,725 |
+| `?browser=` dynamic open fn (url-only matcher) | 4,640 |
+| 4 fn matchers reading `ctx.opener` | 4,745 |
+| Full Slack-web → `slack://` rewrite | 5,750 |
 
 ### Footprint
 

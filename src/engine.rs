@@ -2481,10 +2481,16 @@ fn pattern_has_protocol_prefix(pat: &str) -> bool {
 /// faster than the Unicode-aware `to_lowercase` and good enough.
 #[inline]
 pub(crate) fn quick_host(url: &str) -> Option<Cow<'_, str>> {
-    let mut s = url;
-    if let Some(idx) = s.find("://") {
-        s = &s[idx + 3..];
-    }
+    // Opaque-scheme URIs like `mailto:user@example.com`, `tel:+1...`,
+    // `about:blank`, `javascript:…` have no authority component — no
+    // `//` after the scheme. Trying to derive a hostname out of them
+    // produced wrong results: `about:blank` previously yielded `"about"`
+    // (rfind(':') sliced off `:blank`), so a `domain("about")` matcher
+    // would have unexpectedly matched it. Return None for any input
+    // without `://`; callers that want to match by scheme should use
+    // a wildcard / regex matcher.
+    let scheme_end = url.find("://")?;
+    let mut s = &url[scheme_end + 3..];
     if let Some(idx) = s.find(['/', '?', '#']) {
         s = &s[..idx];
     }
@@ -2977,6 +2983,22 @@ mod tests {
         assert_eq!(quick_host(""), None);
         assert_eq!(quick_host("file:///etc/hosts"), None); // empty host
         assert_eq!(quick_host("http://"), None);
+    }
+
+    #[test]
+    fn quick_host_returns_none_for_opaque_scheme_uris() {
+        // Regression: opaque-scheme URIs (no `//` after the scheme) have
+        // no authority component, so there's no hostname to extract.
+        // The pre-fix code did `rfind(':')` on the remainder, which
+        // produced "mailto" / "about" / "tel" for inputs like the
+        // ones below — a `domain("about")` matcher then unexpectedly
+        // matched `about:blank` and similar. Should return None across
+        // the board so callers fall back to wildcard / regex matching.
+        assert_eq!(quick_host("about:blank"), None);
+        assert_eq!(quick_host("mailto:user@example.com"), None);
+        assert_eq!(quick_host("tel:+15551234567"), None);
+        assert_eq!(quick_host("javascript:void(0)"), None);
+        assert_eq!(quick_host("slack:channel?team=foo"), None);
     }
 
     // -------- host_matches --------

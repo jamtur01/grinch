@@ -998,15 +998,19 @@ impl<'a> ResolveCtx<'a> {
     /// Cached URL polyfill instance for `url`. Both fn-args paths share it,
     /// so a config that mixes url-only and url+ctx fns pays for `new URL()`
     /// once per URL string per resolve, not once per fn call.
-    fn url_instance(&self, url: &str) -> Retained<JSValue> {
+    ///
+    /// Returns None when JSC can't allocate even a fallback stub — callers
+    /// propagate None up to the resolve path, which skips the affected fn
+    /// matcher rather than panicking the daemon.
+    fn url_instance(&self, url: &str) -> Option<Retained<JSValue>> {
         if let Some((cached_url, instance)) = self.cached_url_instance.borrow().as_ref() {
             if cached_url.as_ref() == url {
-                return instance.clone();
+                return Some(instance.clone());
             }
         }
-        let v = build_url_instance(self.url_ctor, self.ctx, url);
+        let v = build_url_instance(self.url_ctor, self.ctx, url)?;
         *self.cached_url_instance.borrow_mut() = Some((Box::from(url), v.clone()));
-        v
+        Some(v)
     }
 
     /// Build the args for a user fn invocation. When `needs_ctx` is true, the
@@ -1021,7 +1025,7 @@ impl<'a> ResolveCtx<'a> {
                     return Some(args.clone());
                 }
             }
-            let url_instance = self.url_instance(url);
+            let url_instance = self.url_instance(url)?;
             let ctx_val = self.ctx_object()?;
             let url_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_instance) };
             let ctx_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(ctx_val) };
@@ -1034,7 +1038,7 @@ impl<'a> ResolveCtx<'a> {
                     return Some(args.clone());
                 }
             }
-            let url_instance = self.url_instance(url);
+            let url_instance = self.url_instance(url)?;
             let url_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_instance) };
             let args = NSArray::from_retained_slice(&[url_obj]);
             *self.fn_args_cache_url_only.borrow_mut() = Some((Box::from(url), args.clone()));
@@ -1256,36 +1260,38 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
 /// Build a URL polyfill instance via `new URL(urlString)`. If the URL fails
 /// to parse (e.g. exotic scheme), fall back to a plain object so user code
 /// destructuring `{ href }` doesn't crash.
-fn build_url_instance(url_ctor: &JSValue, ctx: &JSContext, url: &str) -> Retained<JSValue> {
+///
+/// Returns `None` only when JSC is in an unrecoverable state (every
+/// evaluateScript call fails, even on a 2-byte literal). Callers up the
+/// chain (fn_args → resolve) treat None as "fn matcher doesn't match"
+/// rather than panicking the daemon. Pre-fix, the bottom of this function
+/// `.expect()`'d the final evaluateScript and would panic the whole
+/// process on a per-resolve JSC OOM.
+fn build_url_instance(url_ctor: &JSValue, ctx: &JSContext, url: &str) -> Option<Retained<JSValue>> {
     if let Some(url_str) = js_string(ctx, url) {
         let url_str_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_str) };
         let args = NSArray::from_retained_slice(&[url_str_obj]);
         if let Some(instance) = unsafe { url_ctor.constructWithArguments(Some(&args)) } {
             if !unsafe { instance.isUndefined() } && !unsafe { instance.isNull() } {
-                return instance;
+                return Some(instance);
             }
         }
     }
     // js_string failed (OOM) or `new URL(...)` returned undefined/null —
-    // fall through to the existing stub-object path so user code can
-    // still destructure { href } without crashing the resolve.
-    // Parse failed (URL polyfill threw); return a stub object with .href set
-    // so user code can still destructure. serde_json gives us a JSON string
-    // literal that's also valid JS — Rust's debug-format `{:?}` would emit
-    // \u{X} escapes which don't parse as JS string escapes.
+    // fall through to the stub-object path so user code can still
+    // destructure { href } without crashing the resolve.
     let url_json = serde_json::to_string(url).unwrap_or_else(|_| "\"\"".to_string());
     let stub_src = format!(
         "({{ href: {url_json}, protocol: '', hostname: '', pathname: '', search: '', hash: '' }})"
     );
     let stub_ns = NSString::from_str(&stub_src);
-    unsafe { ctx.evaluateScript(Some(&stub_ns)) }
-        .or_else(|| {
-            // Last-ditch: a literal empty object. evaluateScript on a 2-byte
-            // input failing means the JSContext is fundamentally broken, but
-            // we'd still rather return *something* than panic.
-            unsafe { ctx.evaluateScript(Some(&NSString::from_str("({})"))) }
-        })
-        .expect("JSContext can't evaluate `({})` — context is broken")
+    if let Some(v) = unsafe { ctx.evaluateScript(Some(&stub_ns)) } {
+        return Some(v);
+    }
+    // Last-ditch: a literal empty object. If even this fails, JSC is
+    // unable to evaluate anything — propagate None so the resolve path
+    // skips this fn matcher without panicking.
+    unsafe { ctx.evaluateScript(Some(&NSString::from_str("({})"))) }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -672,11 +672,20 @@ impl Engine {
         // across iterations.
         let mut idx = 0;
         'rules: while idx < self.rules.len() {
-            // If we're standing at the start of a fn-only run, dispatch
-            // the whole run in one JS call. The result is either "rule
-            // (start + offset) matched" or "skip past the run entirely".
-            if let Some(run) = self.fn_matcher_runs.iter().find(|r| r.start == idx) {
-                match call_fn_matcher_dispatcher(run, &rc, &current) {
+            // If we're standing *inside* a fn-only run (start of run OR
+            // resumed mid-run after a Target::Fn fall-through), dispatch
+            // the remainder in one JS call. The dispatcher takes a
+            // `start_offset` so a resume scan picks up after the rule
+            // that just fell through — without it the engine would
+            // revert to the per-matcher path for the rest of the run
+            // and lose the batched-dispatch benefit.
+            if let Some(run) = self
+                .fn_matcher_runs
+                .iter()
+                .find(|r| r.start <= idx && idx < r.end)
+            {
+                let start_offset = idx - run.start;
+                match call_fn_matcher_dispatcher(run, &rc, &current, start_offset) {
                     Some(offset) => {
                         idx = run.start + offset;
                         // Fall through — `idx` now points at the matched
@@ -2696,12 +2705,19 @@ fn js_value_type(ctx: &JSContext, v: &JSValue) -> JSType {
 /// the resolve path checks for run coverage by `start` index, so a
 /// missing run silently falls through to the per-rule loop.
 fn build_fn_matcher_runs(ctx: &JSContext, rules: &[Rule]) -> Vec<FnMatcherRun> {
+    // Dispatcher signature: `(url, ctx, startOffset) -> int`. The third
+    // arg lets the resolve loop resume scanning mid-run after a
+    // Target::Fn returns null/undefined and the engine wants to try the
+    // next matcher in the same run without falling back to the
+    // per-matcher path (which would skip the batching benefit).
     let factory_src = r#"
         (function() {
             return function() {
                 var ms = arguments;
-                return function(url, ctx) {
-                    for (var i = 0; i < ms.length; i++) {
+                return function(url, ctx, startOffset) {
+                    var start = (startOffset | 0);
+                    if (start < 0) start = 0;
+                    for (var i = start; i < ms.length; i++) {
                         try {
                             if (ms[i](url, ctx)) return i;
                         } catch (e) {
@@ -2770,10 +2786,32 @@ fn is_fn_only_rule(rule: &Rule) -> bool {
     rule.matchers.len() == 1 && matches!(rule.matchers[0], Matcher::Fn(_))
 }
 
-/// Call a run's dispatcher. Returns the 0-based offset within the run of
-/// the first matching matcher, or None on no-match / dispatch failure.
-fn call_fn_matcher_dispatcher(run: &FnMatcherRun, rc: &ResolveCtx, url: &str) -> Option<usize> {
-    let args = rc.fn_args(url, run.needs_ctx)?;
+/// Call a run's dispatcher, scanning from `start_offset` within the run.
+/// Returns the 0-based offset of the first matching matcher at or after
+/// `start_offset`, or None when no later matcher matches (or the dispatch
+/// fails). The `start_offset` parameter lets the resolve loop resume
+/// inside a run after a Target::Fn returns null/undefined — without it,
+/// fall-through would revert to the per-matcher path and lose the
+/// batched-dispatch benefit for the remainder of the run.
+fn call_fn_matcher_dispatcher(
+    run: &FnMatcherRun,
+    rc: &ResolveCtx,
+    url: &str,
+    start_offset: usize,
+) -> Option<usize> {
+    let url_instance = rc.url_instance(url)?;
+    let ctx_val = if run.needs_ctx {
+        rc.ctx_object()?
+    } else {
+        unsafe { JSValue::valueWithUndefinedInContext(Some(rc.ctx)) }?
+    };
+    // ctx_val is `Retained<JSValue>`; same shape whether real ctx or undef.
+    let start_val =
+        unsafe { JSValue::valueWithDouble_inContext(start_offset as f64, Some(rc.ctx)) }?;
+    let url_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_instance) };
+    let ctx_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(ctx_val) };
+    let start_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(start_val) };
+    let args = NSArray::from_retained_slice(&[url_obj, ctx_obj, start_obj]);
     let result = unsafe { run.dispatcher.callWithArguments(Some(&args)) }?;
     let n = unsafe { result.toInt32() };
     if n < 0 {
@@ -4210,6 +4248,37 @@ mod integration_tests {
         );
         let (_, url) = resolve(&e, "https://example.com/path?q=1");
         assert_eq!(url, "https://example.com/path?q=1");
+    }
+
+    #[test]
+    fn dispatcher_resumes_after_target_fn_returns_null_in_run() {
+        // Three consecutive fn-only rules. Rule 0's matcher fires but its
+        // target fn returns null (Finicky `open: () => null` shape for
+        // "rule matched but skip routing"). Rule 1's target fn returns
+        // null too. Rule 2's target fn returns a real browser.
+        //
+        // Pre-fix: dispatcher matched rule 0, fell through; resolve loop
+        // advanced idx to 1, didn't see a run starting at 1, fell back
+        // to the per-matcher path for the rest of the run. Correct, but
+        // lost the batched-dispatch perf benefit for the resume.
+        //
+        // Now: the resolve loop detects we're still INSIDE the run and
+        // re-calls the dispatcher with start_offset = idx - run.start,
+        // so the JS-side scan picks up at the next matcher.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [
+                    { match: (url) => url.hostname === "github.com",
+                      open: (url) => null },
+                    { match: (url) => url.hostname === "github.com",
+                      open: (url) => null },
+                    { match: (url) => url.hostname === "github.com",
+                      open: (url) => "com.google.Chrome" },
+                ],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://github.com/foo").0, "com.google.Chrome");
     }
 
     #[test]

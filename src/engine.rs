@@ -1522,11 +1522,18 @@ fn unwrap_safelink(url: &str) -> Option<String> {
 fn unwrap_safelink_once(url: &str) -> Option<String> {
     let host = quick_host(url)?;
     let query_start = url.find('?')?;
-    // Path = everything between the host and the '?'. We already know the
-    // scheme + authority by the time `quick_host` succeeded, so locate the
-    // path slice via the scheme offset + host length rather than rescanning.
+    // Path = everything between the authority and the `?`. `quick_host`
+    // strips userinfo (`user@…`) and port (`:443`) from the host, so
+    // `scheme_end + host.len()` would land mid-authority on URLs that
+    // carry either — yielding a `path` slice like `":443/v2/url"`
+    // instead of `"/v2/url"` and silently failing the Teams / Proofpoint
+    // path-prefix checks. Locate the path by scanning forward from the
+    // scheme for the first `/` that isn't part of `//`.
     let scheme_end = url.find("://").map(|i| i + 3).unwrap_or(0);
-    let path_start = (scheme_end + host.len()).min(query_start);
+    let path_start = url[scheme_end..query_start]
+        .find('/')
+        .map(|rel| scheme_end + rel)
+        .unwrap_or(query_start);
     let path = &url[path_start..query_start];
     // Drop any URL fragment from the query — SafeLinks wrappers don't use
     // fragments for the inner URL, but a stray `#` later in the query
@@ -3124,6 +3131,33 @@ mod tests {
         // %ZZ is not valid hex — decoder bails, wrapper passes through.
         let bad = "https://safelinks.protection.outlook.com/?url=https%ZZ";
         assert!(unwrap_safelink(bad).is_none());
+    }
+
+    #[test]
+    fn safelink_unwraps_teams_url_with_explicit_port() {
+        // Regression: path was computed via scheme_end + host.len(), but
+        // quick_host strips the `:443` port. The resulting `path` slice
+        // started with `":443/evergreen-assets/safelinks/"` instead of
+        // `"/evergreen-assets/safelinks/"`, so the Teams path-prefix
+        // check failed and the URL silently routed un-unwrapped.
+        let wrapped = "https://statics.teams.cdn.office.net:443/evergreen-assets/safelinks/?url=https%3A%2F%2Fexample.com%2F";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/")
+        );
+    }
+
+    #[test]
+    fn safelink_unwraps_proofpoint_url_with_userinfo() {
+        // Same shape as the port regression but with `user@`. quick_host
+        // strips userinfo as well, so path slicing must locate `/` by
+        // scanning, not by host length.
+        let wrapped =
+            "https://x@urldefense.proofpoint.com/v2/url?u=https%3A%2F%2Fexample.com%2F&d=tag";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/")
+        );
     }
 
     #[test]

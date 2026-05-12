@@ -215,6 +215,13 @@ pub fn install_running_apps_observer() {
         invalidate_caches();
     });
     unsafe {
+        // NSNotificationCenter copies the block on each
+        // addObserverForName_...; the local `block` here doesn't need
+        // to outlive the registration calls. Dropping it at end of
+        // scope releases one retain — the NC's two internal copies
+        // remain valid and keep firing the observer. Previously this
+        // function called `mem::forget(block)`, which leaked one
+        // RcBlock for process lifetime with no upside.
         let t1 = nc.addObserverForName_object_queue_usingBlock(
             Some(NSWorkspaceDidLaunchApplicationNotification),
             None,
@@ -227,9 +234,13 @@ pub fn install_running_apps_observer() {
             None,
             &block,
         );
+        // Observation tokens are retained by the NC internally; we
+        // forget the Rust handles because we never unregister
+        // (LSUIElement app lives until terminate). Without forget,
+        // their Drop would call removeObserver: and stop firing.
         std::mem::forget(t1);
         std::mem::forget(t2);
-        std::mem::forget(block);
+        // `block` released normally on scope exit.
     }
 }
 

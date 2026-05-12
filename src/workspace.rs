@@ -255,6 +255,15 @@ pub fn install_running_apps_observer() {
 /// rather than collecting one and intersecting. Worth it: most users
 /// reach for the friendlier display-name form.
 pub fn is_app_running(id: &str) -> bool {
+    // Fast path: bundle-ID match via the process-wide cache, which the
+    // launch/terminate observer keeps current. This covers the common
+    // form `isAppRunning("com.tinyspeck.slackmacgap")` without a fresh
+    // NSWorkspace.runningApplications snapshot. If the id isn't a bundle
+    // id (e.g. `isAppRunning("Slack")`), fall through to the full walk
+    // below which also checks `localizedName`.
+    if running_apps_cached().contains(id) {
+        return true;
+    }
     let workspace = NSWorkspace::sharedWorkspace();
     let apps = workspace.runningApplications();
     let count = apps.count();

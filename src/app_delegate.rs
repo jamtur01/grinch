@@ -599,6 +599,24 @@ impl Delegate {
         menu.addItem(&error_item);
         *self.ivars().error_menu_item.borrow_mut() = Some(error_item);
 
+        // Version label: disabled menu item ("nil action" → grey, non-
+        // clickable). macOS convention is to put app-identity info at
+        // the top of a status menu so users can quickly check what
+        // version they're on without opening About. The value is the
+        // crate version stamped into the binary at compile time —
+        // matches what `Grinch --version` prints.
+        let version = format!("Grinch {}", env!("CARGO_PKG_VERSION"));
+        let version_item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str(&version),
+                None,
+                &NSString::from_str(""),
+            )
+        };
+        menu.addItem(&version_item);
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+
         let open_config = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(mtm),

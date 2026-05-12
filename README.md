@@ -379,6 +379,7 @@ Click the 🎄 in the menu bar:
 
 | Item | Action |
 |---|---|
+| **Grinch vX.Y.Z** | Disabled label at the top showing the running binary's version. Matches `Grinch --version`. |
 | **Open Config** (⌘O) | Opens the active config file in your default `.js` handler (VS Code / Cursor / etc.). |
 | **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |

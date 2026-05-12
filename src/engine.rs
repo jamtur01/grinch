@@ -1559,7 +1559,14 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
 
 fn find_query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
     for kv in query.split('&') {
-        let (k, v) = kv.split_once('=')?;
+        // `continue` on valueless params (bare keys, e.g. `?secure&url=…`).
+        // The prior implementation used `?` here, which would short-circuit
+        // the entire scan the first time the query contained a key without
+        // `=` — silently breaking SafeLinks unwrapping for URLs that mix
+        // a flag-style param with the wrapped URL param.
+        let Some((k, v)) = kv.split_once('=') else {
+            continue;
+        };
         if k == name {
             return Some(v);
         }
@@ -3117,6 +3124,20 @@ mod tests {
         // %ZZ is not valid hex — decoder bails, wrapper passes through.
         let bad = "https://safelinks.protection.outlook.com/?url=https%ZZ";
         assert!(unwrap_safelink(bad).is_none());
+    }
+
+    #[test]
+    fn safelink_unwraps_with_valueless_param_before_url() {
+        // Regression: the pre-fix find_query_param early-returned None the
+        // moment it hit a kv pair without `=`, so a SafeLinks URL that
+        // carried a flag-style param (`?secure&url=…`) silently failed to
+        // unwrap and routed as the wrapper host. Fix: skip valueless pairs
+        // and keep scanning for `name`.
+        let wrapped = "https://emea01.safelinks.protection.outlook.com/?secure&url=https%3A%2F%2Fexample.com%2F";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/")
+        );
     }
 
     #[test]

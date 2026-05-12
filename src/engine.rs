@@ -480,11 +480,11 @@ impl Engine {
             needs_host: needs.host,
             options,
             log_writer: RefCell::new(if options.log_requests {
-                Some(LogWriter {
-                    path: log_file_path(),
-                    file: None,
-                    failed: false,
-                })
+                Some(LogWriter::new(
+                    log_file_path(),
+                    options.log_rotate_bytes,
+                    options.log_rotate_days,
+                ))
             } else {
                 None
             }),
@@ -1865,6 +1865,17 @@ pub struct OptionsConfig {
     /// opener bundle ID, and a Unix timestamp. Mirrors Finicky's
     /// `options.logRequests` semantics.
     pub log_requests: bool,
+    /// Rotate the request log when it grows past this many bytes.
+    /// `None` (the default) disables size-based rotation. Rotation
+    /// renames the current file to `<path>.<iso-timestamp>` and starts
+    /// a fresh empty file, so older entries are preserved on disk for
+    /// post-mortem until the user prunes them.
+    pub log_rotate_bytes: Option<u64>,
+    /// Rotate the request log when it has been written to for this many
+    /// days (since the file was opened or most-recently rotated).
+    /// `None` disables time-based rotation. Combine with
+    /// `log_rotate_bytes` to get "rotate on either trigger".
+    pub log_rotate_days: Option<u32>,
 }
 
 /// Per-resolve JSONL log writer used when `options.logRequests` is on.
@@ -1872,21 +1883,52 @@ pub struct OptionsConfig {
 /// never resolves doesn't create an empty log file. After a write
 /// failure the writer marks itself failed and stops trying — better
 /// than spamming stderr per resolve.
+///
+/// Rotation: when either `rotate_bytes` or `rotate_days` is set and the
+/// corresponding threshold is exceeded, the current file is renamed to
+/// `<path>.<iso-timestamp>` and a fresh file is opened on the next write.
+/// `bytes_written` is tracked in-process (initialised from the existing
+/// file's size on open) so rotation decisions don't stat() per write.
 struct LogWriter {
     path: std::path::PathBuf,
     file: Option<std::fs::File>,
     failed: bool,
+    rotate_bytes: Option<u64>,
+    rotate_days: Option<u32>,
+    bytes_written: u64,
+    opened_at_unix: u64,
 }
 
 impl LogWriter {
+    fn new(path: std::path::PathBuf, rotate_bytes: Option<u64>, rotate_days: Option<u32>) -> Self {
+        Self {
+            path,
+            file: None,
+            failed: false,
+            rotate_bytes,
+            rotate_days,
+            bytes_written: 0,
+            opened_at_unix: 0,
+        }
+    }
+
     fn write(&mut self, line: &str) {
         use std::io::Write;
         if self.failed {
             return;
         }
+        // newline-terminated; writeln! appends one
+        let about_to_write = line.len() as u64 + 1;
+        if self.should_rotate(about_to_write, now_unix()) {
+            self.rotate();
+        }
         if self.file.is_none() {
             match Self::open(&self.path) {
-                Ok(f) => self.file = Some(f),
+                Ok((f, size)) => {
+                    self.file = Some(f);
+                    self.bytes_written = size;
+                    self.opened_at_unix = now_unix();
+                }
                 Err(e) => {
                     eprintln!(
                         "grinch: couldn't open log file {}: {e} — disabling \
@@ -1907,19 +1949,74 @@ impl LogWriter {
                 );
                 self.failed = true;
                 self.file = None;
+            } else {
+                self.bytes_written += about_to_write;
             }
         }
     }
 
-    fn open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    /// True when writing `extra_bytes` more would push the file past
+    /// `rotate_bytes`, OR `now` is past `rotate_days` since the file
+    /// was opened. Pure function so it's testable without a real fs.
+    fn should_rotate(&self, extra_bytes: u64, now: u64) -> bool {
+        if self.file.is_none() {
+            return false;
+        }
+        if let Some(cap) = self.rotate_bytes {
+            if self.bytes_written.saturating_add(extra_bytes) > cap {
+                return true;
+            }
+        }
+        if let Some(days) = self.rotate_days {
+            let secs = u64::from(days).saturating_mul(86_400);
+            if now.saturating_sub(self.opened_at_unix) >= secs {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn rotate(&mut self) {
+        // Drop the file handle so the rename can complete on platforms
+        // that hold it locked (not macOS, but cheap to do everywhere).
+        self.file = None;
+        let stamp = iso_timestamp_for_filename();
+        let rotated = self.path.with_extension(format!("log.{stamp}"));
+        if let Err(e) = std::fs::rename(&self.path, &rotated) {
+            // Rename can fail under very-unusual conditions (the source
+            // disappeared because someone deleted it externally, or
+            // permissions changed). Log once and carry on — the next
+            // write will lazily re-open the path; in the worst case we
+            // keep appending to a file that has grown past the cap,
+            // which is still better than dropping log lines.
+            eprintln!(
+                "grinch: log rotation rename {} → {} failed: {e}",
+                self.path.display(),
+                rotated.display()
+            );
+        }
+        self.bytes_written = 0;
+        self.opened_at_unix = now_unix();
+    }
+
+    fn open(path: &std::path::Path) -> std::io::Result<(std::fs::File, u64)> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::OpenOptions::new()
+        let f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)
+            .open(path)?;
+        let size = f.metadata().map(|m| m.len()).unwrap_or(0);
+        Ok((f, size))
     }
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// One JSONL entry per resolve. Schema:
@@ -2036,6 +2133,8 @@ fn parse_options_block(opts: &JSValue) -> OptionsConfig {
     const KNOWN: &[&str] = &[
         "urlShorteners",
         "logRequests",
+        "logRotateBytes",
+        "logRotateDays",
         "checkForUpdates",
         "keepRunning",
         "hideIcon",
@@ -2048,6 +2147,21 @@ fn parse_options_block(opts: &JSValue) -> OptionsConfig {
             }
             "logRequests" => {
                 out.log_requests = unsafe { v.toBool() };
+            }
+            "logRotateBytes" => {
+                // JS numbers are doubles; coerce to u64 with bounds-check
+                // so a negative/NaN/infinity value disables rotation
+                // rather than silently producing a giant cap.
+                let n = unsafe { v.toDouble() };
+                if n.is_finite() && n > 0.0 && n <= u64::MAX as f64 {
+                    out.log_rotate_bytes = Some(n as u64);
+                }
+            }
+            "logRotateDays" => {
+                let n = unsafe { v.toDouble() };
+                if n.is_finite() && n > 0.0 && n <= u32::MAX as f64 {
+                    out.log_rotate_days = Some(n as u32);
+                }
             }
             other if !KNOWN.contains(&other) => {
                 eprintln!(
@@ -3747,6 +3861,85 @@ mod integration_tests {
         assert!(
             row1["matchedRule"].is_null(),
             "matchedRule should be null when default fired"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn log_writer_should_rotate_unit() {
+        // Pure-function rotation predicate — verifies bytes-based and
+        // time-based thresholds independently, without touching the fs.
+        let mut w = LogWriter::new(
+            std::path::PathBuf::from("/tmp/never-opened.log"),
+            Some(1024),
+            Some(7),
+        );
+        // No file open yet → never rotates (rotation rebinds bytes_written
+        // when the new file opens; nothing to rotate before that).
+        assert!(!w.should_rotate(2048, 1_000_000));
+        // Pretend a file is open with some bytes already written.
+        w.file = Some(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(std::env::temp_dir().join("grinch-log-rotate-unit.tmp"))
+                .unwrap(),
+        );
+        w.bytes_written = 1000;
+        w.opened_at_unix = 1_000_000;
+        // Under both thresholds: no rotation.
+        assert!(!w.should_rotate(20, 1_000_000));
+        // Adding 25 bytes would push past 1024.
+        assert!(w.should_rotate(25, 1_000_000));
+        // Time threshold (7 days = 604_800s): exactly at the threshold rotates.
+        w.bytes_written = 0;
+        assert!(w.should_rotate(1, 1_000_000 + 604_800));
+        // Just under: no rotation.
+        assert!(!w.should_rotate(1, 1_000_000 + 604_799));
+    }
+
+    #[test]
+    fn log_rotates_on_size_threshold() {
+        // End-to-end: configure a 200-byte cap and write enough lines to
+        // trigger a rotation. After the test we expect (a) a rotated
+        // file with the .log.<timestamp> suffix containing the early
+        // lines, and (b) a fresh active file with the later ones.
+        let tmp = unique_tmp("log-rotate");
+        let _ = std::fs::remove_dir_all(&tmp);
+        with_home(&tmp, || {
+            let e = build_engine(
+                r#"module.exports = {
+                    default: "com.apple.Safari",
+                    options: { logRequests: true, logRotateBytes: 200 },
+                };"#,
+            );
+            // Each log line is ~250 bytes; the first write opens the
+            // file (size 0, 0 + ~250 > 200 — wait, the should_rotate
+            // check skips when file is None, so the FIRST line lands
+            // un-rotated). The SECOND write sees bytes_written=~250 +
+            // ~250 = ~500 > 200 → rotates before writing the second
+            // line. Drive enough resolves to trigger at least one
+            // rotation regardless of exact line length.
+            for _ in 0..5 {
+                let _ = resolve(&e, "https://example.com/");
+            }
+        });
+        let log_dir = tmp.join("Library/Logs/Grinch");
+        let entries: Vec<_> = std::fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .map(|e| e.path())
+            .collect();
+        assert!(
+            entries.len() >= 2,
+            "expected at least one rotated log file + the active one, got: {entries:?}"
+        );
+        let has_rotated = entries
+            .iter()
+            .any(|p| p.to_string_lossy().contains(".log."));
+        assert!(
+            has_rotated,
+            "expected a .log.<timestamp> rotated file in: {entries:?}"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

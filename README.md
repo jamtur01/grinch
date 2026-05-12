@@ -119,6 +119,12 @@ The `options` block accepts Finicky v4's five keys. Two are wired up:
   a particular click went where it did without enabling the broader
   `GRINCH_DEBUG=1` stderr trace.
 
+  Pair with **`logRotateBytes: <n>`** and/or **`logRotateDays: <n>`** to
+  cap the log's growth. Rotation renames the current file to
+  `<original-name>.log.<iso-timestamp>` and starts a fresh empty file;
+  both triggers can be combined (whichever fires first wins). Default:
+  no rotation, file grows until you delete it.
+
   ```json
   {
     "ts": 1778518645.634,

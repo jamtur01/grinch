@@ -2983,6 +2983,15 @@ fn js_string(ctx: &JSContext, s: &str) -> Option<Retained<JSValue>> {
     unsafe { JSValue::valueWithObject_inContext(Some(any), Some(ctx)) }
 }
 
+/// Soft cap on per-cache entry counts. The interning caches in Grinch
+/// are bounded in practice by the number of distinct apps that send
+/// URLs (≤ a few dozen on any real machine), but a config whose dynamic
+/// `open` fn or opener path varies per click could grow them without
+/// bound. Stop *inserting* once the map crosses this threshold so the
+/// cache size plateaus at a known limit; misses past the threshold pay
+/// the lookup cost but the daemon can't be made to OOM via cache growth.
+const STRING_CACHE_SOFT_CAP: usize = 1024;
+
 /// Cached `js_string` keyed by the Rust `&str`. Cache hit returns a
 /// refcount bump; miss allocates the JSValue and stores it. Used for
 /// strings that repeat across resolves (opener fields), not per-call
@@ -2996,7 +3005,14 @@ fn cached_js_string(
         return Some(v.clone());
     }
     let v = js_string(ctx, s)?;
-    cache.borrow_mut().insert(s.to_string(), v.clone());
+    // Insertion-guard: don't grow past the soft cap. Past the cap, hot
+    // entries (already in the map) keep returning refcount bumps; cold
+    // entries fall through and rebuild every time, which is fine — the
+    // realistic ceiling on opener identities is in the dozens.
+    let mut cache_mut = cache.borrow_mut();
+    if cache_mut.len() < STRING_CACHE_SOFT_CAP {
+        cache_mut.insert(s.to_string(), v.clone());
+    }
     Some(v)
 }
 
@@ -3863,6 +3879,33 @@ mod integration_tests {
             "matchedRule should be null when default fired"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn cached_js_string_stops_inserting_past_soft_cap() {
+        // Build a context, hand it a cache that's already at the cap,
+        // and verify the next insert is a no-op. The lookup must still
+        // succeed (returns a fresh JSValue) — only growth is capped.
+        let ctx: Retained<JSContext> = unsafe { JSContext::new() };
+        let cache = RefCell::new(std::collections::HashMap::new());
+        // Pre-fill to the cap with synthetic entries.
+        for i in 0..STRING_CACHE_SOFT_CAP {
+            let key = format!("preload_{i}");
+            let v = js_string(&ctx, &key).expect("js_string ok");
+            cache.borrow_mut().insert(key, v);
+        }
+        assert_eq!(cache.borrow().len(), STRING_CACHE_SOFT_CAP);
+        // New miss → still returns a JSValue but doesn't grow the map.
+        let v = cached_js_string(&ctx, &cache, "post_cap").expect("returns value");
+        assert!(unsafe { v.isString() });
+        assert_eq!(
+            cache.borrow().len(),
+            STRING_CACHE_SOFT_CAP,
+            "cache must not grow past the soft cap"
+        );
+        // Existing key still hits → no allocation.
+        let hit = cached_js_string(&ctx, &cache, "preload_0").expect("returns value");
+        assert!(unsafe { hit.isString() });
     }
 
     #[test]

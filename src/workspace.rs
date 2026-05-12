@@ -42,6 +42,17 @@ extern "C" {
     fn CGEventSourceFlagsState(state_id: i32) -> u64;
 }
 
+/// Soft cap on cache entry counts (BUNDLE_URL_CACHE, IDENTIFIER_CACHE).
+/// The interning caches here are bounded in practice by how many
+/// browsers / fn-returned identifiers a real config produces (≤ a
+/// few dozen on any normal machine). A user config with a dynamic
+/// `open` fn that produces unbounded distinct strings (e.g. per-click
+/// UUIDs) would otherwise grow them without bound. Stop *inserting*
+/// past this threshold so size plateaus; hot entries (already
+/// cached) keep returning quickly, misses past the cap pay the
+/// LaunchServices lookup each time.
+const CACHE_SOFT_CAP: usize = 1024;
+
 use crate::engine::{BrowserSpec, ModifierFlags};
 
 #[derive(Clone, Debug, Default)]
@@ -141,9 +152,14 @@ fn resolved_app_url(bundle_id: &str) -> Option<Retained<NSURL>> {
         .map(|s| s.to_string());
     {
         let mut cache = BUNDLE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        cache
-            .get_or_insert_with(HashMap::new)
-            .insert(bundle_id.to_string(), abs);
+        let map = cache.get_or_insert_with(HashMap::new);
+        // Insertion-guard: a config whose dynamic `open` fn returns
+        // unbounded distinct bundle IDs per click would otherwise grow
+        // this cache without bound. Past the cap, hot entries keep
+        // returning quickly; cold entries pay the LS lookup each time.
+        if map.len() < CACHE_SOFT_CAP {
+            map.insert(bundle_id.to_string(), abs);
+        }
     }
     url
 }
@@ -558,9 +574,12 @@ pub fn resolve_browser_identifier(name: &str) -> String {
     let resolved = resolve_browser_identifier_uncached(name);
     {
         let mut cache = IDENTIFIER_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        cache
-            .get_or_insert_with(HashMap::new)
-            .insert(name.to_string(), resolved.clone());
+        let map = cache.get_or_insert_with(HashMap::new);
+        // Same insertion-guard as BUNDLE_URL_CACHE — bounded growth even
+        // under a config that produces unbounded distinct identifiers.
+        if map.len() < CACHE_SOFT_CAP {
+            map.insert(name.to_string(), resolved.clone());
+        }
     }
     resolved
 }

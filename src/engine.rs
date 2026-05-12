@@ -268,6 +268,12 @@ pub struct Engine {
     /// JSC bridge crossings per such run on resolves where none of those
     /// rules match. See `FnMatcherRun` for the per-run details.
     fn_matcher_runs: Vec<FnMatcherRun>,
+    /// `rule_to_run[i] = Some(j)` iff rule i is covered by
+    /// `fn_matcher_runs[j]`. Pre-built at engine init so the resolve
+    /// loop can answer "is this rule index inside a dispatched run?"
+    /// in O(1) instead of scanning the runs vector each iteration.
+    /// Empty (Vec of None) when there are no runs.
+    rule_to_run: Vec<Option<usize>>,
     /// JSContext owns every JSValue we still hold after compilation (user
     /// predicate functions, prelude helpers). Must outlive them.
     ctx: Retained<JSContext>,
@@ -441,6 +447,12 @@ impl Engine {
         // OOM) silently falls back to the per-matcher path for that run —
         // we never want a perf-only optimisation to break load.
         let fn_matcher_runs = build_fn_matcher_runs(&ctx, &rules);
+        let mut rule_to_run: Vec<Option<usize>> = vec![None; rules.len()];
+        for (j, run) in fn_matcher_runs.iter().enumerate() {
+            for slot in rule_to_run.iter_mut().take(run.end).skip(run.start) {
+                *slot = Some(j);
+            }
+        }
 
         let mut needs = analyse_runtime_needs(&rewrites, &rules);
         // A dynamic default (fn) is always reachable when no rule matches,
@@ -467,6 +479,7 @@ impl Engine {
             rewrites,
             rules,
             fn_matcher_runs,
+            rule_to_run,
             ctx,
             rewrite_result_helper,
             make_ctx_helper,
@@ -679,10 +692,15 @@ impl Engine {
             // that just fell through — without it the engine would
             // revert to the per-matcher path for the rest of the run
             // and lose the batched-dispatch benefit.
+            // O(1) lookup via the pre-built index. Pre-fix this was a
+            // linear scan over fn_matcher_runs each iteration —
+            // negligible for the dozens-of-rules configs Grinch sees
+            // today, but the index keeps the per-resolve cost constant
+            // as configs grow.
             if let Some(run) = self
-                .fn_matcher_runs
-                .iter()
-                .find(|r| r.start <= idx && idx < r.end)
+                .rule_to_run
+                .get(idx)
+                .and_then(|r| r.map(|j| &self.fn_matcher_runs[j]))
             {
                 let start_offset = idx - run.start;
                 match call_fn_matcher_dispatcher(run, &rc, &current, start_offset) {
@@ -3924,6 +3942,7 @@ mod integration_tests {
         w.file = Some(
             std::fs::OpenOptions::new()
                 .create(true)
+                .truncate(true)
                 .write(true)
                 .open(std::env::temp_dir().join("grinch-log-rotate-unit.tmp"))
                 .unwrap(),

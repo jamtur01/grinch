@@ -35,6 +35,24 @@
         <string>NSUserActivityTypeBrowsingWeb</string>
     </array>
 
+    <!-- Declares Grinch as an eligible host for ASWebAuthenticationSession
+         requests. Without this, macOS falls back to Safari for SSO/OAuth
+         popups (Slack login, Claude Desktop login, many corporate auth
+         flows) even when Grinch is the user's default browser — those
+         requests don't go through the regular http handler chain, they
+         go through a separate session manager that only consults apps
+         declaring this capability. The session handler in
+         session_handler.rs forwards each request URL through the same
+         engine.resolve() that handles regular clicks, so SSO popups
+         open in whatever browser the user's rules pick. -->
+    <key>ASWebAuthenticationSessionWebBrowserSupportCapabilities</key>
+    <dict>
+        <key>IsSupported</key>
+        <true/>
+        <key>EphemeralBrowserSessionIsSupported</key>
+        <true/>
+    </dict>
+
     <!-- Schemes Grinch claims via LaunchServices. The engine routes anything
          that arrives at application:openURLs: through resolve() regardless
          of scheme, so adding entries here just lets the OS deliver them.

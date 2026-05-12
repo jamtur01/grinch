@@ -209,13 +209,16 @@ define_class!(
 
             // Normal app-mode startup: load config, build the menu bar,
             // wire SIGHUP, install the running-apps cache observer, defeat
-            // AppNap so first-click-after-idle stays fast, and ask for
-            // Accessibility once.
+            // AppNap so first-click-after-idle stays fast, ask for
+            // Accessibility once, and register as the system
+            // ASWebAuthenticationSession host so SSO/OAuth popups route
+            // through Grinch instead of falling back to Safari.
             self.reload_engine();
             self.setup_menu_bar();
             install_sighup_handler(self);
             crate::workspace::install_running_apps_observer();
             crate::workspace::defeat_app_nap();
+            crate::session_handler::install(self.mtm(), forward_auth_session_url);
 
             if !ensure_accessibility_permission() {
                 eprintln!(
@@ -664,6 +667,34 @@ impl Delegate {
 fn terminate(mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
     app.terminate(None);
+}
+
+/// Bridge from `session_handler::install`'s function-pointer
+/// interface to the engine + main-thread context. Called on the main
+/// thread by the auth-session handler when a session URL needs
+/// forwarding. Looks up the delegate via the same DELEGATE_PTR the
+/// SIGHUP reload path uses; reads the engine through it and dispatches
+/// via session_handler::forward_through_engine.
+fn forward_auth_session_url(url: &str) {
+    // SAFETY: only called on the main thread (the auth-session manager
+    // dispatches its handler methods on the main run loop). MainThreadMarker
+    // is therefore valid; the unwrap can't fire in practice.
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let p = DELEGATE_PTR.load(Ordering::Relaxed);
+    if p.is_null() {
+        return;
+    }
+    // The pointer was stored from a `Retained<Delegate>` that lives for
+    // the lifetime of the process (NSApplication holds the strong ref).
+    // Reading through it is safe.
+    let delegate: &Delegate = unsafe { &*(p as *const Delegate) };
+    let engine_ref = delegate.ivars().engine.borrow();
+    let Some(engine) = engine_ref.as_ref() else {
+        return;
+    };
+    crate::session_handler::forward_through_engine(url, engine, mtm);
 }
 
 /// If `url` uses the `grinch:` scheme (an opt-in routing hook for scripts:

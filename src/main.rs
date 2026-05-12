@@ -8,6 +8,7 @@ mod engine;
 mod firefox;
 mod helpers;
 mod loader;
+mod session_handler;
 mod workspace;
 
 use app_delegate::Delegate;

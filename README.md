@@ -390,6 +390,36 @@ the menu bar icon flips to **⚠️** and a non-clickable "Config error:
 failure. The previous engine stays in place so routing keeps working
 until the config is fixed; the next successful reload restores 🎄.
 
+## SSO / OAuth popups
+
+Apps that use `ASWebAuthenticationSession` for sign-in (Slack login,
+Claude Desktop login, many corporate OAuth flows, password-manager
+extensions) don't go through the regular `http://` default-browser
+handoff. macOS routes them to a separate "trusted browser" via
+`ASWebAuthenticationSessionWebBrowserSessionManager` and falls back
+to Safari for any app that doesn't declare
+`ASWebAuthenticationSessionWebBrowserSupportCapabilities` in its
+Info.plist — which is what was happening before Grinch v0.6
+[(Finicky has the same bug)](https://github.com/johnste/finicky/issues/405).
+
+Grinch now declares the capability and registers a session handler.
+When an auth session fires, the URL is forwarded through the same
+`engine.resolve()` machinery that handles regular clicks, so SSO
+popups open in whatever browser your rules pick.
+
+**Limitation worth knowing.** Grinch is a router, not a browser — it
+can't intercept the auth callback navigation, so the originating
+app's `ASWebAuthenticationSession` completion handler may sit waiting
+until the session times out. In practice this rarely matters: most
+SSO-using apps (Slack, Claude Desktop, Microsoft auth, GitHub, Google,
+1Password) also register a fallback URL handler for their custom
+callback scheme (`slack://`, `claude://`, etc.), and the OS routes
+that URL via the regular scheme handler chain → into the app, where
+its URL handler fires and the auth completes there. Apps that
+strictly require the session-API completion path (no fallback handler
+registered) may need the user to dismiss the lingering session dialog
+manually after authenticating in the browser.
+
 ## Working with URL shorteners
 
 Grinch's resolve loop is synchronous on purpose, so it can't follow

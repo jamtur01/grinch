@@ -20,6 +20,16 @@ dispatch2 = "0.3.1"
 serde_json = "1.0.149"
 objc2-application-services = { version = "0.3.2", features = ["AXUIElement", "AXError", "libc"] }
 objc2-core-foundation = { version = "0.3.2", features = ["CFString", "CFBase", "CFDictionary", "CFNumber"] }
+# AuthenticationServices: ASWebAuthenticationSessionWebBrowserSessionManager
+# + the SessionHandling protocol. Lets Grinch register as the system's
+# SSO/OAuth session host so apps that use ASWebAuthenticationSession
+# (Slack, Claude Desktop, many corp logins) don't fall back to Safari
+# when their user has a non-Safari default browser. See
+# session_handler.rs and Info.plist for the wiring.
+objc2-authentication-services = { version = "0.3.2", features = [
+    "ASWebAuthenticationSessionWebBrowserSessionManager",
+    "ASWebAuthenticationSessionRequest",
+] }
 
 [dependencies.objc2-foundation]
 version = "0.3.2"

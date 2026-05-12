@@ -42,6 +42,7 @@
     <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar. Parse errors surface as <code>⚠️</code> with the failing line inline.</li>
     <li><strong>Hot-path resolve in nanoseconds</strong>, full click-to-browser pipeline in single-digit milliseconds.</li>
     <li><strong>Debuggable.</strong> Every resolve can be logged as JSONL with the matched rule, opener, and modifier state. <code>--list-rules</code> prints the loaded rule table for cross-reference.</li>
+    <li><strong>SSO / OAuth popups route through your rules.</strong> Apps that use <code>ASWebAuthenticationSession</code> (Slack login, Claude Desktop, corporate auth) normally fall back to Safari when the default browser isn't a recognised browser. Grinch declares the right Info.plist capability and forwards auth URLs through the same resolve pipeline as regular clicks.</li>
   </ul>
 </section>
 

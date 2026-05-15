@@ -203,6 +203,28 @@ define_class!(
             Bool::YES
         }
 
+        // Pre-runloop init. Runs before any URL events can arrive (the
+        // runloop hasn't started accepting them yet), which is the earliest
+        // we can install handlers in the AppDelegate lifecycle. Two things
+        // need that timing:
+        //
+        // 1. GURL Apple Event handler — legacy URL delivery path for plain
+        //    `open https://x/` calls. Needs to be wired before LaunchServices
+        //    fires the initial event for the URL that launched us.
+        //
+        // 2. ASWebAuthenticationSession session handler — macOS can deliver
+        //    auth-session requests during launch itself (a third-party app
+        //    calls into AS while Grinch is starting). Any window where
+        //    `sharedManager.sessionHandler` is nil falls through to Safari,
+        //    so installing late means the first SSO popup after launch
+        //    silently misroutes. Matches Finicky PR #524's move of
+        //    `InstallAuthenticationSessionHandler()` into pre-runloop init.
+        //
+        // The engine isn't loaded yet (that happens in
+        // `did_finish_launching`), so an inbound request during this brief
+        // sliver gets dropped silently by `forward_auth_session_url` — same
+        // trade-off Finicky accepts. The alternative (load the engine here)
+        // would push the menu-bar setup window even further back.
         #[unsafe(method(applicationWillFinishLaunching:))]
         fn will_finish_launching(&self, _notification: &NSNotification) {
             let manager = NSAppleEventManager::sharedAppleEventManager();
@@ -215,6 +237,13 @@ define_class!(
                     K_AE_GET_URL,
                 );
             }
+            // DELEGATE_PTR is also set by `install_sighup_handler` later, but
+            // the auth-session forwarder reads it earlier — point it at us
+            // now so URLs delivered before SIGHUP install can still route.
+            let ptr: *const Delegate = self;
+            let any_ptr: *mut AnyObject = ptr as *mut AnyObject;
+            DELEGATE_PTR.store(any_ptr, Ordering::Relaxed);
+            crate::session_handler::install(self.mtm(), forward_auth_session_url);
         }
 
         #[unsafe(method(applicationDidFinishLaunching:))]
@@ -277,16 +306,16 @@ define_class!(
             // first so we don't pile up menu bar icons (see Finicky #515),
             // then load config, build the menu bar, wire SIGHUP, install the
             // running-apps cache observer, defeat AppNap so first-click-
-            // after-idle stays fast, ask for Accessibility once, and register
-            // as the system ASWebAuthenticationSession host so SSO/OAuth
-            // popups route through Grinch instead of falling back to Safari.
+            // after-idle stays fast, and ask for Accessibility once. The
+            // ASWebAuthenticationSession handler is already installed by
+            // `will_finish_launching` so SSO/OAuth popups route from the
+            // earliest possible point in the launch sequence.
             crate::workspace::terminate_duplicate_instances();
             self.reload_engine();
             self.setup_menu_bar();
             install_sighup_handler(self);
             crate::workspace::install_running_apps_observer();
             crate::workspace::defeat_app_nap();
-            crate::session_handler::install(self.mtm(), forward_auth_session_url);
 
             if !ensure_accessibility_permission() {
                 eprintln!(

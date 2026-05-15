@@ -29,6 +29,7 @@ objc2-core-foundation = { version = "0.3.2", features = ["CFString", "CFBase", "
 objc2-authentication-services = { version = "0.3.2", features = [
     "ASWebAuthenticationSessionWebBrowserSessionManager",
     "ASWebAuthenticationSessionRequest",
+    "ASWebAuthenticationSessionCallback",
 ] }
 
 [dependencies.objc2-foundation]

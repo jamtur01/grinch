@@ -129,6 +129,16 @@ define_class!(
                 let Some(raw) = url.absoluteString() else { continue };
                 let raw = raw.to_string();
                 let inner = unwrap_grinch_scheme(&raw);
+                // If this URL is an auth-session callback that matches
+                // a pending ASWebAuthenticationSession request, complete
+                // the session and stop — don't also route the callback
+                // URL through the rules. (A custom-scheme callback like
+                // `slack://oauth-callback?token=…` would otherwise hit
+                // the engine and either get dropped or open the wrong
+                // browser.)
+                if crate::session_handler::try_complete_callback(inner) {
+                    continue;
+                }
                 let result = engine.resolve(inner, &opener, modifiers);
                 if result.browser.bundle_id.is_empty() {
                     continue;
@@ -259,6 +269,14 @@ define_class!(
             }
 
             let inner = unwrap_grinch_scheme(&raw);
+            // Same pending-session check the openURLs: path does — see
+            // there for the rationale. The two URL ingress points need
+            // it independently because macOS dispatches GURL events
+            // to handle_url:withReplyEvent: directly without going
+            // through application:openURLs: for legacy URL handlers.
+            if crate::session_handler::try_complete_callback(inner) {
+                return;
+            }
             let result = engine.resolve(inner, &opener, modifiers);
 
             if debug_enabled() {

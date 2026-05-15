@@ -93,11 +93,17 @@ fn parse_profile_names(content: &str) -> HashSet<String> {
         if !in_profile_section {
             continue;
         }
-        if let Some(value) = line
-            .strip_prefix("Name=")
-            .or_else(|| line.strip_prefix("Name = "))
-        {
-            out.insert(value.to_string());
+        // Lenient `Name = …` parsing: real profiles.ini files (written by
+        // various Firefox forks and migration tools) use mixed spacing
+        // around the `=` — `Name=x`, `Name = x`, `Name= x`, `Name =x` all
+        // occur. Strict prefix-match on two fixed shapes silently dropped
+        // valid entries, which downstream surfaced as the "profile
+        // {profile:?} not found in profiles.ini" warning even though it
+        // was right there. Split once on `=` and trim both sides.
+        if let Some((key, value)) = line.split_once('=') {
+            if key.trim() == "Name" {
+                out.insert(value.trim().to_string());
+            }
         }
     }
     out
@@ -183,6 +189,24 @@ Version=2
         assert!(parse_profile_names("").is_empty());
         assert!(parse_profile_names("not an ini file").is_empty());
         assert!(parse_profile_names("[General]\nVersion=2\n").is_empty());
+    }
+
+    #[test]
+    fn parse_profile_names_accepts_mixed_spacing_around_equals() {
+        // Real-world profiles.ini files (Firefox forks, migration tools)
+        // use mixed spacing. Strict `Name=` and `Name = ` prefix matching
+        // dropped valid entries. Verify `Name= x`, `Name =x`, tabs all work.
+        let content = "[Profile0]\n\
+                       Name= no-space-before\n\
+                       [Profile1]\n\
+                       Name =no-space-after\n\
+                       [Profile2]\n\
+                       Name\t=\ttab-padded\n";
+        let names = parse_profile_names(content);
+        assert!(names.contains("no-space-before"));
+        assert!(names.contains("no-space-after"));
+        assert!(names.contains("tab-padded"));
+        assert_eq!(names.len(), 3);
     }
 
     #[test]

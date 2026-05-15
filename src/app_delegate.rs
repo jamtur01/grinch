@@ -859,8 +859,10 @@ fn unwrap_grinch_scheme(url: &str) -> std::borrow::Cow<'_, str> {
 /// Decode a `grinch://open/<…>` envelope payload. Accepts both standard
 /// base64 (what JavaScript's `btoa` emits — `+` / `/`) and URL-safe
 /// base64 (`-` / `_`), with optional `=` padding. Returns None on any
-/// invalid character or if the decoded bytes aren't valid UTF-8 —
-/// the caller falls back to passing the original URL through unchanged.
+/// invalid character, a trailing 6-bit leftover (single dangling char
+/// that encodes no bytes — malformed base64), or if the decoded bytes
+/// aren't valid UTF-8. The caller falls back to passing the original
+/// URL through unchanged.
 fn decode_envelope_b64(s: &str) -> Option<String> {
     let mut out = Vec::with_capacity(s.len() * 3 / 4 + 1);
     let mut buf: u32 = 0;
@@ -882,6 +884,9 @@ fn decode_envelope_b64(s: &str) -> Option<String> {
             out.push((buf >> bits) as u8);
             buf &= (1u32 << bits) - 1;
         }
+    }
+    if bits == 6 {
+        return None;
     }
     String::from_utf8(out).ok()
 }

@@ -69,9 +69,10 @@ iterating:
 ```
 
 Both load whichever config exists at `~/.grinch.js`,
-`~/.config/grinch.js`, or `~/.config/grinch/grinch.js` (checked in that
-order). To exercise a different config without touching your real one,
-stage it under a temp `HOME`:
+`~/.config/grinch.js`, `~/.config/grinch/grinch.js`, or
+`/Library/Application Support/Grinch/grinch.js` (the last is system-wide /
+MDM, checked last). To exercise a different config without touching your
+real one, stage it under a temp `HOME`:
 
 ```sh
 mkdir -p /tmp/scratch && cp examples/grinch.example.js /tmp/scratch/.grinch.js

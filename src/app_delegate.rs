@@ -136,10 +136,10 @@ define_class!(
                 // `slack://oauth-callback?token=…` would otherwise hit
                 // the engine and either get dropped or open the wrong
                 // browser.)
-                if crate::session_handler::try_complete_callback(inner) {
+                if crate::session_handler::try_complete_callback(&inner) {
                     continue;
                 }
-                let result = engine.resolve(inner, &opener, modifiers);
+                let result = engine.resolve(&inner, &opener, modifiers);
                 if result.browser.bundle_id.is_empty() {
                     continue;
                 }
@@ -332,10 +332,10 @@ define_class!(
             // it independently because macOS dispatches GURL events
             // to handle_url:withReplyEvent: directly without going
             // through application:openURLs: for legacy URL handlers.
-            if crate::session_handler::try_complete_callback(inner) {
+            if crate::session_handler::try_complete_callback(&inner) {
                 return;
             }
-            let result = engine.resolve(inner, &opener, modifiers);
+            let result = engine.resolve(&inner, &opener, modifiers);
 
             if debug_enabled() {
                 eprintln!(
@@ -573,9 +573,9 @@ impl Delegate {
         // before resolve, so `--test grinch:https://x/` exercises the same
         // routing the user would get from `open grinch:https://x/`.
         let inner = unwrap_grinch_scheme(raw);
-        let result = engine.resolve(inner, &opener, ModifierFlags::default());
+        let result = engine.resolve(&inner, &opener, ModifierFlags::default());
         println!("URL:     {raw}");
-        if inner != raw {
+        if inner.as_ref() != raw {
             println!("Routed:  {inner}");
         }
         println!("Final:   {}", result.url);
@@ -796,18 +796,65 @@ fn forward_auth_session_url(url: &str) {
 /// engine resolves the inner URL through the user's rules as if it had
 /// arrived normally. Otherwise return the input unchanged.
 ///
-/// Accepts both `grinch:<inner>` (RFC 3986 opaque form) and `grinch://<inner>`
-/// (the form `open(1)` synthesises when invoked with `--background`). Empty
-/// `grinch:` payloads route as `""`, which falls through to the default
-/// browser — same as any other no-op URL would.
-fn unwrap_grinch_scheme(url: &str) -> &str {
+/// Accepts three shapes:
+///   - `grinch:<inner>` — RFC 3986 opaque form
+///   - `grinch://<inner>` — the form `open(1)` synthesises when invoked
+///     with `--background`
+///   - `grinch://open/<base64>` — the envelope shape Finicky's published
+///     Chrome and Firefox addons emit (PRs johnste/finicky#423, #418).
+///     The payload is `btoa(url)` — standard base64 — but the decoder
+///     also accepts the URL-safe alphabet (`-`/`_`) and missing padding.
+///
+/// Empty `grinch:` payloads route as `""`, which falls through to the
+/// default browser — same as any other no-op URL would. A `grinch://open/…`
+/// shape whose payload doesn't decode to valid base64 is passed through
+/// unchanged so the engine sees the malformed input rather than silently
+/// dropping it.
+fn unwrap_grinch_scheme(url: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    if let Some(b64) = url.strip_prefix("grinch://open/") {
+        return match decode_envelope_b64(b64) {
+            Some(decoded) => Cow::Owned(decoded),
+            None => Cow::Borrowed(url),
+        };
+    }
     if let Some(rest) = url.strip_prefix("grinch://") {
-        return rest;
+        return Cow::Borrowed(rest);
     }
     if let Some(rest) = url.strip_prefix("grinch:") {
-        return rest;
+        return Cow::Borrowed(rest);
     }
-    url
+    Cow::Borrowed(url)
+}
+
+/// Decode a `grinch://open/<…>` envelope payload. Accepts both standard
+/// base64 (what JavaScript's `btoa` emits — `+` / `/`) and URL-safe
+/// base64 (`-` / `_`), with optional `=` padding. Returns None on any
+/// invalid character or if the decoded bytes aren't valid UTF-8 —
+/// the caller falls back to passing the original URL through unchanged.
+fn decode_envelope_b64(s: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4 + 1);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for c in s.bytes() {
+        let v: u32 = match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a') as u32 + 26,
+            b'0'..=b'9' => (c - b'0') as u32 + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            b'=' => continue,
+            _ => return None,
+        };
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1u32 << bits) - 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Read the sender pid attribute (`'spid'`) off a GURL Apple Event. Returns
@@ -1104,6 +1151,51 @@ mod tests {
         // the empty string and falls through to default.
         assert_eq!(unwrap_grinch_scheme("grinch:"), "");
         assert_eq!(unwrap_grinch_scheme("grinch://"), "");
+    }
+
+    #[test]
+    fn unwrap_grinch_scheme_decodes_envelope_standard_b64() {
+        // `btoa("https://example.com/")` = "aHR0cHM6Ly9leGFtcGxlLmNvbS8="
+        // — what Finicky's published browser addons emit verbatim.
+        assert_eq!(
+            unwrap_grinch_scheme("grinch://open/aHR0cHM6Ly9leGFtcGxlLmNvbS8="),
+            "https://example.com/"
+        );
+        // Same payload, padding stripped — the URL parser may have eaten
+        // the trailing `=` since it's reserved.
+        assert_eq!(
+            unwrap_grinch_scheme("grinch://open/aHR0cHM6Ly9leGFtcGxlLmNvbS8"),
+            "https://example.com/"
+        );
+    }
+
+    #[test]
+    fn unwrap_grinch_scheme_decodes_envelope_url_safe_b64() {
+        // URL-safe alphabet (`-`/`_` instead of `+`/`/`). Some addons
+        // pre-encode the payload to keep it path-safe; we accept both.
+        // `btoa("https://example.com/?q=a+b")` uses `+`; the URL-safe
+        // variant replaces it with `-`. Verify the decoder accepts the
+        // safe form.
+        let standard = "aHR0cHM6Ly9leGFtcGxlLmNvbS8/cT1hK2I=";
+        let safe = standard
+            .replace('+', "-")
+            .replace('/', "_")
+            .replace('=', "");
+        let safe_url = format!("grinch://open/{safe}");
+        assert_eq!(
+            unwrap_grinch_scheme(&safe_url),
+            "https://example.com/?q=a+b"
+        );
+    }
+
+    #[test]
+    fn unwrap_grinch_scheme_passes_through_malformed_envelope() {
+        // Garbage payload after the envelope prefix → pass through the
+        // whole URL unchanged so the engine sees the malformed input
+        // (and either rejects it or falls to default) rather than us
+        // silently swallowing the click.
+        let url = "grinch://open/!!!not-base64!!!";
+        assert_eq!(unwrap_grinch_scheme(url), url);
     }
 
     #[test]

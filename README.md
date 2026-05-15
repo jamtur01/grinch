@@ -263,12 +263,12 @@ on the hot path for user-written `(url, ctx) => ...` predicates.
 | `{ match: ..., url: () => null }` | Drop the URL (suppress, open nothing) |
 
 `safelinks()` is a bare top-level entry (no `match:` field) that recognises
-three of the most common corporate URL wrappers and extracts the real
-destination from the encoded `url` / `u` query parameter:
+the most common corporate URL wrappers and extracts the real destination:
 
 - **Microsoft 365 Defender SafeLinks** — `*.safelinks.protection.outlook.com/?url=…`
 - **Microsoft Teams external-link interstitial** — `statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…`
 - **Proofpoint URL Defense v2** — `urldefense.proofpoint.com/v2/url?u=…`
+- **Proofpoint URL Defense v3** — `urldefense.com/v3/__<encoded>__;<marker>!!…` — uses `*` placeholders with a base64-URL replacement stream (and `**X` run-length markers for runs of 2–65)
 
 Pass-through on every other host, so it's safe at the top of the rewrite
 chain. Composes cleanly with `strip()` — `[safelinks(), strip("utm_*")]`

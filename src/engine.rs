@@ -1606,6 +1606,23 @@ fn unwrap_teams_launcher(url: &str) -> Option<String> {
 
 fn unwrap_safelink_once(url: &str) -> Option<String> {
     let host = quick_host(url)?;
+
+    // Proofpoint URL Defense v3 lives at a different host
+    // (`urldefense.com`, not `urldefense.proofpoint.com`) AND uses a
+    // completely different URL shape — the encoded URL is in the path
+    // between `__` markers, not in a query param. Dispatch it on its
+    // own branch before the param-based unwrap below.
+    //
+    //   https://urldefense.com/v3/__<encoded>__;<base64-marker>!![tracker]$
+    //
+    // The `<encoded>` portion is the original URL with most non-ASCII
+    // characters replaced by `*` placeholders (or `**X` run-length
+    // markers); `<base64-marker>` is a URL-safe base64 stream of the
+    // replacement characters in left-to-right order.
+    if host.as_ref() == "urldefense.com" {
+        return unwrap_proofpoint_v3(url);
+    }
+
     let query_start = url.find('?')?;
     // Path = everything between the authority and the `?`. `quick_host`
     // strips userinfo (`user@…`) and port (`:443`) from the host, so
@@ -1647,6 +1664,137 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
         return None;
     }
     Some(decoded)
+}
+
+/// Decode a Proofpoint URL Defense v3 URL into the original target URL.
+///
+/// v3 wraps the original URL inside a path like:
+///   `https://urldefense.com/v3/__<encoded>__;<b64-marker>!![tracker]$`
+///
+/// where `<encoded>` is the original URL with most special characters
+/// replaced by `*` placeholders (or `**X` run-length markers for
+/// repeated runs of 2–65 substitutions), and `<b64-marker>` is a
+/// URL-safe base64 stream of the replacement characters in
+/// left-to-right substitution order.
+///
+/// The single-`*` form takes one char from the replacement stream; the
+/// `**X` form takes N chars, where X maps to a length via
+/// `proofpoint_v3_run_length` (A=2, B=3, …, -=64, _=65). Returns None
+/// for any structural failure (unparseable path, malformed base64,
+/// exhausted replacement stream, unknown run-length char) so the
+/// rewriter passes the URL through unchanged.
+///
+/// **ASCII-only scope.** The full Proofpoint decoder handles multi-byte
+/// UTF-8 sequences with a `save_bytes` carry-over for replacement runs
+/// that cross 65-byte segment boundaries; that's only relevant when the
+/// original URL contains non-ASCII chars in the host or path (rare for
+/// browser-router workloads, since URLs are typically ASCII). The
+/// implementation here treats the replacement stream as Unicode chars
+/// and pops one char per byte of run-length; it produces wrong output
+/// for the rare non-ASCII case, which fails `looks_like_url` and falls
+/// through as a pass-through — never the wrong-URL-routed-as-clean
+/// outcome.
+fn unwrap_proofpoint_v3(url: &str) -> Option<String> {
+    // Extract `<encoded>` between `__` markers and `<b64-marker>` between
+    // `__;` and the first `!`. The trailing `!![tracker]$` is opaque.
+    let body_start = url.find("/v3/__")?;
+    let after_open = &url[body_start + 6..];
+    let body_end = after_open.find("__;")?;
+    let encoded = &after_open[..body_end];
+    let after_sep = &after_open[body_end + 3..];
+    // Marker terminates at the first `!`. `!!` and `$` follow.
+    let marker_end = after_sep.find('!')?;
+    let marker_b64 = &after_sep[..marker_end];
+
+    // Empty marker → the encoded URL has no `*` placeholders, it's the
+    // real URL verbatim. Common for URLs with no special chars.
+    if marker_b64.is_empty() {
+        return if looks_like_url(encoded) {
+            Some(encoded.to_string())
+        } else {
+            None
+        };
+    }
+    let replacement_bytes = base64_url_decode(marker_b64)?;
+    let replacement = String::from_utf8(replacement_bytes).ok()?;
+    let mut chars = replacement.chars();
+
+    let mut result = String::with_capacity(encoded.len() + replacement.len());
+    let bytes = encoded.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'*' {
+            // `**X` (run-length) vs single `*`. The `**` literal needs
+            // at least two `*` bytes; if a third byte exists and is a
+            // valid run-length marker, consume the run. Otherwise it's
+            // a one-char substitution.
+            if i + 2 < bytes.len() && bytes[i + 1] == b'*' {
+                let n = proofpoint_v3_run_length(bytes[i + 2])?;
+                for _ in 0..n {
+                    result.push(chars.next()?);
+                }
+                i += 3;
+            } else {
+                result.push(chars.next()?);
+                i += 1;
+            }
+        } else {
+            // Non-ASCII bytes in the encoded path are unusual but
+            // technically valid UTF-8. Push them verbatim — they're
+            // already in their final form, no replacement needed.
+            result.push(b as char);
+            i += 1;
+        }
+    }
+    if looks_like_url(&result) {
+        Some(result)
+    } else {
+        None
+    }
+}
+
+/// Map a Proofpoint v3 `**X` run-length marker character to the number
+/// of replacement bytes it represents. Alphabet matches the canonical
+/// decoder (cardi/proofpoint-url-decoder): A=2, B=3, …, Z=27, a=28, …,
+/// z=53, 0=54, …, 9=63, -=64, _=65.
+fn proofpoint_v3_run_length(b: u8) -> Option<usize> {
+    match b {
+        b'A'..=b'Z' => Some((b - b'A') as usize + 2),
+        b'a'..=b'z' => Some((b - b'a') as usize + 28),
+        b'0'..=b'9' => Some((b - b'0') as usize + 54),
+        b'-' => Some(64),
+        b'_' => Some(65),
+        _ => None,
+    }
+}
+
+/// URL-safe base64 decode (RFC 4648 §5: `-` and `_` instead of `+` and
+/// `/`). Padding (`=`) is accepted but optional — Proofpoint strips it
+/// when emitting markers. Returns None on any invalid character.
+fn base64_url_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4 + 1);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for c in s.bytes() {
+        let v: u32 = match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a') as u32 + 26,
+            b'0'..=b'9' => (c - b'0') as u32 + 52,
+            b'-' => 62,
+            b'_' => 63,
+            b'=' => continue,
+            _ => return None,
+        };
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1u32 << bits) - 1;
+        }
+    }
+    Some(out)
 }
 
 fn find_query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
@@ -3541,6 +3689,66 @@ mod tests {
             "https://teams.microsoft.com/dl/launcher/launcher.html?url=%ZZ"
         )
         .is_none());
+    }
+
+    #[test]
+    fn proofpoint_v3_unwraps_empty_marker() {
+        // No special chars in the original → empty marker stream → the
+        // encoded payload IS the original URL verbatim. The simplest v3
+        // shape.
+        let wrapped = "https://urldefense.com/v3/__https://example.com/path__;!!tracker-data$";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/path")
+        );
+    }
+
+    #[test]
+    fn proofpoint_v3_unwraps_single_star_substitution() {
+        // One special char (`?`) replaced with a single `*`. Marker
+        // stream is base64-URL-encoded `?` (0x3F) = "Pw".
+        let wrapped = "https://urldefense.com/v3/__https://example.com/*__;Pw!!tag$";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/?")
+        );
+    }
+
+    #[test]
+    fn proofpoint_v3_unwraps_run_length_marker() {
+        // Three special chars (`://`) collapsed into `**B` (B=3 in the
+        // run-length alphabet). Marker stream "Oi8v" decodes to `://`.
+        let wrapped = "https://urldefense.com/v3/__https**Bexample.com/__;Oi8v!!tag$";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/")
+        );
+    }
+
+    #[test]
+    fn proofpoint_v3_rejects_malformed_url() {
+        // Missing the `__` delimiters around the encoded payload.
+        assert!(unwrap_safelink("https://urldefense.com/v3/not-a-v3-shape").is_none());
+        // Missing the marker terminator (`!`).
+        assert!(
+            unwrap_safelink("https://urldefense.com/v3/__https://example.com/*__;Pw").is_none()
+        );
+        // Marker stream exhausted mid-decode (encoded has two `*`s, marker
+        // only encodes one byte).
+        assert!(
+            unwrap_safelink("https://urldefense.com/v3/__https://example.com/**__;Pw!!tag$")
+                .is_none()
+        );
+        // Unknown run-length char (`@` isn't in the alphabet).
+        assert!(
+            unwrap_safelink("https://urldefense.com/v3/__https**@example.com/__;Oi8v!!tag$")
+                .is_none()
+        );
+        // Invalid base64 in marker.
+        assert!(
+            unwrap_safelink("https://urldefense.com/v3/__https://example.com/*__;P!@!!tag$")
+                .is_none()
+        );
     }
 
     #[test]

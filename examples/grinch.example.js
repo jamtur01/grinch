@@ -141,6 +141,37 @@ module.exports = {
       },
     },
 
+    // Microsoft Teams meeting/channel/file links → msteams: scheme so
+    // they open in the native Teams app instead of the web client.
+    //
+    // **Subtle:** Teams' custom URI scheme is single-slash
+    // (`msteams:/l/meetup-join/…`), NOT double-slash, because the OS
+    // treats it as opaque (like `mailto:` or `tel:`). To produce that
+    // shape, return a plain object with ONLY `protocol` + `pathname`
+    // (+ optional `search`). DON'T spread the input URL:
+    //
+    //   ❌ url: (url) => ({ ...url, protocol: 'msteams' })
+    //       // → msteams://teams.microsoft.com/l/…  (broken double-slash)
+    //   ❌ url: (url) => { url.protocol = 'msteams'; return url; }
+    //       // → same; in-place mutation keeps the original authority
+    //   ✅ url: (url) => ({ protocol: 'msteams',
+    //                       pathname: url.pathname,
+    //                       search: url.search })
+    //       // → msteams:/l/…  (correct single-slash opaque form)
+    //
+    // The `{protocol, pathname}` LegacyURLObject shape triggers
+    // Grinch's "no authority → emit `scheme:path` not `scheme://path`"
+    // path. The spread / mutate forms carry `hostname` through and
+    // produce double-slash output.
+    {
+      match: ["teams.microsoft.com/l/*", "*.teams.microsoft.com/l/*"],
+      url: (url) => ({
+        protocol: "msteams",
+        pathname: url.pathname,
+        search: url.search,
+      }),
+    },
+
     // Return null/undefined to drop the URL entirely.
     {
       match: (url) => url.hostname === "tracking.example.com",

@@ -1284,8 +1284,11 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
         // call surface is heavy and most routing configs don't read this.
         // Return a sensible-shape stub; the JS wrapper logs an info note
         // the first time it's called so users know to file an issue if
-        // they actually need this.
-        r#"{"isCharging":false,"isConnected":true,"percentage":null}"#.to_string()
+        // they actually need this. `percentage: -1` matches Finicky's
+        // unknown-battery sentinel (set by `info.percentage = -1` in
+        // their info.m default), so configs that check
+        // `if (powerInfo.percentage < 50)` get the same result on both.
+        r#"{"isCharging":false,"isConnected":true,"percentage":-1}"#.to_string()
     });
 }
 

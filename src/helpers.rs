@@ -564,7 +564,7 @@ var finicky = {
       finicky.__grinchPowerInfoWarned = true;
       console.warn(
         "finicky.getPowerInfo is a stub in Grinch — it returns placeholder " +
-        "values (isCharging: false, isConnected: true, percentage: null) " +
+        "values (isCharging: false, isConnected: true, percentage: -1) " +
         "regardless of actual battery state. File a Grinch issue if you " +
         "need real values."
       );
@@ -572,10 +572,11 @@ var finicky = {
     if (typeof __grinchGetPowerInfo === "function") {
       try { return JSON.parse(__grinchGetPowerInfo()); } catch (_) {}
     }
-    // Match the shape the Rust bridge returns when it IS installed
-    // (engine.rs's `__grinchGetPowerInfo` placeholder), so behaviour is
-    // identical whether or not the install_finicky_callbacks pass ran.
-    return { isCharging: false, isConnected: true, percentage: null };
+    // Match Finicky's sentinel: an unknown `percentage` is `-1`, not `null`.
+    // A config that does `if (powerInfo.percentage < 50)` then gets a real
+    // numeric comparison (true on the stub, matching Finicky's stub
+    // semantics) rather than a `null < 50` that silently evaluates false.
+    return { isCharging: false, isConnected: true, percentage: -1 };
   },
 };
 

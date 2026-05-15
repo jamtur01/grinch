@@ -12,7 +12,7 @@ upstream, then [Differences from Finicky](#differences-from-finicky) below
 for the rest.) Inspired by both [Finicky](https://github.com/johnste/finicky)
 and [Finch](https://github.com/expelledboy/finch).
 
-- **~1500 LOC Rust** + a small embedded JS prelude
+- **~4,100 LOC Rust** core (plus ~3,400 LOC tests) + a small embedded JS prelude
 - **~16 MB** resident memory, **~1.5 MB** universal binary
 - Native `JavaScriptCore` for config eval — no Electron, no bundler, no transpiler
 - Single DMG, universal binary (Apple Silicon + Intel)
@@ -106,7 +106,8 @@ module.exports = {
 Finicky-style aliases are accepted everywhere: `defaultBrowser`, `handlers`,
 `browser` work identically to `default`, `rules`, `open`.
 
-The `options` block accepts Finicky v4's five keys. Two are wired up:
+The `options` block accepts Finicky v4's keys (plus Grinch's own
+`logRotateBytes` / `logRotateDays`). Two are wired up:
 
 - **`hideIcon: true`** — skip the menu-bar status item at app launch.
   Useful when you don't want the 🎄 in your menu bar. Reloads don't
@@ -180,8 +181,11 @@ A browser is one of:
 | `null` | Suppress: do nothing. Works as a rule's `open: null` AND as `defaultBrowser: null` (Finicky-compat) — when no rule matches and the default is null, nothing opens |
 
 The `profile` shorthand is auto-expanded for the Chromium family (Chrome,
-Brave, Edge, Vivaldi, Arc, Opera, Chromium) and the Firefox family
-(Firefox, Firefox Developer Edition, Firefox Nightly, Waterfox, LibreWolf).
+Brave, Edge, Vivaldi, Arc, Opera, Opera GX, Chromium, Wavebox, Helium,
+Comet, Yandex) and the Firefox family (Firefox, Firefox Developer Edition,
+Firefox Nightly, Waterfox, LibreWolf, Zen). The exact bundle ID list mirrors
+Finicky's `browsers.json` — see `src/chromium.rs` and `src/firefox.rs` for
+the current set.
 Chromium profiles can be referenced by either their on-disk directory
 ("Profile 10") or their display name ("Work") — Grinch resolves through
 Chrome's `Local State`. Firefox profiles use the name from `profiles.ini`;
@@ -268,7 +272,7 @@ the most common corporate URL wrappers and extracts the real destination:
 - **Microsoft 365 Defender SafeLinks** — `*.safelinks.protection.outlook.com/?url=…`
 - **Microsoft Teams external-link interstitial** — `statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…`
 - **Proofpoint URL Defense v2** — `urldefense.proofpoint.com/v2/url?u=…`
-- **Proofpoint URL Defense v3** — `urldefense.com/v3/__<encoded>__;<marker>!!…` — uses `*` placeholders with a base64-URL replacement stream (and `**X` run-length markers for runs of 2–65)
+- **Proofpoint URL Defense v3** — `urldefense.com/v3/__<encoded>__;<marker>!!…` (plus the FedRAMP `urldefense.us` tenant) — uses `*` placeholders with a base64-URL replacement stream and `**X` run-length markers for runs of 2–65
 
 Pass-through on every other host, so it's safe at the top of the rewrite
 chain. Composes cleanly with `strip()` — `[safelinks(), strip("utm_*")]`
@@ -399,11 +403,17 @@ Click the 🎄 in the menu bar:
 
 | Item | Action |
 |---|---|
-| **Grinch vX.Y.Z** | Disabled label at the top showing the running binary's version. Matches `Grinch --version`. |
+| **Grinch X.Y.Z** | Disabled label at the top showing the running binary's version. Matches `Grinch --version`. |
 | **Open Config** (⌘O) | Opens the active config file in your default `.js` handler (VS Code / Cursor / etc.). |
 | **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
 | **Quit Grinch** (⌘Q) | Exit. |
+
+At launch Grinch terminates any other running instances with the same
+bundle identifier before installing its menu bar item, so stale
+LaunchServices registrations (after an app move, dev build vs installed
+build with the same ID, or enterprise-auth agents spawning a helper)
+can't pile up 16 menu bar icons over time. Mirrors Finicky #515.
 
 If a reload fails (syntax error, unreadable file, missing `default`),
 the menu bar icon flips to **⚠️** and a non-clickable "Config error:
@@ -434,6 +444,14 @@ handlers match the URL against pending sessions via the framework's
 `completeWithCallbackURL:` — letting the originating app's
 session-API completion handler fire normally and dismissing the
 auth dialog cleanly.
+
+The handler installs in `applicationWillFinishLaunching:`, before the
+runloop accepts events, so a request delivered during launch itself
+(third-party app calls into AuthenticationServices while Grinch is
+starting) doesn't fall through to Safari while we're still booting.
+Grinch also declares `CallbackURLMatchingIsSupported: true` —
+some auth clients (notably Slack) gate SSO routing on that capability
+and skip browsers that don't advertise it.
 
 **Caveats.** Grinch declares `IsSupported: true` but not
 `EphemeralBrowserSessionIsSupported`: we route to the user's regular
@@ -529,6 +547,14 @@ URL is what your rules match against. Useful for Shortcuts, AppleScript,
 and `open(1)` flows where you want to route through Grinch even if it
 isn't the system default browser.
 
+A third shape, `grinch://open/<base64-url>`, accepts a `btoa()`-encoded
+inner URL. This is the envelope shape Finicky's published Chrome and
+Firefox addons emit; pointing those addons at `grinch://open/…` instead
+of `finicky://open/…` makes the "Open with Finicky" right-click menu
+route through Grinch without it needing to be the default browser. Both
+the standard (`+`/`/`) and URL-safe (`-`/`_`) base64 alphabets are
+accepted, with optional `=` padding.
+
 ## Performance
 
 A few benchmark data points from `bench/run.sh`. Worth knowing that
@@ -597,7 +623,7 @@ exercises that path.
 |---|---:|---:|---:|
 | Resident memory | 15.5 MB | 14.6 MB | 142.5 MB |
 | Peak memory | 16.6 MB | 15.5 MB | 391.2 MB |
-| Source LOC | ~1,500 | ~700 | ~2,900 |
+| Source LOC | ~4,100 core / ~3,400 tests | ~700 | ~2,900 |
 | JS engine | system JSC | n/a (Swift DSL) | bundled goja |
 | Bundled UI | menu bar only | menu bar only | WebView config app |
 
@@ -665,8 +691,11 @@ to adjust:
    - `finicky.isAppRunning(id)` — matches against bundle ID OR localized name.
    - `finicky.getSystemInfo()` — `{localizedName, name}` from `[NSHost currentHost]`.
    - `finicky.getPowerInfo()` — **stub** that returns placeholder values
-     (`{isCharging:false, isConnected:true, percentage:null}`) and emits a
-     one-time `console.warn` on first call. Real IOKit hookup is on the TODO
+     (`{isCharging:false, isConnected:true, percentage:-1}`) and emits a
+     one-time `console.warn` on first call. The `-1` sentinel matches
+     Finicky's IOKit behaviour for the "no battery detected" case, so
+     configs that check `if (powerInfo.percentage < 50)` get the same
+     result on both. Real IOKit hookup is on the TODO
      list; routing on actual battery state isn't supported yet.
    - `finicky.notify(...)` — **stub**; logs a `console.error` pointing at
      `console.log` and returns. macOS notifications aren't wired up.

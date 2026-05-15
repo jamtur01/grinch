@@ -1001,14 +1001,17 @@ fn classify_pipe_read(n: isize, err: std::io::Error) -> PipeReadOutcome {
     PipeReadOutcome::Fatal(err)
 }
 
-fn install_sighup_handler(delegate: &Delegate) {
+fn install_sighup_handler(_delegate: &Delegate) {
     // Idempotency: if called twice (e.g., a future refactor that reloads
     // the delegate without restarting the process), don't open a second
     // pipe + reader thread, which would leak fds and double-handle SIGHUP.
+    //
+    // `DELEGATE_PTR` is set in `applicationWillFinishLaunching:` before this
+    // runs, so we don't store again here — there's only ever one Delegate
+    // instance per process and writing the same pointer a second time would
+    // be redundant (and would lie about the lifecycle if someone reads the
+    // store as "this is where the pointer becomes live").
     static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let ptr: *const Delegate = delegate;
-    let any_ptr: *mut AnyObject = ptr as *mut AnyObject;
-    DELEGATE_PTR.store(any_ptr, Ordering::Relaxed);
     if INSTALLED.load(Ordering::SeqCst) {
         return;
     }

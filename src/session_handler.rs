@@ -41,6 +41,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
@@ -75,20 +76,21 @@ thread_local! {
 /// cycle (manager → handler → delegate → manager).
 type Forwarder = fn(&str);
 
-static mut FORWARDER: Option<Forwarder> = None;
+/// One-shot store for the URL-forwarding callback. `OnceLock` because the
+/// handler installs at startup and never replaces the forwarder, and
+/// because `static mut` for an `Option<fn(&str)>` would otherwise need
+/// hand-rolled unsafe — the OnceLock here is the same shape with the
+/// memory-safety guarantees provided by the standard library.
+static FORWARDER: OnceLock<Forwarder> = OnceLock::new();
 
 /// One-shot installer. Sets the shared session manager's handler to a
 /// new `Handler` instance and stashes the URL-forwarding callback so
-/// the handler can reach back into engine.resolve / open_url. Safe to
-/// call once per process; subsequent calls overwrite the manager's
-/// handler (cheap, idempotent in practice).
+/// the handler can reach back into engine.resolve / open_url. The first
+/// call wins; subsequent calls swap the manager's handler (cheap) but
+/// don't replace the forwarder (OnceLock semantics) — fine because
+/// AppDelegate only installs once per process.
 pub fn install(mtm: MainThreadMarker, forwarder: Forwarder) {
-    // SAFETY: only called from the main thread during AppDelegate
-    // `applicationDidFinishLaunching:`. FORWARDER is a function pointer
-    // read on the same thread by the handler's protocol methods.
-    unsafe {
-        FORWARDER = Some(forwarder);
-    }
+    let _ = FORWARDER.set(forwarder);
     let handler = Handler::new(mtm);
     let manager = unsafe { ASWebAuthenticationSessionWebBrowserSessionManager::sharedManager() };
     let proto: &ProtocolObject<dyn ASWebAuthenticationSessionWebBrowserSessionHandling> =
@@ -161,11 +163,7 @@ define_class!(
             PENDING.with(|p| {
                 p.borrow_mut().insert(uuid, request.retain());
             });
-            // SAFETY: FORWARDER set on main thread during AppDelegate
-            // launch; this method also runs on main thread. Sequential
-            // single-thread access; no race.
-            let cb = unsafe { FORWARDER };
-            if let Some(cb) = cb {
+            if let Some(cb) = FORWARDER.get() {
                 cb(&href);
             }
         }

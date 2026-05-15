@@ -359,8 +359,19 @@ pub fn terminate_duplicate_instances() -> usize {
 
     for app in &duplicates {
         let pid = app.processIdentifier();
-        eprintln!("grinch: terminating duplicate instance (pid {pid})");
-        let _ = app.terminate();
+        // `-[NSRunningApplication terminate]` returns NO when the request
+        // couldn't be sent at all (sandboxed context, target already gone,
+        // entitlement-denied). Surface that immediately instead of waiting
+        // a full second only to log the same pid again on the force path —
+        // the user sees a startup stall otherwise with no diagnostic.
+        if app.terminate() {
+            eprintln!("grinch: terminating duplicate instance (pid {pid})");
+        } else {
+            eprintln!(
+                "grinch: terminate request for duplicate instance (pid {pid}) was refused \
+                 (sandbox / entitlement / process already gone); will retry with forceTerminate"
+            );
+        }
     }
 
     // Share a single deadline so 16 hung duplicates don't cost 16× the wait.
@@ -379,10 +390,16 @@ pub fn terminate_duplicate_instances() -> usize {
             continue;
         }
         let pid = app.processIdentifier();
-        eprintln!(
-            "grinch: duplicate instance (pid {pid}) did not exit within 1s; force-terminating"
-        );
-        let _ = app.forceTerminate();
+        if app.forceTerminate() {
+            eprintln!(
+                "grinch: duplicate instance (pid {pid}) did not exit within 1s; force-terminating"
+            );
+        } else {
+            eprintln!(
+                "grinch: forceTerminate also refused for duplicate instance (pid {pid}); \
+                 the duplicate menu bar icon may persist until that process exits naturally"
+            );
+        }
     }
     duplicates.len()
 }

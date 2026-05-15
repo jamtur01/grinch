@@ -315,6 +315,78 @@ pub fn opener_from_pid(pid: i32) -> Option<Opener> {
     })
 }
 
+/// Terminate any other running instances of Grinch with the same bundle
+/// identifier so we're the only one left when the menu bar item gets
+/// installed. Macos `Launch Services` is *supposed* to route GetURL events
+/// to an existing process rather than spawn a duplicate, but that routing
+/// can fail in real-world scenarios (stale `LSpref` registration after the
+/// app bundle moves, a developer build vs an installed build with the same
+/// bundle ID, SSO/enterprise-auth agents launching the helper out of a
+/// different context). Without this guard, duplicates accumulate menu-bar
+/// icons that never get reaped — see Finicky issue #515 / PR #516, where
+/// users hit 16 status items on a single machine.
+///
+/// Mirrors Finicky's reference implementation: enumerate
+/// `runningApplicationsWithBundleIdentifier:`, send `terminate` to every
+/// non-self instance, share a single deadline across the poll loop so N
+/// hung duplicates don't cost N× the wait budget, then `forceTerminate`
+/// anything still alive at the deadline.
+///
+/// Returns the number of duplicates that were asked to terminate (0 in the
+/// normal case) so the caller can log a one-liner when something was found.
+pub fn terminate_duplicate_instances() -> usize {
+    let Some(bundle_id) = NSBundle::mainBundle().bundleIdentifier() else {
+        return 0;
+    };
+    let self_pid = NSRunningApplication::currentApplication().processIdentifier();
+    let instances = NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id);
+
+    let mut duplicates: Vec<Retained<NSRunningApplication>> = Vec::new();
+    for i in 0..instances.count() {
+        let app = instances.objectAtIndex(i);
+        if app.processIdentifier() == self_pid {
+            continue;
+        }
+        if app.isTerminated() {
+            continue;
+        }
+        duplicates.push(app);
+    }
+
+    if duplicates.is_empty() {
+        return 0;
+    }
+
+    for app in &duplicates {
+        let pid = app.processIdentifier();
+        eprintln!("grinch: terminating duplicate instance (pid {pid})");
+        let _ = app.terminate();
+    }
+
+    // Share a single deadline so 16 hung duplicates don't cost 16× the wait.
+    // Poll cheaply — `terminate` is a request, not a sync call; `isTerminated`
+    // flips when the target's run loop processes it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        if duplicates.iter().all(|a| a.isTerminated()) {
+            return duplicates.len();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    for app in &duplicates {
+        if app.isTerminated() {
+            continue;
+        }
+        let pid = app.processIdentifier();
+        eprintln!(
+            "grinch: duplicate instance (pid {pid}) did not exit within 1s; force-terminating"
+        );
+        let _ = app.forceTerminate();
+    }
+    duplicates.len()
+}
+
 /// One row of `list_http_browsers()` output — the bundle ID a user would
 /// write in their config plus the display name the OS shows.
 pub struct BrowserListing {

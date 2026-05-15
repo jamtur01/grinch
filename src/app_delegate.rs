@@ -273,12 +273,14 @@ define_class!(
                 std::process::exit(code);
             }
 
-            // Normal app-mode startup: load config, build the menu bar,
-            // wire SIGHUP, install the running-apps cache observer, defeat
-            // AppNap so first-click-after-idle stays fast, ask for
-            // Accessibility once, and register as the system
-            // ASWebAuthenticationSession host so SSO/OAuth popups route
-            // through Grinch instead of falling back to Safari.
+            // Normal app-mode startup: kill any stale duplicate instances
+            // first so we don't pile up menu bar icons (see Finicky #515),
+            // then load config, build the menu bar, wire SIGHUP, install the
+            // running-apps cache observer, defeat AppNap so first-click-
+            // after-idle stays fast, ask for Accessibility once, and register
+            // as the system ASWebAuthenticationSession host so SSO/OAuth
+            // popups route through Grinch instead of falling back to Safari.
+            crate::workspace::terminate_duplicate_instances();
             self.reload_engine();
             self.setup_menu_bar();
             install_sighup_handler(self);

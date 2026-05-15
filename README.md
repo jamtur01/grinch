@@ -400,26 +400,29 @@ handoff. macOS routes them to a separate "trusted browser" via
 `ASWebAuthenticationSessionWebBrowserSessionManager` and falls back
 to Safari for any app that doesn't declare
 `ASWebAuthenticationSessionWebBrowserSupportCapabilities` in its
-Info.plist — which is what was happening before Grinch v0.6
+Info.plist — which is what was happening before Grinch v0.5
 [(Finicky has the same bug)](https://github.com/johnste/finicky/issues/405).
 
-Grinch now declares the capability and registers a session handler.
-When an auth session fires, the URL is forwarded through the same
-`engine.resolve()` machinery that handles regular clicks, so SSO
-popups open in whatever browser your rules pick.
+Grinch declares the capability and registers a session handler that
+forwards the auth URL through the same `engine.resolve()` machinery
+that handles regular clicks. The user's chosen browser opens the URL
+as a normal tab. When the browser eventually navigates to the
+callback URL (a custom scheme like `slack://oauth-callback?token=…`,
+or an HTTPS Universal-Links callback), Grinch's URL / activity
+handlers match the URL against pending sessions via the framework's
+`ASWebAuthenticationSessionCallback.matchesURL:` and call
+`completeWithCallbackURL:` — letting the originating app's
+session-API completion handler fire normally and dismissing the
+auth dialog cleanly.
 
-**Limitation worth knowing.** Grinch is a router, not a browser — it
-can't intercept the auth callback navigation, so the originating
-app's `ASWebAuthenticationSession` completion handler may sit waiting
-until the session times out. In practice this rarely matters: most
-SSO-using apps (Slack, Claude Desktop, Microsoft auth, GitHub, Google,
-1Password) also register a fallback URL handler for their custom
-callback scheme (`slack://`, `claude://`, etc.), and the OS routes
-that URL via the regular scheme handler chain → into the app, where
-its URL handler fires and the auth completes there. Apps that
-strictly require the session-API completion path (no fallback handler
-registered) may need the user to dismiss the lingering session dialog
-manually after authenticating in the browser.
+**Caveats.** Grinch declares `IsSupported: true` but not
+`EphemeralBrowserSessionIsSupported`: we route to the user's regular
+browser tab, which inherits their existing cookies and profile
+state, so the isolation Apple promises for
+`shouldUseEphemeralSession`-flagged requests isn't actually
+delivered. Apps that need ephemeral sessions see the missing key
+and fall back to a non-ephemeral flow. Apps that don't request
+ephemeral (the vast majority) are unaffected.
 
 ## Working with URL shorteners
 

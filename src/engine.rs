@@ -183,6 +183,11 @@ enum Rewriter {
     /// Microsoft Defender, Teams, and Proofpoint wrapper shapes; passes
     /// through on hosts it doesn't recognise. See `unwrap_safelink`.
     Safelinks,
+    /// Unwrap a Microsoft Teams launcher URL
+    /// (`teams.microsoft.com/dl/launcher/launcher.html?url=…`) into the
+    /// native `msteams:` scheme. Pass-through on every other host.
+    /// See `unwrap_teams_launcher`.
+    TeamsLauncher,
 }
 
 enum Target {
@@ -1515,6 +1520,10 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
                 },
             }
         }
+        Rewriter::TeamsLauncher => match unwrap_teams_launcher(url) {
+            Some(new_url) => RewriteOutcome::Changed(new_url),
+            None => RewriteOutcome::Unchanged,
+        },
         Rewriter::Safelinks => match unwrap_safelink(url) {
             Some(new_url) => RewriteOutcome::Changed(new_url),
             None => RewriteOutcome::Unchanged,
@@ -1550,6 +1559,49 @@ fn unwrap_safelink(url: &str) -> Option<String> {
         changed = true;
     }
     changed.then_some(current)
+}
+
+/// Unwrap a Microsoft Teams launcher URL into the native `msteams:` scheme.
+///
+/// Calendar invites and corporate share links commonly use the launcher
+/// form (`https://teams.microsoft.com/dl/launcher/launcher.html?url=…`)
+/// because it works on machines that don't have Teams installed (it opens
+/// the web client). Users with Teams installed almost always want the
+/// native client, which speaks the `msteams:` scheme — but you can't get
+/// there directly from a calendar invite link without rewriting.
+///
+/// Returns the rebuilt `msteams:<path>` form on a recognised launcher
+/// URL, or None for any other host/path so the caller treats it as a
+/// pass-through.
+fn unwrap_teams_launcher(url: &str) -> Option<String> {
+    let host = quick_host(url)?;
+    if host.as_ref() != "teams.microsoft.com" {
+        return None;
+    }
+    let query_start = url.find('?')?;
+    let scheme_end = url.find("://").map(|i| i + 3).unwrap_or(0);
+    let path_start = url[scheme_end..query_start]
+        .find('/')
+        .map(|rel| scheme_end + rel)
+        .unwrap_or(query_start);
+    let path = &url[path_start..query_start];
+    if !path.starts_with("/dl/launcher/launcher.html") {
+        return None;
+    }
+    let query = &url[query_start + 1..];
+    let query = query.split('#').next().unwrap_or(query);
+    let encoded = find_query_param(query, "url")?;
+    let decoded = percent_decode(encoded)?;
+    if decoded.is_empty() {
+        return None;
+    }
+    // The decoded value is a relative path starting with the Teams web
+    // app's routing prefix `/_#/…` (e.g. `/_#/l/meetup-join/19:…`).
+    // Strip the `/_#` so the result is `/l/…`, the canonical `msteams:`
+    // path. If the prefix isn't present (older launcher format), use
+    // the decoded path as-is.
+    let inner = decoded.strip_prefix("/_#").unwrap_or(&decoded);
+    Some(format!("msteams:{inner}"))
 }
 
 fn unwrap_safelink_once(url: &str) -> Option<String> {
@@ -2379,6 +2431,17 @@ fn parse_rewrite_array(arr: &JSValue, function_ctor: &JSValue) -> Vec<RewriteRul
             out.push(RewriteRule {
                 matchers: vec![Matcher::Always],
                 rewriter: Rewriter::Safelinks,
+            });
+            continue;
+        }
+
+        // Bare teams_launcher() marker — same shape as safelinks(): the
+        // rewriter no-ops on hosts/paths it doesn't recognise, so an
+        // Always matcher is correct.
+        if is_marker(&item, "teams_launcher") {
+            out.push(RewriteRule {
+                matchers: vec![Matcher::Always],
+                rewriter: Rewriter::TeamsLauncher,
             });
             continue;
         }
@@ -3411,6 +3474,73 @@ mod tests {
             unwrap_safelink(wrapped).as_deref(),
             Some("https://example.com/")
         );
+    }
+
+    #[test]
+    fn teams_launcher_unwraps_to_msteams_scheme() {
+        // The shape calendar invites use: a launcher URL whose `url`
+        // query param is a percent-encoded relative path starting with
+        // the Teams web app's `/_#` routing prefix. Strip the prefix
+        // and prepend `msteams:` to get the native-app URL.
+        let wrapped = "https://teams.microsoft.com/dl/launcher/launcher.html?\
+                       url=%2F_%23%2Fl%2Fmeetup-join%2F19%3Ameeting_abc&\
+                       type=meetup-join&deeplinkId=x&directDl=true";
+        assert_eq!(
+            unwrap_teams_launcher(wrapped).as_deref(),
+            Some("msteams:/l/meetup-join/19:meeting_abc")
+        );
+    }
+
+    #[test]
+    fn teams_launcher_handles_decoded_url_without_routing_prefix() {
+        // Older launcher format that doesn't include the `/_#` web-app
+        // routing prefix — the decoded path is already canonical.
+        let wrapped = "https://teams.microsoft.com/dl/launcher/launcher.html?\
+                       url=%2Fl%2Fchannel%2F19%3Achannel123%2FGeneral";
+        assert_eq!(
+            unwrap_teams_launcher(wrapped).as_deref(),
+            Some("msteams:/l/channel/19:channel123/General")
+        );
+    }
+
+    #[test]
+    fn teams_launcher_passes_through_unrelated_hosts() {
+        // Other Teams URLs (the direct `/l/…` form) aren't launcher
+        // wrappers — they need a different rewrite. Same host but
+        // different path → pass-through, not an attempt-to-unwrap.
+        assert!(
+            unwrap_teams_launcher("https://teams.microsoft.com/l/meetup-join/19:meeting_abc")
+                .is_none()
+        );
+        // Unrelated host.
+        assert!(unwrap_teams_launcher(
+            "https://example.com/dl/launcher/launcher.html?url=%2Fl%2Ffoo"
+        )
+        .is_none());
+        // Right host, wrong path.
+        assert!(
+            unwrap_teams_launcher("https://teams.microsoft.com/other/path?url=%2Fl%2Ffoo")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn teams_launcher_rejects_empty_or_malformed_inner_url() {
+        // No `url` param → can't unwrap.
+        assert!(unwrap_teams_launcher(
+            "https://teams.microsoft.com/dl/launcher/launcher.html?type=meetup-join"
+        )
+        .is_none());
+        // Empty `url` param.
+        assert!(unwrap_teams_launcher(
+            "https://teams.microsoft.com/dl/launcher/launcher.html?url="
+        )
+        .is_none());
+        // Malformed percent escape — decoder bails.
+        assert!(unwrap_teams_launcher(
+            "https://teams.microsoft.com/dl/launcher/launcher.html?url=%ZZ"
+        )
+        .is_none());
     }
 
     #[test]

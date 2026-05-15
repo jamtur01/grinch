@@ -337,6 +337,19 @@ function safelinks() {
   return { __type: "safelinks" };
 }
 
+// Rewrite that unwraps Microsoft Teams "launcher" URLs into the native
+// `msteams:` scheme so they open in the Teams app instead of the web
+// launcher. Calendar invites and corporate share links commonly use the
+// launcher form:
+//   https://teams.microsoft.com/dl/launcher/launcher.html?url=%2F_%23%2Fl%2Fmeetup-join%2F19%3Ameeting_xxx&...
+// becomes
+//   msteams:/l/meetup-join/19:meeting_xxx
+// Pass-through on every other host.
+//   rewrite: [ teams_launcher() ]
+function teams_launcher() {
+  return { __type: "teams_launcher" };
+}
+
 // Build the ctx object passed to user `(url, ctx) => ...` predicates.
 //
 // ctx is built once per resolve and reused across all fn callbacks within

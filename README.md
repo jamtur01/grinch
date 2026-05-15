@@ -257,6 +257,7 @@ on the hot path for user-written `(url, ctx) => ...` predicates.
 |---|---|
 | `strip("utm_*", "fbclid")` | Strip these query params (trailing `*` is a prefix wildcard) |
 | `safelinks()` | Unwrap corporate SafeLinks / URL-defense wrappers — see below |
+| `teams_launcher()` | Unwrap MS Teams launcher URLs to `msteams:` — see below |
 | `{ match: ..., url: "https://..." }` | Replace URL when match hits |
 | `{ match: ..., url: (url, ctx) => ... }` | Transform URL via JS |
 | `{ match: ..., url: () => null }` | Drop the URL (suppress, open nothing) |
@@ -274,6 +275,25 @@ chain. Composes cleanly with `strip()` — `[safelinks(), strip("utm_*")]`
 unwraps a Defender-tracked Outlook link, then strips `utm_*` off the
 inner URL. Double-wrapped chains (Defender → Proofpoint and similar) are
 unwrapped up to two levels deep.
+
+`teams_launcher()` is a separate bare top-level entry that handles a
+different Microsoft URL shape — the Teams launcher landing page that
+calendar invites and corporate share links commonly use:
+
+```
+https://teams.microsoft.com/dl/launcher/launcher.html?url=%2F_%23%2Fl%2Fmeetup-join%2F19%3A…
+```
+
+The decoded `url` param is a relative path (`/_#/l/meetup-join/19:…`)
+rather than an absolute URL, so it doesn't fit `safelinks()`'s
+"hidden absolute URL" model. `teams_launcher()` strips the web-app
+routing prefix and rebuilds the URL as `msteams:/l/meetup-join/19:…`,
+which opens in the native Teams app. Pass-through on every other host
+and path. Use it alongside `safelinks()`:
+
+```js
+rewrite: [ safelinks(), teams_launcher(), strip("utm_*") ]
+```
 
 A `url` rewrite function receives a URL instance as its first argument and
 the ctx as its second. It can return:

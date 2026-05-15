@@ -59,6 +59,22 @@
     <dict>
         <key>IsSupported</key>
         <true/>
+        <!-- CallbackURLMatchingIsSupported: declares that we will deliver
+             matched callback URLs back through ASWebAuthenticationSession's
+             `completeWithCallbackURL:` API. Some auth clients (e.g. Slack)
+             gate SSO routing on this capability — without it, those clients
+             skip Grinch and fall back to the system default browser even
+             when we're the user's chosen handler.
+
+             Best-effort scope: Grinch CAN complete callbacks that re-enter
+             our URL handler (custom-scheme callbacks like
+             `slack://oauth-callback?token=…`), but it CANNOT observe
+             navigations inside the concrete browser we forward the auth
+             URL to (because we hand the URL off and disappear from the
+             flow). Matches Finicky PR #524's stance — see the long
+             comment in `session_handler.rs::try_complete_callback`. -->
+        <key>CallbackURLMatchingIsSupported</key>
+        <true/>
     </dict>
 
     <!-- Schemes Grinch claims via LaunchServices. The engine routes anything

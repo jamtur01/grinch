@@ -12,7 +12,7 @@ upstream, then [Differences from Finicky](#differences-from-finicky) below
 for the rest.) Inspired by both [Finicky](https://github.com/johnste/finicky)
 and [Finch](https://github.com/expelledboy/finch).
 
-- **~4,100 LOC Rust** core (plus ~3,400 LOC tests) + a small embedded JS prelude
+- Pure Rust core + a small embedded JS prelude
 - **~16 MB** resident memory, **~1.5 MB** universal binary
 - Native `JavaScriptCore` for config eval — no Electron, no bundler, no transpiler
 - Single DMG, universal binary (Apple Silicon + Intel)
@@ -623,7 +623,6 @@ exercises that path.
 |---|---:|---:|---:|
 | Resident memory | 15.5 MB | 14.6 MB | 142.5 MB |
 | Peak memory | 16.6 MB | 15.5 MB | 391.2 MB |
-| Source LOC | ~4,100 core / ~3,400 tests | ~700 | ~2,900 |
 | JS engine | system JSC | n/a (Swift DSL) | bundled goja |
 | Bundled UI | menu bar only | menu bar only | WebView config app |
 

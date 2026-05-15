@@ -21,6 +21,15 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      # The macos-latest runner image ships a rustup-init stub at
+      # /usr/local/bin/cargo that wins on PATH over the rustup-managed
+      # ~/.cargo/bin/cargo, so `cargo fmt` errors out with "unexpected
+      # argument 'fmt'". dtolnay/rust-toolchain only prepends ~/.cargo/bin
+      # when it installs rustup fresh; on the preinstalled-rustup path it
+      # doesn't, so we do it explicitly here.
+      - name: Prepend ~/.cargo/bin to PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - uses: Swatinem/rust-cache@v2
 
       - name: cargo fmt

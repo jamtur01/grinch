@@ -49,6 +49,11 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
+      # See ci.yml for context: macos-latest runners ship a rustup-init stub
+      # at /usr/local/bin/cargo that wins over the rustup-managed binary.
+      - name: Prepend ~/.cargo/bin to PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 

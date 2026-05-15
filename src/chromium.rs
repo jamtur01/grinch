@@ -38,6 +38,11 @@ const CHROMIUM_FAMILY: &[(&str, &str)] = &[
     ("org.chromium.Chromium", "Chromium"),
     ("company.thebrowser.Browser", "Arc/User Data"), // Arc
     ("com.operasoftware.Opera", "com.operasoftware.Opera"),
+    ("com.operasoftware.OperaGX", "com.operasoftware.OperaGX"),
+    ("com.bookry.wavebox", "WaveboxApp"),
+    ("net.imput.helium", "net.imput.helium"),
+    ("ai.perplexity.comet", "Comet"),
+    ("ru.yandex.desktop.yandex-browser", "Yandex/YandexBrowser"),
 ];
 
 pub fn is_chromium(bundle_id: &str) -> bool {
@@ -216,6 +221,13 @@ mod tests {
         assert!(is_chromium("com.brave.Browser"));
         assert!(is_chromium("company.thebrowser.Browser")); // Arc
         assert!(is_chromium("org.chromium.Chromium"));
+        // Less-common Chromium forks added so `profile:` shorthand
+        // resolves their Local State instead of silently falling through.
+        assert!(is_chromium("com.operasoftware.OperaGX"));
+        assert!(is_chromium("com.bookry.wavebox"));
+        assert!(is_chromium("net.imput.helium"));
+        assert!(is_chromium("ai.perplexity.comet"));
+        assert!(is_chromium("ru.yandex.desktop.yandex-browser"));
     }
 
     #[test]

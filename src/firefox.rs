@@ -30,6 +30,9 @@ const FIREFOX_FAMILY: &[(&str, &str)] = &[
     // profiles.ini layout under their own per-app dirs.
     ("net.waterfox.waterfox", "Waterfox"),
     ("io.gitlab.librewolf-community", "LibreWolf"),
+    // Zen Browser stores profiles in `~/Library/Application Support/zen/`
+    // with the same profiles.ini layout as Firefox.
+    ("app.zen-browser.zen", "zen"),
 ];
 
 pub fn is_firefox(bundle_id: &str) -> bool {
@@ -201,6 +204,7 @@ Name=My Profile
         assert!(is_firefox("org.mozilla.firefoxdeveloperedition"));
         assert!(is_firefox("org.mozilla.nightly"));
         assert!(is_firefox("net.waterfox.waterfox"));
+        assert!(is_firefox("app.zen-browser.zen"));
     }
 
     #[test]

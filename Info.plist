@@ -44,12 +44,20 @@
          declaring this capability. The session handler in
          session_handler.rs forwards each request URL through the same
          engine.resolve() that handles regular clicks, so SSO popups
-         open in whatever browser the user's rules pick. -->
+         open in whatever browser the user's rules pick.
+
+         EphemeralBrowserSessionIsSupported is intentionally absent.
+         Apple's contract for ephemeral sessions is "no cookies, no
+         storage, no profile state shared with the rest of the user's
+         browsing" — and we can't honour that, since we forward the
+         URL to the user's regular browser tab which inherits whatever
+         cookies and profile are already in scope. Advertising the
+         capability would mislead apps requesting `shouldUseEphemeral
+         Session`; better to let them detect the missing key and fall
+         back to a non-ephemeral flow themselves. -->
     <key>ASWebAuthenticationSessionWebBrowserSupportCapabilities</key>
     <dict>
         <key>IsSupported</key>
-        <true/>
-        <key>EphemeralBrowserSessionIsSupported</key>
         <true/>
     </dict>
 

@@ -1622,7 +1622,10 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
     // characters replaced by `*` placeholders (or `**X` run-length
     // markers); `<base64-marker>` is a URL-safe base64 stream of the
     // replacement characters in left-to-right order.
-    if host.as_ref() == "urldefense.com" {
+    // urldefense.com is the public Proofpoint v3 host; urldefense.us is the
+    // FedRAMP / US-government tenant that uses the identical v3 format on a
+    // different domain. Both dispatch to the same decoder.
+    if host.as_ref() == "urldefense.com" || host.as_ref() == "urldefense.us" {
         return unwrap_proofpoint_v3(url);
     }
 
@@ -1710,8 +1713,15 @@ fn unwrap_proofpoint_v3(url: &str) -> Option<String> {
     let marker_b64 = &after_sep[..marker_end];
 
     // Empty marker → the encoded URL has no `*` placeholders, it's the
-    // real URL verbatim. Common for URLs with no special chars.
+    // real URL verbatim. Reject if the encoded part still contains `*`
+    // (malformed Proofpoint output, or an unrelated v3-shaped attack
+    // string with no marker stream): with no replacement chars to pop,
+    // those `*`s would survive into the result and `looks_like_url`
+    // doesn't validate that hosts are `*`-free.
     if marker_b64.is_empty() {
+        if encoded.contains('*') {
+            return None;
+        }
         return if looks_like_url(encoded) {
             Some(encoded.to_string())
         } else {
@@ -1774,7 +1784,9 @@ fn proofpoint_v3_run_length(b: u8) -> Option<usize> {
 
 /// URL-safe base64 decode (RFC 4648 §5: `-` and `_` instead of `+` and
 /// `/`). Padding (`=`) is accepted but optional — Proofpoint strips it
-/// when emitting markers. Returns None on any invalid character.
+/// when emitting markers. Returns None on any invalid character, or on
+/// a trailing 6-bit leftover (input length ≡ 1 mod 4 after pad strip,
+/// which encodes no bytes and is malformed base64).
 fn base64_url_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() * 3 / 4 + 1);
     let mut buf: u32 = 0;
@@ -1796,6 +1808,14 @@ fn base64_url_decode(s: &str) -> Option<Vec<u8>> {
             out.push((buf >> bits) as u8);
             buf &= (1u32 << bits) - 1;
         }
+    }
+    // Valid base64 leaves 0, 2, or 4 leftover bits after byte emission
+    // (input lengths 4n, 4n+3, 4n+2 chars respectively, padding stripped).
+    // 6 leftover bits means input length 4n+1 — a single dangling char
+    // that encodes no bytes; that's malformed and should fail rather than
+    // silently produce wrong output.
+    if bits == 6 {
+        return None;
     }
     Some(out)
 }
@@ -3725,6 +3745,28 @@ mod tests {
         assert_eq!(
             unwrap_safelink(wrapped).as_deref(),
             Some("https://example.com/")
+        );
+    }
+
+    #[test]
+    fn proofpoint_v3_unwraps_urldefense_us_government_host() {
+        // FedRAMP tenant uses the same v3 format on `urldefense.us`.
+        // Must dispatch through the same decoder.
+        let wrapped = "https://urldefense.us/v3/__https://example.com/path__;!!tag$";
+        assert_eq!(
+            unwrap_safelink(wrapped).as_deref(),
+            Some("https://example.com/path")
+        );
+    }
+
+    #[test]
+    fn proofpoint_v3_empty_marker_rejects_literal_star() {
+        // Malformed/adversarial: empty marker stream but the encoded URL
+        // contains a literal `*`. With no replacement chars to pop, the
+        // `*` would survive into the result; reject rather than route a
+        // URL with `*` in the host or path.
+        assert!(
+            unwrap_safelink("https://urldefense.com/v3/__https://exa*mple.com/__;!!tag$").is_none()
         );
     }
 

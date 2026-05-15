@@ -14,7 +14,7 @@ fn debug_enabled() -> bool {
 
 use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, Bool};
 use objc2::{class, define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSMenu, NSMenuItem, NSSquareStatusItemLength,
@@ -23,7 +23,7 @@ use objc2_app_kit::{
 use objc2_core_services::{AEEventClass, AEEventID};
 use objc2_foundation::{
     MainThreadMarker, NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSObject,
-    NSObjectProtocol, NSString, NSURL,
+    NSObjectProtocol, NSString, NSUserActivity, NSUserActivityTypeBrowsingWeb, NSURL,
 };
 
 use crate::engine::{Engine, ModifierFlags};
@@ -145,6 +145,62 @@ define_class!(
                 }
                 open_url(&result.url, &result.browser, self.mtm());
             }
+        }
+
+        // Handoff / Universal Links entrypoint. Apple delivers
+        // ASWebAuthenticationSession callbacks declared with
+        // `callbackWithHTTPSHost:path:` here rather than via the GURL
+        // Apple Event path — the system uses the user-activity machinery
+        // for https-callback shapes because it can ride the Universal-
+        // Links infrastructure (same as web→app handoff for any
+        // associated-domain-claimed URL).
+        //
+        // We check try_complete_callback first; if it returns true the
+        // session has been completed by ASWebAuthenticationSession's
+        // own completion handler and the URL should not be routed
+        // onward. Otherwise we route the webpage URL through engine.
+        // resolve like any other web click — preserving the user's
+        // routing rules for non-auth Universal Links.
+        //
+        // The restoration_handler block parameter is required by the
+        // protocol signature but we never have anything to restore.
+        // Receiving as `*mut AnyObject` keeps us from having to spell
+        // out the precise block signature; we just never invoke it.
+        #[unsafe(method(application:continueUserActivity:restorationHandler:))]
+        #[allow(non_snake_case)]
+        fn application_continueUserActivity(
+            &self,
+            _app: &NSApplication,
+            activity: &NSUserActivity,
+            _restoration_handler: *mut AnyObject,
+        ) -> Bool {
+            // We only handle web-page activities (the Universal-Links
+            // shape). Other activity types — Handoff for custom data,
+            // SiriKit intents — pass through untouched.
+            let activity_type = activity.activityType().to_string();
+            // SAFETY: NSUserActivityTypeBrowsingWeb is an immortal
+            // framework string constant. Deref + to_string is safe.
+            let browsing_web = unsafe { NSUserActivityTypeBrowsingWeb }.to_string();
+            if activity_type != browsing_web {
+                return Bool::NO;
+            }
+            let Some(url) = activity.webpageURL() else {
+                return Bool::NO;
+            };
+            let Some(href) = url.absoluteString() else {
+                return Bool::NO;
+            };
+            let href = href.to_string();
+            if crate::session_handler::try_complete_callback(&href) {
+                return Bool::YES;
+            }
+            // Not an auth callback — route as a regular click.
+            let engine_ref = self.ivars().engine.borrow();
+            let Some(engine) = engine_ref.as_ref() else {
+                return Bool::NO;
+            };
+            crate::session_handler::forward_through_engine(&href, engine, self.mtm());
+            Bool::YES
         }
 
         #[unsafe(method(applicationWillFinishLaunching:))]

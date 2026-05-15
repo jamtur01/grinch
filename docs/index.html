@@ -8,7 +8,7 @@
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="Grinch — a small, fast macOS browser router">
-<meta property="og:description" content="Routes each URL to the right browser. Most Finicky v4 configs work unchanged. ~16 MB resident, ~1500 LOC Rust, single DMG.">
+<meta property="og:description" content="Routes each URL to the right browser. Most Finicky v4 configs work unchanged. ~16 MB resident, ~4,100 LOC Rust core, single DMG.">
 <meta property="og:url" content="https://jamtur01.github.io/grinch/">
 <meta name="twitter:card" content="summary">
 
@@ -34,8 +34,8 @@
 <section id="features">
   <h2>What it is</h2>
   <ul class="features">
-    <li><strong>Finicky v4 config compatibility.</strong> Most v4 configs work unchanged: <code>finicky.matchHostnames</code>, <code>finicky.notify</code>, <code>ctx.opener.*</code>, the <code>options</code> block, profile shorthand.</li>
-    <li><strong>~1500 LOC Rust</strong> + a small embedded JS prelude.</li>
+    <li><strong>Finicky v4 config compatibility.</strong> Most v4 configs work unchanged: <code>finicky.matchHostnames</code>, <code>ctx.opener.*</code>, the <code>options</code> block, profile shorthand. A few v4 surfaces (<code>finicky.notify</code>, <code>finicky.getPowerInfo</code>, <code>finicky.getBattery</code>) ship as stubs that log a one-time warning so misroutes don't go silent.</li>
+    <li><strong>~4,100 LOC Rust core</strong> (plus ~3,400 LOC tests) + a small embedded JS prelude.</li>
     <li><strong>~16 MB resident memory, ~1.5 MB universal binary.</strong></li>
     <li><strong>Native JavaScriptCore</strong> for config eval — no Electron, no bundler, no transpiler.</li>
     <li><strong>Single DMG.</strong> Universal binary (Apple Silicon + Intel).</li>
@@ -147,6 +147,7 @@ app.zen-browser.zen            Zen
   <p>Grinch registers a <code>grinch:</code> URL scheme so external tools (Shortcuts, AppleScript, shell scripts) can ask it to route a URL through the user's rules without setting it as the system default:</p>
 <pre><code>open grinch:https://example.com/path
 open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</code></pre>
+  <p>A third shape, <code>grinch://open/&lt;base64-url&gt;</code>, accepts a <code>btoa()</code>-encoded inner URL. This is the envelope shape Finicky's published Chrome and Firefox addons emit, so pointing those addons at <code>grinch://open/…</code> instead of <code>finicky://open/…</code> makes "Open with Finicky" route through Grinch.</p>
 </section>
 
 <section id="performance">
@@ -190,7 +191,7 @@ open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</
     <tbody>
       <tr><td>Resident memory</td><td>15.5 MB</td><td>14.6 MB</td><td>142.5 MB</td></tr>
       <tr><td>Peak memory</td><td>16.6 MB</td><td>15.5 MB</td><td>391.2 MB</td></tr>
-      <tr><td>Source LOC</td><td>~1,500</td><td>~700</td><td>~2,900</td></tr>
+      <tr><td>Source LOC</td><td>~4,100 core / ~3,400 tests</td><td>~700</td><td>~2,900</td></tr>
       <tr><td>JS engine</td><td>system JSC</td><td>n/a (Swift)</td><td>bundled goja</td></tr>
       <tr><td>Bundled UI</td><td>menu bar only</td><td>menu bar only</td><td>WebView app</td></tr>
     </tbody>

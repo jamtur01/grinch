@@ -76,11 +76,20 @@ module.exports = {
           "utm_content", "fbclid", "gclid", "mc_eid", "ref", "referrer"),
     strip("utm_*"),
 
-    // safelinks(): unwrap Microsoft Defender / Teams / Proofpoint URL
-    // wrappers in one line. Pass-through on every other host, so it's
-    // safe to leave on. Composes with strip() — put safelinks() first
-    // so utm_* cleanup runs on the inner URL, not the wrapper.
+    // safelinks(): unwrap Microsoft Defender / Teams / Proofpoint
+    // (v2 + v3, including FedRAMP `urldefense.us`) URL wrappers in one
+    // line. Pass-through on every other host, so it's safe to leave on.
+    // Composes with strip() — put safelinks() first so utm_* cleanup
+    // runs on the inner URL, not the wrapper.
     safelinks(),
+
+    // teams_launcher(): unwrap Teams' web-app launcher URLs (the
+    // `teams.microsoft.com/dl/launcher/launcher.html?url=…` form that
+    // produces a one-tab-per-click stub) into their canonical
+    // `msteams:` deep links. Sits alongside safelinks() because the
+    // launcher is path-routed (no `?url=`-style query wrapper), so
+    // safelinks() doesn't catch it.
+    teams_launcher(),
 
     // Conditional literal rewrite.
     {

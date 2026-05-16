@@ -682,14 +682,18 @@ to adjust:
    `shortenerExpander` pattern can't run; resolve a shortener separately
    if you need it — see [Working with URL shorteners](#working-with-url-shorteners)
    below.
-3. **`finicky.*` namespace is shipped; three of the eight methods are stubbed.**
-   All eight v4 methods are present:
+3. **`finicky.*` namespace is shipped; three of the methods are stubbed.**
+   All eight v4 methods are present, plus one Grinch-specific helper:
    - `finicky.matchHostnames(matchers)` — exact-hostname matcher fn
      (Finicky-compatible). For subdomain matching use Grinch's `domain(...)`.
    - `finicky.matchDomains(matchers)` — deprecated alias, warns and delegates.
    - `finicky.getModifierKeys()` — real values from CG event flags
      (shift/option/command/control/capsLock/fn/function).
    - `finicky.isAppRunning(id)` — matches against bundle ID OR localized name.
+   - `finicky.getRunningBrowsers()` — Grinch addition (closes Finicky issue #145).
+     Returns an array of currently-running known-browser bundle IDs in family-
+     table order. Use with `Array.prototype.find` for first-running-of-preference
+     routing: `prefs.find(b => running.includes(b)) || "com.apple.Safari"`.
    - `finicky.getSystemInfo()` — `{localizedName, name}` from `[NSHost currentHost]`.
    - `finicky.getPowerInfo()` — **stub** that returns placeholder values
      (`{isCharging:false, isConnected:true, percentage:-1}`) and emits a

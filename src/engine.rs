@@ -1311,6 +1311,35 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
         serde_json::json!({ "localizedName": localized, "name": name }).to_string()
     });
 
+    install_zero_arg_string(ctx, "__grinchGetRunningBrowsers", || {
+        // Intersect the running-apps snapshot with Grinch's known-browser
+        // bundle ID tables (Chromium family + Firefox family + Safari).
+        // The result is a JSON array of bundle IDs the user can compare
+        // against — small enough to filter against a preference list in
+        // JS without paying for repeated `isAppRunning` round-trips.
+        //
+        // Result ordering follows the family-table order so configs that
+        // pick "first running" get a stable answer across runs (Finicky's
+        // request #145 was specifically "Chrome → Firefox → Safari fall-
+        // through", which this composes with via Array.prototype.find).
+        let running = crate::workspace::running_app_bundle_ids();
+        let mut out: Vec<&str> = Vec::new();
+        for (id, _) in crate::chromium::iter_family() {
+            if running.contains(*id) {
+                out.push(id);
+            }
+        }
+        for (id, _) in crate::firefox::iter_family() {
+            if running.contains(*id) {
+                out.push(id);
+            }
+        }
+        if running.contains("com.apple.Safari") {
+            out.push("com.apple.Safari");
+        }
+        serde_json::json!(out).to_string()
+    });
+
     install_zero_arg_string(ctx, "__grinchGetPowerInfo", || {
         // IOKit IOPSCopyPowerSourcesInfo would give real values, but the
         // call surface is heavy and most routing configs don't read this.
@@ -6170,13 +6199,92 @@ mod integration_tests {
                         typeof finicky.getModifierKeys + "/" +
                         typeof finicky.isAppRunning + "/" +
                         typeof finicky.getSystemInfo + "/" +
-                        typeof finicky.getPowerInfo,
+                        typeof finicky.getPowerInfo + "/" +
+                        typeof finicky.getRunningBrowsers,
                 }],
             };"#,
         );
         assert_eq!(
             resolve(&e, "https://x/").0,
-            "function/function/function/function/function/function/function/function",
+            "function/function/function/function/function/function/function/function/function",
+        );
+    }
+
+    #[test]
+    fn finicky_get_running_browsers_returns_array() {
+        // The Rust bridge filters running apps against Grinch's
+        // known-browser tables. The actual contents depend on what's
+        // running in the test process — we can't pin the membership, but
+        // we can verify the call returns a real array and the values are
+        // known-browser bundle IDs (or empty if nothing happens to be
+        // running). Shape-only assertion.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => {
+                        var r = finicky.getRunningBrowsers();
+                        if (!Array.isArray(r)) return "not-array:" + (typeof r);
+                        // Every element must be a string, and either Safari
+                        // or a bundle ID starting with a known prefix.
+                        for (var i = 0; i < r.length; i++) {
+                            if (typeof r[i] !== "string") return "bad-elem-type";
+                            var ok = r[i] === "com.apple.Safari" ||
+                                r[i].indexOf("com.google.Chrome") === 0 ||
+                                r[i].indexOf("com.brave") === 0 ||
+                                r[i].indexOf("com.microsoft.edgemac") === 0 ||
+                                r[i].indexOf("com.vivaldi") === 0 ||
+                                r[i].indexOf("org.chromium.Chromium") === 0 ||
+                                r[i].indexOf("company.thebrowser") === 0 ||
+                                r[i].indexOf("com.operasoftware") === 0 ||
+                                r[i].indexOf("com.bookry.wavebox") === 0 ||
+                                r[i].indexOf("net.imput.helium") === 0 ||
+                                r[i].indexOf("ai.perplexity.comet") === 0 ||
+                                r[i].indexOf("ru.yandex") === 0 ||
+                                r[i].indexOf("org.mozilla") === 0 ||
+                                r[i].indexOf("net.waterfox") === 0 ||
+                                r[i].indexOf("io.gitlab.librewolf") === 0 ||
+                                r[i].indexOf("app.zen-browser") === 0;
+                            if (!ok) return "unexpected-bundle:" + r[i];
+                        }
+                        return "ok";
+                    },
+                }],
+            };"#,
+        );
+        assert_eq!(resolve(&e, "https://x/").0, "ok");
+    }
+
+    #[test]
+    fn finicky_get_running_browsers_supports_preference_fallback_idiom() {
+        // The actual #145 use case: pick first-running from an ordered
+        // preference list, fall back to Safari. Just verifies the idiom
+        // type-checks and returns a bundle ID — not whether any specific
+        // browser is running at test time.
+        let e = build_engine(
+            r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => true,
+                    open: () => {
+                        var running = finicky.getRunningBrowsers();
+                        var prefs = ["com.google.Chrome",
+                                     "org.mozilla.firefox",
+                                     "com.apple.Safari"];
+                        return prefs.find(b => running.includes(b)) ||
+                               "com.apple.Safari";
+                    },
+                }],
+            };"#,
+        );
+        // Whatever resolved, it must be one of the prefs.
+        let (browser, _) = resolve(&e, "https://x/");
+        assert!(
+            browser == "com.google.Chrome"
+                || browser == "org.mozilla.firefox"
+                || browser == "com.apple.Safari",
+            "expected one of the preference list, got {browser}"
         );
     }
 

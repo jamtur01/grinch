@@ -39,6 +39,13 @@ pub fn is_firefox(bundle_id: &str) -> bool {
     FIREFOX_FAMILY.iter().any(|(b, _)| *b == bundle_id)
 }
 
+/// Iterate the Firefox-family `(bundle_id, data_dir)` tuples. Used by
+/// the JS bridge's `getRunningBrowsers` helper to intersect against the
+/// running-apps snapshot in a stable order.
+pub fn iter_family() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+    FIREFOX_FAMILY.iter()
+}
+
 fn data_dir(bundle_id: &str) -> Option<&'static str> {
     FIREFOX_FAMILY
         .iter()

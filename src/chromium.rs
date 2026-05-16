@@ -49,6 +49,13 @@ pub fn is_chromium(bundle_id: &str) -> bool {
     CHROMIUM_FAMILY.iter().any(|(b, _)| *b == bundle_id)
 }
 
+/// Iterate the Chromium-family `(bundle_id, data_dir)` tuples. Used by
+/// the JS bridge's `getRunningBrowsers` helper to intersect against the
+/// running-apps snapshot in a stable order.
+pub fn iter_family() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+    CHROMIUM_FAMILY.iter()
+}
+
 fn data_dir(bundle_id: &str) -> Option<&'static str> {
     CHROMIUM_FAMILY
         .iter()

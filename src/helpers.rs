@@ -548,6 +548,29 @@ var finicky = {
     return false;
   },
 
+  /**
+   * Return an array of currently-running browser bundle IDs (intersected
+   * with Grinch's known-browser family tables). Order follows
+   * Chromium-family then Firefox-family then Safari, matching the order
+   * inside `src/chromium.rs` and `src/firefox.rs`. Use with
+   * `Array.prototype.find` for "first-running-of-preference" routing:
+   *
+   *   open: () => {
+   *     const running = finicky.getRunningBrowsers();
+   *     const prefs = ["com.google.Chrome", "org.mozilla.firefox",
+   *                    "com.apple.Safari"];
+   *     return prefs.find(b => running.includes(b)) || "com.apple.Safari";
+   *   }
+   *
+   * Closes Finicky issue #145.
+   */
+  getRunningBrowsers: function() {
+    if (typeof __grinchGetRunningBrowsers === "function") {
+      try { return JSON.parse(__grinchGetRunningBrowsers()); } catch (_) {}
+    }
+    return [];
+  },
+
   getSystemInfo: function() {
     if (typeof __grinchGetSystemInfo === "function") {
       try { return JSON.parse(__grinchGetSystemInfo()); } catch (_) {}

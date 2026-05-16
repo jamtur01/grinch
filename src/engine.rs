@@ -39,6 +39,32 @@ pub struct BrowserSpec {
     pub creates_new_instance: bool,
 }
 
+/// Subcommand-style flag families: a per-browser-family flag that we wire
+/// up on demand from a single boolean on the config side. Keeps the
+/// flag-vs-family table out of `parse_browser_jsval` so adding a new
+/// flag is a one-line change here.
+enum FlagFamily {
+    Incognito,
+}
+
+/// Map a family-aware boolean flag (`incognito: true`) to the actual CLI
+/// arg the chosen browser expects, or `None` if the browser family
+/// doesn't support it (Safari for incognito).
+///
+/// Chromium's `--incognito` and Firefox's `--private-window` both need
+/// `creates_new_instance: true` for the same reason `profile:` does —
+/// without it, LaunchServices routes the URL into the existing window
+/// via Apple Events, where the flag is silently ignored.
+fn expand_flag_for_family(bundle_id: &str, flag: FlagFamily) -> Option<&'static str> {
+    let chromium = crate::chromium::is_chromium(bundle_id);
+    let firefox = crate::firefox::is_firefox(bundle_id);
+    match (flag, chromium, firefox) {
+        (FlagFamily::Incognito, true, _) => Some("--incognito"),
+        (FlagFamily::Incognito, _, true) => Some("--private-window"),
+        _ => None,
+    }
+}
+
 impl BrowserSpec {
     fn empty() -> Self {
         Self::from_bundle_id(String::new())
@@ -2037,6 +2063,25 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
                 "grinch: ignoring `profile` for unrecognised browser family \
                  {bundle_id} (profile = {profile}; supported: Chromium, Firefox)"
             );
+        }
+    }
+
+    // `incognito: true` — append the browser-family-specific private-mode
+    // flag. Same `creates_new_instance` reasoning as `profile:`: without
+    // it, LaunchServices routes the URL into the existing window and the
+    // flag is silently ignored on Chromium and Firefox.
+    if let Some(incognito) = key(v, "incognito").map(|b| unsafe { b.toBool() }) {
+        if incognito {
+            if let Some(flag) = expand_flag_for_family(&bundle_id, FlagFamily::Incognito) {
+                args.push(flag.to_string());
+                creates_new_instance = true;
+            } else {
+                eprintln!(
+                    "grinch: ignoring `incognito: true` for unsupported browser family \
+                     {bundle_id} (Safari has no CLI private-mode flag; supported: \
+                     Chromium, Firefox)"
+                );
+            }
         }
     }
 
@@ -5759,6 +5804,96 @@ mod integration_tests {
     fn parse_browser_jsval_firefox_profile_via_shorthand_string() {
         let e = build_engine(r#"module.exports = { default: "org.mozilla.firefox:Work" };"#);
         assert_eq!(resolve(&e, "https://x/").0, "org.mozilla.firefox");
+    }
+
+    #[test]
+    fn parse_browser_jsval_incognito_chromium_emits_incognito_flag() {
+        // `incognito: true` should append `--incognito` for Chromium-family
+        // browsers and force creates_new_instance (so Chrome's running
+        // instance doesn't swallow the URL via Apple Event GURL where the
+        // flag would be silently ignored).
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.google.Chrome", incognito: true },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert_eq!(res.browser.bundle_id, "com.google.Chrome");
+        assert!(
+            res.browser.args.iter().any(|a| a == "--incognito"),
+            "expected --incognito in args, got {:?}",
+            res.browser.args
+        );
+        assert!(res.browser.creates_new_instance);
+    }
+
+    #[test]
+    fn parse_browser_jsval_incognito_firefox_emits_private_window_flag() {
+        // Firefox-family analog: --private-window instead of --incognito.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "org.mozilla.firefox", incognito: true },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert!(
+            res.browser.args.iter().any(|a| a == "--private-window"),
+            "expected --private-window in args, got {:?}",
+            res.browser.args
+        );
+        assert!(res.browser.creates_new_instance);
+    }
+
+    #[test]
+    fn parse_browser_jsval_incognito_false_emits_no_flag() {
+        // `incognito: false` is identical to omitting the field — no flag
+        // appended, no creates_new_instance forced.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.google.Chrome", incognito: false },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert!(!res.browser.args.iter().any(|a| a == "--incognito"));
+        assert!(!res.browser.creates_new_instance);
+    }
+
+    #[test]
+    fn parse_browser_jsval_incognito_safari_logs_and_passes_through() {
+        // Safari has no CLI private-mode flag; the engine should accept
+        // the config but emit no extra args (warning goes to stderr,
+        // observable via the unsupported-family branch).
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.apple.Safari", incognito: true },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert_eq!(res.browser.bundle_id, "com.apple.Safari");
+        assert!(res.browser.args.is_empty());
+        // Safari incognito doesn't trigger the new-instance flag — there's
+        // no reason to spawn a fresh helper if we can't pass a useful arg.
+        assert!(!res.browser.creates_new_instance);
+    }
+
+    #[test]
+    fn parse_browser_jsval_incognito_composes_with_profile() {
+        // Both `profile:` and `incognito: true` set — args should contain
+        // both flags, and creates_new_instance stays true.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.google.Chrome",
+                           profile: "Work", incognito: true },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert!(res.browser.args.iter().any(|a| a == "--incognito"));
+        assert!(res
+            .browser
+            .args
+            .iter()
+            .any(|a| a.starts_with("--profile-directory=")));
+        assert!(res.browser.creates_new_instance);
     }
 
     #[test]

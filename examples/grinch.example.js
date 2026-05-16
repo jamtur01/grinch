@@ -33,8 +33,15 @@ const browsers = {
   work: { name: "Google Chrome", profile: "Work" },
   firefoxWork: { name: "org.mozilla.firefox", profile: "Work" },
 
-  // Custom launch args.
-  incognito: { name: "Google Chrome", args: ["--incognito"] },
+  // `incognito: true` is the family-aware shorthand — Chromium expands to
+  // `--incognito`, Firefox to `--private-window`. Equivalent to writing
+  // `args: ["--incognito"]` for Chrome but portable across families.
+  incognito: { name: "Google Chrome", incognito: true },
+
+  // `openInNewWindow: true` forces a new top-level window instead of
+  // opening as a tab in an existing window (`--new-window` on both
+  // Chromium and modern Firefox).
+  chromeNewWindow: { name: "Google Chrome", openInNewWindow: true },
 
   // Open in the background (don't activate the target app).
   spotifyBackground: { name: "com.spotify.client", openInBackground: true },
@@ -63,6 +70,18 @@ module.exports = {
   // is invoked at resolve time when no rule matched, e.g.:
   //   default: (url, ctx) =>
   //     ctx.modifiers.shift ? browsers.work : browsers.personal,
+  //
+  // First-running-of-preference idiom (Grinch extension, closes
+  // johnste/finicky#145). Returns a bundle ID for whichever of the
+  // listed browsers is running, falling back to Safari:
+  //
+  //   default: () => {
+  //     const running = finicky.getRunningBrowsers();
+  //     const prefs = [
+  //       "com.google.Chrome", "org.mozilla.firefox", "com.apple.Safari",
+  //     ];
+  //     return prefs.find((b) => running.includes(b)) || "com.apple.Safari";
+  //   },
   default: browsers.personal,
 
   // Top-level browsers map — looked up by key in `open: "<key>"`.

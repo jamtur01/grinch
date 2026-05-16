@@ -35,6 +35,8 @@
   <h2>What it is</h2>
   <ul class="features">
     <li><strong>Finicky v4 config compatibility.</strong> Most v4 configs work unchanged: <code>finicky.matchHostnames</code>, <code>ctx.opener.*</code>, the <code>options</code> block, profile shorthand. A few v4 surfaces (<code>finicky.notify</code>, <code>finicky.getPowerInfo</code>, <code>finicky.getBattery</code>) ship as stubs that log a one-time warning so misroutes don't go silent.</li>
+    <li><strong>Browser-spec shortcuts</strong> for the things users were writing one-liners for: <code>incognito: true</code> (Chromium/Firefox private mode), <code>openInNewWindow: true</code> (force a new top-level window), <code>profile: "Work"</code> (resolves through the browser's <code>Local State</code> / <code>profiles.ini</code>). Each one expands to the right CLI flag per family — Safari logs a warning since it has no CLI equivalent.</li>
+    <li><strong><code>finicky.getRunningBrowsers()</code></strong> — list currently-running browsers from the known-family tables in stable order, for the "first running of preference" routing idiom. Closes <a href="https://github.com/johnste/finicky/issues/145">johnste/finicky#145</a>.</li>
     <li><strong>Pure Rust core</strong> + a small embedded JS prelude.</li>
     <li><strong>~16 MB resident memory, ~1.5 MB universal binary.</strong></li>
     <li><strong>Native JavaScriptCore</strong> for config eval — no Electron, no bundler, no transpiler.</li>

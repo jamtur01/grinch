@@ -45,22 +45,28 @@ pub struct BrowserSpec {
 /// flag is a one-line change here.
 enum FlagFamily {
     Incognito,
+    NewWindow,
 }
 
-/// Map a family-aware boolean flag (`incognito: true`) to the actual CLI
-/// arg the chosen browser expects, or `None` if the browser family
-/// doesn't support it (Safari for incognito).
+/// Map a family-aware boolean flag (`incognito: true`, `openInNewWindow:
+/// true`) to the actual CLI arg the chosen browser expects, or `None` if
+/// the browser family doesn't support it (Safari for either; both flags
+/// rely on browsers honouring command-line flags, which Safari doesn't).
 ///
-/// Chromium's `--incognito` and Firefox's `--private-window` both need
-/// `creates_new_instance: true` for the same reason `profile:` does —
-/// without it, LaunchServices routes the URL into the existing window
-/// via Apple Events, where the flag is silently ignored.
+/// All of these flags need `creates_new_instance: true` for the same
+/// reason `profile:` does — without it, LaunchServices routes the URL
+/// into the existing window via Apple Events, where the flag is
+/// silently ignored.
 fn expand_flag_for_family(bundle_id: &str, flag: FlagFamily) -> Option<&'static str> {
     let chromium = crate::chromium::is_chromium(bundle_id);
     let firefox = crate::firefox::is_firefox(bundle_id);
     match (flag, chromium, firefox) {
         (FlagFamily::Incognito, true, _) => Some("--incognito"),
         (FlagFamily::Incognito, _, true) => Some("--private-window"),
+        // Modern Firefox (>= 89) recognises `--new-window` alongside the
+        // legacy `-new-window`; both create a new top-level window in
+        // the same instance.
+        (FlagFamily::NewWindow, true, _) | (FlagFamily::NewWindow, _, true) => Some("--new-window"),
         _ => None,
     }
 }
@@ -2079,6 +2085,25 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
                 eprintln!(
                     "grinch: ignoring `incognito: true` for unsupported browser family \
                      {bundle_id} (Safari has no CLI private-mode flag; supported: \
+                     Chromium, Firefox)"
+                );
+            }
+        }
+    }
+
+    // `openInNewWindow: true` — force a new top-level window in the
+    // running browser instead of opening as a tab. Distinct from
+    // `creates_new_instance` (which spawns a fresh application process,
+    // used for profile routing). Same family-flag pattern as incognito.
+    if let Some(new_window) = key(v, "openInNewWindow").map(|b| unsafe { b.toBool() }) {
+        if new_window {
+            if let Some(flag) = expand_flag_for_family(&bundle_id, FlagFamily::NewWindow) {
+                args.push(flag.to_string());
+                creates_new_instance = true;
+            } else {
+                eprintln!(
+                    "grinch: ignoring `openInNewWindow: true` for unsupported browser family \
+                     {bundle_id} (Safari has no equivalent CLI flag; supported: \
                      Chromium, Firefox)"
                 );
             }
@@ -5873,6 +5898,81 @@ mod integration_tests {
         assert!(res.browser.args.is_empty());
         // Safari incognito doesn't trigger the new-instance flag — there's
         // no reason to spawn a fresh helper if we can't pass a useful arg.
+        assert!(!res.browser.creates_new_instance);
+    }
+
+    #[test]
+    fn parse_browser_jsval_open_in_new_window_chromium_emits_new_window_flag() {
+        // `openInNewWindow: true` on Chromium adds `--new-window` and forces
+        // creates_new_instance so the flag isn't swallowed by GURL routing.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.google.Chrome", openInNewWindow: true },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert!(
+            res.browser.args.iter().any(|a| a == "--new-window"),
+            "expected --new-window in args, got {:?}",
+            res.browser.args
+        );
+        assert!(res.browser.creates_new_instance);
+    }
+
+    #[test]
+    fn parse_browser_jsval_open_in_new_window_firefox_emits_new_window_flag() {
+        // Modern Firefox (>= 89) accepts `--new-window` alongside legacy
+        // `-new-window`; we emit the modern form for parity with Chromium.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "org.mozilla.firefox", openInNewWindow: true },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert!(
+            res.browser.args.iter().any(|a| a == "--new-window"),
+            "expected --new-window in args, got {:?}",
+            res.browser.args
+        );
+        assert!(res.browser.creates_new_instance);
+    }
+
+    #[test]
+    fn parse_browser_jsval_open_in_new_window_composes_with_incognito_and_profile() {
+        // All three flags set together — args contain all three (in the
+        // order profile/incognito/openInNewWindow). Single new-instance
+        // launch carries all of them.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.google.Chrome",
+                           profile: "Work",
+                           incognito: true,
+                           openInNewWindow: true },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert!(res
+            .browser
+            .args
+            .iter()
+            .any(|a| a.starts_with("--profile-directory=")));
+        assert!(res.browser.args.iter().any(|a| a == "--incognito"));
+        assert!(res.browser.args.iter().any(|a| a == "--new-window"));
+        assert!(res.browser.creates_new_instance);
+    }
+
+    #[test]
+    fn parse_browser_jsval_open_in_new_window_safari_logs_and_passes_through() {
+        // Safari has no equivalent CLI flag; config is accepted, no flag
+        // appended, no new-instance forced.
+        let e = build_engine(
+            r#"module.exports = {
+                default: { name: "com.apple.Safari", openInNewWindow: true },
+            };"#,
+        );
+        let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert_eq!(res.browser.bundle_id, "com.apple.Safari");
+        assert!(res.browser.args.is_empty());
         assert!(!res.browser.creates_new_instance);
     }
 

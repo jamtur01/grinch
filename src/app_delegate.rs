@@ -888,6 +888,14 @@ fn decode_envelope_b64(s: &str) -> Option<String> {
     if bits == 6 {
         return None;
     }
+    // Any leftover bits MUST themselves be zero — they're padding bits of
+    // the final encoded char. A legitimate `btoa()` always emits zero
+    // padding bits; non-zero leftover means malformed or adversarial
+    // input. Strict-mode RFC 4648 rejects it; matching the engine's
+    // `base64_url_decode` so both envelope shapes agree.
+    if buf != 0 {
+        return None;
+    }
     String::from_utf8(out).ok()
 }
 
@@ -1232,6 +1240,18 @@ mod tests {
         // (and either rejects it or falls to default) rather than us
         // silently swallowing the click.
         let url = "grinch://open/!!!not-base64!!!";
+        assert_eq!(unwrap_grinch_scheme(url), url);
+    }
+
+    #[test]
+    fn unwrap_grinch_scheme_rejects_non_zero_padding_bits() {
+        // Strict-mode base64: the leftover bits at end-of-input must be
+        // zero (they're padding bits of the final encoded char). `btoa`
+        // always emits zero padding; non-zero leftover is malformed or
+        // adversarial. "aR" decodes to one byte `i` with 4 padding bits
+        // = 0b0001 (nonzero) — strict decoders reject this.
+        let url = "grinch://open/aR";
+        // Pass-through, not silent decode to a one-byte non-URL string.
         assert_eq!(unwrap_grinch_scheme(url), url);
     }
 

@@ -563,6 +563,12 @@ var finicky = {
    *   }
    *
    * Closes Finicky issue #145.
+   *
+   * Only browsers in Grinch's family tables are returned — DuckDuckGo,
+   * Orion, Edge Canary, Safari Technology Preview, and other browsers
+   * not enumerated in `src/chromium.rs` / `src/firefox.rs` are excluded
+   * even when they're running. For those, use
+   * `finicky.isAppRunning(bundleId)` directly.
    */
   getRunningBrowsers: function() {
     if (typeof __grinchGetRunningBrowsers === "function") {

@@ -1318,11 +1318,18 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
         // against — small enough to filter against a preference list in
         // JS without paying for repeated `isAppRunning` round-trips.
         //
+        // Reads from the cached snapshot (`running_apps_cached`), which
+        // the NSWorkspace launch/terminate observer invalidates on app
+        // lifecycle events. A config calling getRunningBrowsers() on
+        // every resolve would otherwise pay a 50-200-entry NSWorkspace
+        // walk per click; the cache turns it into an Arc clone + hash
+        // lookups.
+        //
         // Result ordering follows the family-table order so configs that
-        // pick "first running" get a stable answer across runs (Finicky's
-        // request #145 was specifically "Chrome → Firefox → Safari fall-
-        // through", which this composes with via Array.prototype.find).
-        let running = crate::workspace::running_app_bundle_ids();
+        // pick "first running" get a stable answer across runs (Finicky
+        // #145 was specifically "Chrome → Firefox → Safari fall-through",
+        // composes via Array.prototype.find).
+        let running = crate::workspace::running_apps_cached();
         let mut out: Vec<&str> = Vec::new();
         for (id, _) in crate::chromium::iter_family() {
             if running.contains(*id) {
@@ -1878,6 +1885,16 @@ fn base64_url_decode(s: &str) -> Option<Vec<u8>> {
     if bits == 6 {
         return None;
     }
+    // Any leftover bits MUST themselves be zero — they're the padding bits
+    // of the final encoded char. A legitimate encoder always emits zero
+    // padding bits; non-zero leftover indicates a malformed or adversarial
+    // input where the encoder smuggled data into the padding region. The
+    // strict variant of RFC 4648 rejects this; we follow suit so we don't
+    // mistakenly decode `https://exa*.com` (or similar) from a marker that
+    // would otherwise round-trip through a permissive decoder.
+    if buf != 0 {
+        return None;
+    }
     Some(out)
 }
 
@@ -2111,10 +2128,14 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
                 args.push(flag.to_string());
                 creates_new_instance = true;
             } else {
+                // Fires for Safari AND for any bundle ID outside Grinch's
+                // Chromium/Firefox tables (path-form specs, less-common
+                // forks, typos). Naming the bundle in the message makes
+                // it actionable for the typo case.
                 eprintln!(
-                    "grinch: ignoring `incognito: true` for unsupported browser family \
-                     {bundle_id} (Safari has no CLI private-mode flag; supported: \
-                     Chromium, Firefox)"
+                    "grinch: ignoring `incognito: true` for {bundle_id} — no \
+                     CLI private-mode flag known for this browser family \
+                     (supported: Chromium, Firefox)"
                 );
             }
         }
@@ -2131,9 +2152,9 @@ fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
                 creates_new_instance = true;
             } else {
                 eprintln!(
-                    "grinch: ignoring `openInNewWindow: true` for unsupported browser family \
-                     {bundle_id} (Safari has no equivalent CLI flag; supported: \
-                     Chromium, Firefox)"
+                    "grinch: ignoring `openInNewWindow: true` for {bundle_id} — \
+                     no CLI new-window flag known for this browser family \
+                     (supported: Chromium, Firefox)"
                 );
             }
         }

@@ -38,7 +38,8 @@ read_meta() {
 # Pretty workload label = filename without prefix and extension.
 #   01-floor.grinch.js → "floor"
 label_of() {
-    local name="$(basename "$1" .grinch.js)"
+    local name
+    name="$(basename "$1" .grinch.js)"
     echo "${name#[0-9][0-9]-}"
 }
 
@@ -84,7 +85,7 @@ case "$filter" in
         printf '\n## Hot path (declarative-only configs)\n\n'
         printf '| Workload | ns/op |\n|---|---:|\n'
         for cfg in "$configs_dir"/0[1-7]-*.grinch.js \
-                   "$configs_dir"/1[4-9]-*.grinch.js \
+                   "$configs_dir"/1[45]-*.grinch.js \
                    "$configs_dir"/2[0-9]-*.grinch.js; do
             [[ -f "$cfg" ]] || continue
             iters="$(read_meta "$cfg" Iterations)"
@@ -98,9 +99,11 @@ esac
 
 case "$filter" in
     slow|all)
-        printf '\n## Slow path (configs with `(url, ctx) => …` fn matchers)\n\n'
+        printf '\n## Slow path (configs with fn matchers — url-only and url+ctx)\n\n'
         printf '| Workload | ns/op |\n|---|---:|\n'
-        for cfg in "$configs_dir"/0[89]-*.grinch.js "$configs_dir"/1[0-3]-*.grinch.js; do
+        for cfg in "$configs_dir"/0[89]-*.grinch.js \
+                   "$configs_dir"/1[0-3]-*.grinch.js \
+                   "$configs_dir"/1[6-9]-*.grinch.js; do
             iters="$(read_meta "$cfg" Iterations)"
             url="$(read_meta "$cfg" URL)"
             label="$(label_of "$cfg")"

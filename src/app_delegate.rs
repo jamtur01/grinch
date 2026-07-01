@@ -859,44 +859,15 @@ fn unwrap_grinch_scheme(url: &str) -> std::borrow::Cow<'_, str> {
 /// Decode a `grinch://open/<…>` envelope payload. Accepts both standard
 /// base64 (what JavaScript's `btoa` emits — `+` / `/`) and URL-safe
 /// base64 (`-` / `_`), with optional `=` padding. Returns None on any
-/// invalid character, a trailing 6-bit leftover (single dangling char
-/// that encodes no bytes — malformed base64), or if the decoded bytes
-/// aren't valid UTF-8. The caller falls back to passing the original
-/// URL through unchanged.
+/// invalid character, a trailing 6-bit leftover, or non-UTF-8 output;
+/// the caller then passes the original URL through unchanged.
+///
+/// Shares the strict bit-accumulation core with the engine's Proofpoint
+/// marker decoder — `accept_standard: true` widens the alphabet to the
+/// `btoa` (+/) form the published Finicky browser addons emit.
 fn decode_envelope_b64(s: &str) -> Option<String> {
-    let mut out = Vec::with_capacity(s.len() * 3 / 4 + 1);
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-    for c in s.bytes() {
-        let v: u32 = match c {
-            b'A'..=b'Z' => (c - b'A') as u32,
-            b'a'..=b'z' => (c - b'a') as u32 + 26,
-            b'0'..=b'9' => (c - b'0') as u32 + 52,
-            b'+' | b'-' => 62,
-            b'/' | b'_' => 63,
-            b'=' => continue,
-            _ => return None,
-        };
-        buf = (buf << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-            buf &= (1u32 << bits) - 1;
-        }
-    }
-    if bits == 6 {
-        return None;
-    }
-    // Any leftover bits MUST themselves be zero — they're padding bits of
-    // the final encoded char. A legitimate `btoa()` always emits zero
-    // padding bits; non-zero leftover means malformed or adversarial
-    // input. Strict-mode RFC 4648 rejects it; matching the engine's
-    // `base64_url_decode` so both envelope shapes agree.
-    if buf != 0 {
-        return None;
-    }
-    String::from_utf8(out).ok()
+    let bytes = crate::engine::base64_decode(s, true)?;
+    String::from_utf8(bytes).ok()
 }
 
 /// Read the sender pid attribute (`'spid'`) off a GURL Apple Event. Returns

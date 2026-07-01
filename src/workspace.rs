@@ -776,8 +776,11 @@ pub fn resolve_browser_path(path: &str) -> String {
 }
 
 /// Open `url` in the given browser app. If the bundle ID is empty (suppress),
-/// do nothing. If the bundle ID is unknown, fall back to the user's actual
-/// default browser via NSWorkspace.
+/// do nothing. If the bundle ID is non-empty but no installed app matches it,
+/// the URL is dropped with a one-time warning — NOT routed to the system
+/// default browser. Falling back to `NSWorkspace.openURL` with no app would
+/// bounce the URL straight back to Grinch (the usual default browser) and
+/// loop forever; see the `resolved_app_url` miss branch below.
 pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     let _ = mtm;
     if spec.bundle_id.is_empty() {

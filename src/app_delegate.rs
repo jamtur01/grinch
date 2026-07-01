@@ -257,6 +257,7 @@ define_class!(
             let args: Vec<String> = std::env::args().collect();
             let cli_test = args.iter().position(|a| a == "--test");
             let cli_bench = args.iter().position(|a| a == "--bench");
+            let cli_bench_init = args.iter().position(|a| a == "--bench-init");
             let cli_list_rules = args.iter().any(|a| a == "--list-rules");
             let cli_list_browsers = args.iter().any(|a| a == "--list-browsers");
             let cli_validate = args.iter().any(|a| a == "--validate");
@@ -282,6 +283,12 @@ define_class!(
                 let n: usize = n.parse().unwrap_or(10_000);
                 self.reload_engine();
                 self.bench(n, url);
+                terminate(self.mtm());
+                return;
+            }
+            if let Some(idx) = cli_bench_init {
+                let n: usize = args.get(idx + 1).and_then(|s| s.parse().ok()).unwrap_or(1_000);
+                self.bench_init(n);
                 terminate(self.mtm());
                 return;
             }
@@ -638,11 +645,11 @@ impl Delegate {
             let _ = engine.resolve(url, &opener, ModifierFlags::default());
         }
         let elapsed = start.elapsed();
-        let ns_per_op = elapsed.as_nanos() / (n as u128).max(1);
-        let us_per_op = elapsed.as_secs_f64() * 1_000_000.0 / n.max(1) as f64;
+        let ns_per_op = elapsed.as_secs_f64() * 1_000_000_000.0 / n.max(1) as f64;
+        let us_per_op = ns_per_op / 1_000.0;
         println!("Benchmark: {n} iterations");
         println!("Total:     {}ms", elapsed.as_millis());
-        println!("Per-op:    {ns_per_op}ns  ({us_per_op:.2}µs)");
+        println!("Per-op:    {ns_per_op:.1}ns  ({us_per_op:.2}µs)");
         let r = engine.resolve(url, &opener, ModifierFlags::default());
         println!("URL:       {url}");
         println!("Browser:   {}", r.browser.bundle_id);
@@ -653,6 +660,47 @@ impl Delegate {
         // on top, when the engine's needs_opener / needs_modifiers flags
         // demand them.
         println!("Note:      synthetic Opener (pid=0); does not include LaunchServices IPC");
+    }
+
+    /// Benchmark the full config-load + engine-build cost — the work done
+    /// on every startup and every SIGHUP reload. Each iteration creates a
+    /// fresh `JSContext`, evaluates the prelude + user config, and compiles
+    /// the rule tree to native matchers, so this is the real reload latency
+    /// (unlike `bench`, which times `resolve()` on an already-built engine).
+    ///
+    /// Reports µs/op — reloads are microseconds, not nanoseconds. A parse
+    /// failure on the first iteration aborts with the loader's message.
+    fn bench_init(&self, n: usize) {
+        // One eager load so a broken config fails loudly before the timing
+        // loop instead of silently measuring N error-return paths.
+        match load_config().and_then(|c| Engine::new(c).map_err(|e| e.to_string())) {
+            Ok(_) => {}
+            Err(msg) => {
+                println!("grinch: config load/build failed: {msg}");
+                return;
+            }
+        }
+        let warmup = (n / 10).min(50);
+        for _ in 0..warmup {
+            if let Ok(c) = load_config() {
+                let _ = Engine::new(c);
+            }
+        }
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            // `expect`-free: the eager load above proved the path works, and
+            // a mid-run failure (e.g. the user edits the file) shouldn't
+            // panic the benchmark — skip the sample and keep going.
+            if let Ok(c) = load_config() {
+                let _ = Engine::new(c);
+            }
+        }
+        let elapsed = start.elapsed();
+        let us_per_op = elapsed.as_secs_f64() * 1_000_000.0 / n.max(1) as f64;
+        println!("Benchmark: {n} reloads (load_config + Engine::new)");
+        println!("Total:     {}ms", elapsed.as_millis());
+        println!("Per-op:    {us_per_op:.2}µs");
+        println!("Note:      full JSContext create + prelude eval + rule compile per op");
     }
 
     fn setup_menu_bar(&self) {

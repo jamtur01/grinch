@@ -6,9 +6,10 @@
 # Median of 10 runs is reported per workload.
 #
 # Usage:
-#   bench/run.sh              # all workloads
-#   bench/run.sh hot          # only declarative-only configs (01–07)
-#   bench/run.sh slow         # only fn-based configs (08–13)
+#   bench/run.sh              # all workloads (hot + slow + init)
+#   bench/run.sh hot          # only declarative-only resolve() configs
+#   bench/run.sh slow         # only fn-based resolve() configs
+#   bench/run.sh init         # only reload cost (load_config + Engine::new)
 #
 # Requires a release binary at target/release/Grinch — script will rebuild
 # if missing or older than any source file.
@@ -58,6 +59,23 @@ bench_one() {
     printf "%s\n" "${results[@]}" | sort -n | sed -n '5p'
 }
 
+# Bench reload cost for one config, print median µs/op. Measures the full
+# load_config + Engine::new path (fresh JSContext, prelude eval, rule
+# compile) — the work done on every startup and SIGHUP reload.
+bench_init_one() {
+    local cfg_file="$1"
+    local iters="$2"
+    local stage; stage="$(mktemp -d)"
+    cp "$cfg_file" "$stage/.grinch.js"
+    local results=()
+    for _ in $(seq 1 10); do
+        results+=("$(HOME="$stage" "$binary" --bench-init "$iters" \
+            | awk '/Per-op/ { gsub(/µs/, ""); print $2 }')")
+    done
+    rm -rf "$stage"
+    printf "%s\n" "${results[@]}" | sort -n | sed -n '5p'
+}
+
 filter="${1:-all}"
 
 # Markdown table header.
@@ -88,6 +106,23 @@ case "$filter" in
             label="$(label_of "$cfg")"
             ns="$(bench_one "$cfg" "$iters" "$url")"
             printf '| %s | %s |\n' "$label" "$ns"
+        done
+        ;;
+esac
+
+case "$filter" in
+    init|all)
+        printf '\n## Reload cost (load_config + Engine::new, per startup/SIGHUP)\n\n'
+        printf '| Config | µs/op |\n|---|---:|\n'
+        # Reloads are microseconds, so a small fixed iteration count is
+        # plenty. Measure a minimal config (floor) and the largest rule
+        # set (many-rules) to show how init scales with config size.
+        for cfg in "$configs_dir"/01-floor.grinch.js \
+                   "$configs_dir"/14-many-rules.grinch.js; do
+            [[ -f "$cfg" ]] || continue
+            label="$(label_of "$cfg")"
+            us="$(bench_init_one "$cfg" 300)"
+            printf '| %s | %s |\n' "$label" "$us"
         done
         ;;
 esac

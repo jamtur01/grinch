@@ -917,7 +917,7 @@ fn launch_completion_handler(
                 let err = unsafe { &*error };
                 eprintln!(
                     "grinch: launch failed (strategy={strategy}, bundle={bundle}): {}",
-                    &*err.localizedDescription()
+                    *err.localizedDescription()
                 );
             }
         },

@@ -43,8 +43,8 @@ echo "watching: ${log}  (Grinch pid ${pid})"
 # launch; the old `|| echo 0` fallback turned those failures into bogus 0s
 # that fabricated +N "new window" spikes.
 chrome_windows() {
-	local n i
-	for i in 1 2 3; do
+	local n
+	for _ in 1 2 3; do
 		n="$(osascript -e 'tell application "Google Chrome" to count windows' 2>/dev/null || true)"
 		case "${n}" in
 		'' | *[!0-9]*) sleep 0.3 ;;

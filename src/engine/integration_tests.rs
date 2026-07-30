@@ -245,7 +245,10 @@ fn options_log_requests_writes_jsonl_per_resolve() {
             r#"module.exports = {
                     default: "com.apple.Safari",
                     options: { logRequests: true },
-                    rules: [{ match: "github.com", open: "com.google.Chrome" }],
+                    rules: [{
+                        match: "github.com",
+                        open: { name: "com.google.Chrome", profile: "Work" },
+                    }],
                 };"#,
         );
         assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
@@ -272,6 +275,18 @@ fn options_log_requests_writes_jsonl_per_resolve() {
     assert_eq!(row0["browser"], "com.google.Chrome");
     assert_eq!(row0["matchedRule"]["index"], 0);
     assert_eq!(row0["matchedRule"]["name"], "github.com");
+    assert_eq!(
+        row0["strategy"], "launch_new_instance",
+        "a profile route must log the new-instance launch strategy"
+    );
+    assert!(
+        row0["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a.as_str() == Some("--profile-directory=Work")),
+        "profile launch should log the profile-directory arg"
+    );
     assert!(row0["opener"].is_object(), "opener should be an object");
     assert!(row0["opener"]["bundleId"].is_string());
     assert!(row0["opener"]["name"].is_string());
@@ -283,6 +298,10 @@ fn options_log_requests_writes_jsonl_per_resolve() {
     // Default-fallback row: matchedRule = null, browser = default.
     assert_eq!(row1["url"], "https://example.com/");
     assert_eq!(row1["browser"], "com.apple.Safari");
+    assert_eq!(
+        row1["strategy"], "open_urls",
+        "a plain (no-args) route must log the open_urls strategy"
+    );
     assert!(
         row1["matchedRule"].is_null(),
         "matchedRule should be null when default fired"

@@ -74,6 +74,190 @@ impl BrowserSpec {
     }
 }
 
+/// Pure description of how [`crate::workspace::open_url`] will hand a resolved
+/// [`BrowserSpec`] to macOS. Extracted from the side-effecting NSWorkspace call
+/// so the launch *decision* — which strategy, which flags, which exact argv —
+/// is unit-testable without a running app, and so the chosen strategy can be
+/// recorded per-resolve in the request log. That log line is the only way to
+/// correlate the intermittent Chrome window-reuse behaviour with what Grinch
+/// actually asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LaunchPlan {
+    /// `open: null` / empty bundle id — nothing is launched.
+    Suppress,
+    /// No custom args: route the URL to the app via
+    /// `openURLs:withApplicationAtURL:`. LaunchServices delivers it to a
+    /// running instance (the window-reusing path); there are no profile /
+    /// incognito flags to honour in this case.
+    OpenUrls { activates: bool },
+    /// Custom args present (a Chromium/Firefox profile, `--incognito`, or
+    /// `--new-window`): launch via `openApplicationAtURL:` passing `args` (the
+    /// spec's args followed by the URL) on the command line so the flags reach
+    /// the browser's argv. `new_instance` forces a fresh application instance —
+    /// required because macOS drops `configuration.arguments` when it delivers
+    /// to an already-running instance.
+    LaunchApplication {
+        args: Vec<String>,
+        new_instance: bool,
+        activates: bool,
+    },
+}
+
+impl LaunchPlan {
+    /// Decide the launch plan for `spec` opening `url`. Pure — no IO, no
+    /// AppKit — so it can be asserted directly in tests.
+    pub fn from_spec(spec: &BrowserSpec, url: &str) -> LaunchPlan {
+        if spec.bundle_id.is_empty() {
+            return LaunchPlan::Suppress;
+        }
+        let activates = !spec.open_in_background;
+        if spec.args.is_empty() {
+            LaunchPlan::OpenUrls { activates }
+        } else {
+            let mut args = spec.args.clone();
+            args.push(url.to_string());
+            LaunchPlan::LaunchApplication {
+                args,
+                new_instance: spec.creates_new_instance,
+                activates,
+            }
+        }
+    }
+
+    /// Stable, log-friendly identifier for the chosen strategy. Recorded in the
+    /// per-resolve request log so intermittent new-window behaviour can be
+    /// correlated with the launch path Grinch selected.
+    pub fn strategy(&self) -> &'static str {
+        match self {
+            LaunchPlan::Suppress => "suppress",
+            LaunchPlan::OpenUrls { .. } => "open_urls",
+            LaunchPlan::LaunchApplication {
+                new_instance: true, ..
+            } => "launch_new_instance",
+            LaunchPlan::LaunchApplication {
+                new_instance: false,
+                ..
+            } => "launch_application",
+        }
+    }
+}
+
+#[cfg(test)]
+mod launch_plan_tests {
+    use super::*;
+
+    fn spec(bundle: &str, args: &[&str], background: bool, new_instance: bool) -> BrowserSpec {
+        BrowserSpec {
+            bundle_id: bundle.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            open_in_background: background,
+            creates_new_instance: new_instance,
+        }
+    }
+
+    #[test]
+    fn empty_bundle_suppresses() {
+        let p = LaunchPlan::from_spec(&spec("", &[], false, false), "https://x/");
+        assert_eq!(p, LaunchPlan::Suppress);
+        assert_eq!(p.strategy(), "suppress");
+    }
+
+    #[test]
+    fn no_args_uses_open_urls() {
+        let p = LaunchPlan::from_spec(&spec("com.apple.Safari", &[], false, false), "https://x/");
+        assert_eq!(p, LaunchPlan::OpenUrls { activates: true });
+        assert_eq!(p.strategy(), "open_urls");
+    }
+
+    #[test]
+    fn background_disables_activation() {
+        let p = LaunchPlan::from_spec(&spec("com.apple.Safari", &[], true, false), "https://x/");
+        assert_eq!(p, LaunchPlan::OpenUrls { activates: false });
+    }
+
+    #[test]
+    fn profile_appends_url_after_flag_without_new_window() {
+        let p = LaunchPlan::from_spec(
+            &spec(
+                "com.google.Chrome",
+                &["--profile-directory=Profile 10"],
+                false,
+                true,
+            ),
+            "https://example.com/",
+        );
+        match p {
+            LaunchPlan::LaunchApplication {
+                args,
+                new_instance,
+                activates,
+            } => {
+                assert!(new_instance, "a profile launch must force a new instance");
+                assert!(activates);
+                assert_eq!(
+                    args,
+                    vec![
+                        "--profile-directory=Profile 10".to_string(),
+                        "https://example.com/".to_string(),
+                    ],
+                    "args must be the profile flag followed by the URL"
+                );
+                assert!(
+                    !args.iter().any(|a| a == "--new-window"),
+                    "a plain profile must not add --new-window"
+                );
+            }
+            other => panic!("expected LaunchApplication, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn profile_strategy_is_new_instance() {
+        let p = LaunchPlan::from_spec(
+            &spec(
+                "com.google.Chrome",
+                &["--profile-directory=Default"],
+                false,
+                true,
+            ),
+            "https://x/",
+        );
+        assert_eq!(p.strategy(), "launch_new_instance");
+    }
+
+    #[test]
+    fn incognito_and_new_window_flags_pass_through() {
+        let p = LaunchPlan::from_spec(
+            &spec(
+                "com.google.Chrome",
+                &["--incognito", "--new-window"],
+                false,
+                true,
+            ),
+            "https://x/",
+        );
+        let LaunchPlan::LaunchApplication {
+            args, new_instance, ..
+        } = p
+        else {
+            panic!("expected LaunchApplication");
+        };
+        assert!(new_instance);
+        assert!(args.iter().any(|a| a == "--incognito"));
+        assert!(args.iter().any(|a| a == "--new-window"));
+        assert_eq!(args.last().unwrap(), "https://x/", "URL is always last");
+    }
+
+    #[test]
+    fn args_without_new_instance_is_launch_application() {
+        let p = LaunchPlan::from_spec(
+            &spec("org.mozilla.firefox", &["-P", "work"], false, false),
+            "https://x/",
+        );
+        assert_eq!(p.strategy(), "launch_application");
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ModifierFlags {
     pub shift: bool,

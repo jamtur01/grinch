@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -20,7 +20,7 @@ use objc2_application_services::{
 };
 use objc2_core_foundation::{kCFBooleanTrue, CFDictionary, CFRetained, CFString, CFType};
 use objc2_foundation::{
-    NSActivityOptions, NSArray, NSBundle, NSNotification, NSProcessInfo, NSString, NSURL,
+    NSActivityOptions, NSArray, NSBundle, NSError, NSNotification, NSProcessInfo, NSString, NSURL,
 };
 
 // Raw FFI for CGEventSourceFlagsState. The objc2-core-graphics 0.3.2 crate
@@ -53,7 +53,7 @@ extern "C" {
 /// LaunchServices lookup each time.
 const CACHE_SOFT_CAP: usize = 1024;
 
-use crate::engine::{BrowserSpec, ModifierFlags};
+use crate::engine::{BrowserSpec, LaunchPlan, ModifierFlags};
 
 #[derive(Clone, Debug, Default)]
 pub struct Opener {
@@ -783,12 +783,16 @@ pub fn resolve_browser_path(path: &str) -> String {
 /// loop forever; see the `resolved_app_url` miss branch below.
 pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     let _ = mtm;
-    if spec.bundle_id.is_empty() {
+    // Decide the launch strategy first (pure, testable — see `LaunchPlan`),
+    // then perform the NSWorkspace side effects. Keeping the decision out of
+    // this function is what lets the tests assert the plan and lets the
+    // request log record which strategy actually fired.
+    let plan = LaunchPlan::from_spec(spec, url);
+    if let LaunchPlan::Suppress = plan {
         return;
     }
     let workspace = NSWorkspace::sharedWorkspace();
-    let url_ns = NSURL::URLWithString(&NSString::from_str(url));
-    let Some(url_ns) = url_ns else {
+    let Some(url_ns) = NSURL::URLWithString(&NSString::from_str(url)) else {
         eprintln!("grinch: invalid URL: {url}");
         return;
     };
@@ -801,19 +805,7 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
         // through the OS until something kills the process. A clear
         // error + dropped URL is strictly safer than a runaway loop —
         // the user can fix their config and click again.
-        static WARNED: AtomicBool = AtomicBool::new(false);
-        if !WARNED.swap(true, Ordering::Relaxed) {
-            eprintln!(
-                "grinch: browser not found ({}); URL dropped. Edit your config \
-                 to reference an installed browser (bundle ID or app name).",
-                spec.bundle_id
-            );
-        } else {
-            eprintln!(
-                "grinch: browser not found ({}); URL dropped",
-                spec.bundle_id
-            );
-        }
+        warn_browser_not_found(&spec.bundle_id);
         return;
     };
 
@@ -823,49 +815,113 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     // Browsers maintain their own history; the OS-wide Recent list is
     // for user-initiated document opens, not a router's pass-through.
     cfg.setAddsToRecentItems(false);
-    if spec.open_in_background {
-        cfg.setActivates(false);
-    }
-    if spec.creates_new_instance {
-        cfg.setCreatesNewApplicationInstance(true);
-    }
 
-    // Two-API split, matching Finicky's launcher_native.m:
-    //
-    // - When custom args are present (profile flags, --incognito, etc.) we
-    //   call openApplicationAtURL:configuration: and pass the URL as the
-    //   LAST element of configuration.arguments. This is a *launch* call:
-    //   the args reach Chrome's command-line parser, so --profile-directory
-    //   actually takes effect.
-    //
-    // - When there are no args, openURLs:withApplicationAtURL:configuration:
-    //   is fine — LaunchServices routes the URL via the running instance,
-    //   which is what we want for the simple case.
-    //
-    // Using openURLs: with profile args was the bug behind held-shift not
-    // routing to the Convergint profile: Chrome receives the URL through
-    // its URL-handling path (Apple Event GURL), where --profile-directory
-    // is silently ignored.
-    if !spec.args.is_empty() {
-        // Per-click NSString allocs (one per static arg + the URL). Pre-caching
-        // the static-arg NSStrings on BrowserSpec was considered but rejected:
-        // wall-clock here is dominated by the openApplicationAtURL IPC (low
-        // milliseconds), and humans click links on the order of 1–100/day, so
-        // the saving (a few hundred ns × N args) doesn't show up against
-        // millisecond IPC. Not worth the duplicated args/args_ns state.
-        let mut all_args: Vec<&str> = spec.args.iter().map(|s| s.as_str()).collect();
-        all_args.push(url);
-        let args_ns: Vec<Retained<NSString>> =
-            all_args.iter().map(|s| NSString::from_str(s)).collect();
-        let arr = NSArray::from_retained_slice(&args_ns);
-        cfg.setArguments(&arr);
-        workspace.openApplicationAtURL_configuration_completionHandler(&app_url, &cfg, None);
-    } else {
-        let urls = NSArray::from_retained_slice(&[url_ns]);
-        workspace.openURLs_withApplicationAtURL_configuration_completionHandler(
-            &urls, &app_url, &cfg, None,
-        );
+    // Launch-completion diagnostic: NSWorkspace copies the block, so it
+    // outlives this scope and fires on an arbitrary queue when the launch
+    // resolves. Logs failures always (successes only under GRINCH_DEBUG),
+    // tagged with the strategy — the async outcome the JSONL request log
+    // (which records the strategy at resolve time) can't capture.
+    let handler = launch_completion_handler(plan.strategy(), spec.bundle_id.clone());
+
+    match plan {
+        // Handled by the early return above; kept exhaustive so adding a
+        // variant is a compile error rather than a silent fall-through.
+        LaunchPlan::Suppress => {}
+        // No custom args: hand the URL to the app via openURLs. LaunchServices
+        // routes it into a running instance — the simple, window-reusing path.
+        LaunchPlan::OpenUrls { activates } => {
+            if !activates {
+                cfg.setActivates(false);
+            }
+            let urls = NSArray::from_retained_slice(&[url_ns]);
+            workspace.openURLs_withApplicationAtURL_configuration_completionHandler(
+                &urls,
+                &app_url,
+                &cfg,
+                Some(&handler),
+            );
+        }
+        // Custom args (profile / incognito / new-window): pass them plus the
+        // URL as the launch command line via openApplicationAtURL. This is a
+        // *launch* call, so the flags reach the browser's argv. `new_instance`
+        // is required because macOS drops `configuration.arguments` when it
+        // delivers to an already-running instance — that was the bug behind
+        // held-shift not routing to the Convergint profile (the URL arrived
+        // via Apple Event GURL, where --profile-directory is ignored).
+        LaunchPlan::LaunchApplication {
+            args,
+            new_instance,
+            activates,
+        } => {
+            if !activates {
+                cfg.setActivates(false);
+            }
+            if new_instance {
+                cfg.setCreatesNewApplicationInstance(true);
+            }
+            let args_ns: Vec<Retained<NSString>> =
+                args.iter().map(|s| NSString::from_str(s)).collect();
+            let arr = NSArray::from_retained_slice(&args_ns);
+            cfg.setArguments(&arr);
+            workspace.openApplicationAtURL_configuration_completionHandler(
+                &app_url,
+                &cfg,
+                Some(&handler),
+            );
+        }
     }
+}
+
+/// Log the "browser not found" drop. Verbose (with a fix hint) on the first
+/// occurrence per process; terse thereafter so a misconfigured rule that
+/// fires on every click doesn't spam stderr.
+fn warn_browser_not_found(bundle_id: &str) {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "grinch: browser not found ({bundle_id}); URL dropped. Edit your config \
+             to reference an installed browser (bundle ID or app name)."
+        );
+    } else {
+        eprintln!("grinch: browser not found ({bundle_id}); URL dropped");
+    }
+}
+
+/// GRINCH_DEBUG=1 makes [`launch_completion_handler`] also log *successful*
+/// launches (failures are always logged). Read once.
+fn launch_debug() -> bool {
+    static V: OnceLock<bool> = OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("GRINCH_DEBUG")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    })
+}
+
+/// Build the completion handler handed to NSWorkspace's launch APIs. On
+/// failure (non-null `NSError`) it logs a one-line diagnostic tagged with the
+/// launch strategy and bundle id; on success it stays silent unless
+/// GRINCH_DEBUG is set. Returned as an `RcBlock` — NSWorkspace copies the
+/// block, so the caller may drop its handle once the launch call returns.
+fn launch_completion_handler(
+    strategy: &'static str,
+    bundle: String,
+) -> RcBlock<dyn Fn(*mut NSRunningApplication, *mut NSError)> {
+    RcBlock::new(
+        move |_app: *mut NSRunningApplication, error: *mut NSError| {
+            if error.is_null() {
+                if launch_debug() {
+                    eprintln!("grinch: launch ok (strategy={strategy}, bundle={bundle})");
+                }
+            } else {
+                let err = unsafe { &*error };
+                eprintln!(
+                    "grinch: launch failed (strategy={strategy}, bundle={bundle}): {}",
+                    &*err.localizedDescription()
+                );
+            }
+        },
+    )
 }
 
 #[cfg(test)]

@@ -210,6 +210,7 @@ pub(crate) fn format_log_entry(
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
     let final_url = res.url.as_ref();
+    let strategy = LaunchPlan::from_spec(&res.browser, final_url).strategy();
     let matched_json = matched.map(|(idx, name)| serde_json::json!({"index": idx, "name": name}));
     let entry = serde_json::json!({
         "ts": ts,
@@ -218,6 +219,7 @@ pub(crate) fn format_log_entry(
         "rewritten": final_url != input_url,
         "browser": res.browser.bundle_id,
         "args": res.browser.args,
+        "strategy": strategy,
         "opener": {
             "bundleId": opener.bundle_id,
             "name": opener.name,

@@ -464,6 +464,64 @@ delivered. Apps that need ephemeral sessions see the missing key
 and fall back to a non-ephemeral flow. Apps that don't request
 ephemeral (the vast majority) are unaffected.
 
+## Known Chrome behaviour: a link opens in a new window
+
+Occasionally a routed link opens in a **new** Chrome window instead of an
+existing window of the target profile — and every link after that reuses the
+new window. This is upstream Chromium behaviour on macOS, not a Grinch bug;
+Finicky shows the same symptom
+([finicky#514](https://github.com/johnste/finicky/issues/514)).
+
+Delivering a profile (`--profile-directory=…`) requires launching Chrome with
+command-line arguments, so the URL arrives through Chrome's startup path rather
+than its Apple Event URL handler. There `DetermineBrowserOpenBehavior` returns
+`USE_EXISTING` (Grinch never passes `--new-window`), and the window to reuse is
+chosen by `GetExistingBrowserForOpenBehavior` in
+`chrome/browser/ui/startup/startup_browser_creator_impl.cc`:
+
+```cpp
+BrowserWindowInterface* current_browser =
+    ProfileBrowserCollection::GetForProfile(profile)->GetLastActiveBrowser();
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)  // extra pass: prefer TYPE_NORMAL
+#if BUILDFLAG(IS_LINUX)                          // extra pass: prefer TYPE_NORMAL
+return workspace_browser;
+```
+
+There is no `IS_MAC` branch, so on macOS the choice is only "the profile's most
+recently *activated* browser, of any type". `OpenTabsInBrowser` then does:
+
+```cpp
+if (!browser || !browser->is_type_normal()) { browser = Browser::Create(params); }
+```
+
+So when the last-activated browser in that profile is **not an ordinary tabbed
+window** — a Chrome web-app/PWA window, a popup, DevTools — Chrome creates a new
+window even though ordinary windows of that profile are open. Windows, ChromeOS
+and Linux each have a fallback pass that looks for a `TYPE_NORMAL` window;
+macOS has none.
+
+This is a regression from the refactor that replaced `chrome::FindTabbedBrowser`
+(which filtered to tabbed windows) with `GetLastActiveBrowser()`. It was restored
+for Windows and ChromeOS in
+[crbug 497494119](https://issues.chromium.org/issues/497494119)
+([commit](https://github.com/chromium/chromium/commit/0dfe151ac9452eaec153a6c72911c29365d9caa4)),
+and separately for Linux. macOS was not included.
+
+It looks random because it depends on which window you last touched: with a few
+Chrome web apps installed (Gmail, Outlook, Teams, …), any of them being the last
+window you used in that profile is enough to trigger it.
+
+Verified against Chrome 150 (`refs/branch-heads/7871`) and reproduced
+deterministically — activating a Chrome web-app window and then routing a link
+to that profile creates a new window every time; activating an ordinary window
+first reuses it every time.
+
+**Workaround:** make sure an ordinary Chrome window was the last one you used in
+the target profile. Grinch can't influence the choice — it happens inside Chrome
+after the launch, and no command-line flag selects the window. To observe it,
+`scripts/click-watch.sh` prints the launch strategy and Chrome window-count
+delta for each routed click.
+
 ## Working with URL shorteners
 
 Grinch's resolve loop is synchronous on purpose, so it can't follow

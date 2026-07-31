@@ -501,17 +501,15 @@ and Linux each have a fallback pass that looks for a `TYPE_NORMAL` window;
 macOS has none.
 
 This is a regression introduced in **Chrome 146** (bisect: good `145.0.7632.0`,
-bad `146.0.7633.0`) by
-[CL addcbeb3](https://chromium.googlesource.com/chromium/src/+/addcbeb32bbe05daefe915ccab16d76c23b23ac3),
-which removed the `chrome::FindTabbedBrowser` call from the startup path. That
+bad `146.0.7633.0`) by [CL addcbeb3](https://crrev.com/c/7279203), which removed
+the `chrome::FindTabbedBrowser` call from the startup path. That
 function filtered to tabbed (`TYPE_NORMAL`) windows *and* preferred the current
 workspace; `GetLastActiveBrowser()` does neither.
 
 Only the workspace half was reported —
 [crbug 497494119](https://issues.chromium.org/issues/497494119), "External links
 open in last-focused Chrome window on another virtual desktop" — and fixed for
-Linux, then Windows and ChromeOS
-([commit](https://github.com/chromium/chromium/commit/0dfe151ac9452eaec153a6c72911c29365d9caa4)).
+Linux, then Windows and ChromeOS ([CL](https://crrev.com/c/7717627)).
 That report was explicitly *not reproducible on macOS* (it is about virtual
 desktops), so macOS never received a replacement pass and therefore still has no
 `TYPE_NORMAL` filter. The window-type half appears to be unreported upstream.

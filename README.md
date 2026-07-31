@@ -500,21 +500,30 @@ window even though ordinary windows of that profile are open. Windows, ChromeOS
 and Linux each have a fallback pass that looks for a `TYPE_NORMAL` window;
 macOS has none.
 
-This is a regression from the refactor that replaced `chrome::FindTabbedBrowser`
-(which filtered to tabbed windows) with `GetLastActiveBrowser()`. It was restored
-for Windows and ChromeOS in
-[crbug 497494119](https://issues.chromium.org/issues/497494119)
-([commit](https://github.com/chromium/chromium/commit/0dfe151ac9452eaec153a6c72911c29365d9caa4)),
-and separately for Linux. macOS was not included.
+This is a regression introduced in **Chrome 146** (bisect: good `145.0.7632.0`,
+bad `146.0.7633.0`) by
+[CL addcbeb3](https://chromium.googlesource.com/chromium/src/+/addcbeb32bbe05daefe915ccab16d76c23b23ac3),
+which removed the `chrome::FindTabbedBrowser` call from the startup path. That
+function filtered to tabbed (`TYPE_NORMAL`) windows *and* preferred the current
+workspace; `GetLastActiveBrowser()` does neither.
+
+Only the workspace half was reported —
+[crbug 497494119](https://issues.chromium.org/issues/497494119), "External links
+open in last-focused Chrome window on another virtual desktop" — and fixed for
+Linux, then Windows and ChromeOS
+([commit](https://github.com/chromium/chromium/commit/0dfe151ac9452eaec153a6c72911c29365d9caa4)).
+That report was explicitly *not reproducible on macOS* (it is about virtual
+desktops), so macOS never received a replacement pass and therefore still has no
+`TYPE_NORMAL` filter. The window-type half appears to be unreported upstream.
 
 It looks random because it depends on which window you last touched: with a few
 Chrome web apps installed (Gmail, Outlook, Teams, …), any of them being the last
 window you used in that profile is enough to trigger it.
 
-Verified against Chrome 150 (`refs/branch-heads/7871`) and reproduced
-deterministically — activating a Chrome web-app window and then routing a link
-to that profile creates a new window every time; activating an ordinary window
-first reuses it every time.
+Affects Chrome 146 and later. Verified by reading Chrome 150
+(`refs/branch-heads/7871`) and reproduced deterministically — activating a Chrome
+web-app window and then routing a link to that profile creates a new window every
+time; activating an ordinary window first reuses it every time.
 
 **Workaround:** make sure an ordinary Chrome window was the last one you used in
 the target profile. Grinch can't influence the choice — it happens inside Chrome

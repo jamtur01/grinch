@@ -81,6 +81,9 @@ pub struct DelegateIvars {
     // Held so `toggle_start_at_login` can flip the checkmark after a
     // successful (un)register.
     start_at_login_item: RefCell<Option<Retained<NSMenuItem>>>,
+    // Disabled unless the active engine has options.logRequests enabled.
+    // Retained so config reloads can update the state in place.
+    request_log_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
     // Last reload error message, or None on success. Drives the menu-bar
     // identity (brand mark vs ⚠️) and the disabled "Config error: …"
     // item at the top of the menu. Stderr is `/dev/null` for
@@ -402,6 +405,12 @@ define_class!(
             self.open_config();
         }
 
+        // Menu bar action: open the active JSONL request log.
+        #[unsafe(method(openRequestLog:))]
+        fn menu_open_request_log(&self, _sender: Option<&AnyObject>) {
+            self.open_request_log();
+        }
+
         // Menu bar action: toggle Start at Login (SMAppService).
         #[unsafe(method(toggleStartAtLogin:))]
         fn menu_toggle_start_at_login(&self, _sender: Option<&AnyObject>) {
@@ -433,6 +442,7 @@ impl Delegate {
             Err(msg) => Err(msg),
         };
         self.set_load_error(result.err());
+        self.refresh_request_log_menu_item();
     }
 
     fn set_load_error(&self, err: Option<String>) {
@@ -489,6 +499,20 @@ impl Delegate {
         }
     }
 
+    fn refresh_request_log_menu_item(&self) {
+        let item_ref = self.ivars().request_log_menu_item.borrow();
+        let Some(item) = item_ref.as_ref() else {
+            return;
+        };
+        let enabled = self
+            .ivars()
+            .engine
+            .borrow()
+            .as_ref()
+            .is_some_and(Engine::request_logging_enabled);
+        item.setEnabled(enabled);
+    }
+
     fn open_config(&self) {
         let path_ref = self.ivars().config_path.borrow();
         let Some(path) = path_ref.as_ref() else {
@@ -506,6 +530,44 @@ impl Delegate {
         // (typically a text editor); Apple has not deprecated the basic
         // single-URL form, only the application-specific variants.
         workspace.openURL(&url);
+    }
+
+    fn open_request_log(&self) {
+        let result = {
+            let engine_ref = self.ivars().engine.borrow();
+            let Some(engine) = engine_ref.as_ref() else {
+                eprintln!(
+                    "grinch: no active engine — fix the config before opening its request log"
+                );
+                return;
+            };
+            engine.ensure_request_log()
+        };
+        let path = match result {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                eprintln!(
+                    "grinch: request logging is disabled — set options.logRequests to true \
+                     and reload the config"
+                );
+                return;
+            }
+            Err(e) => {
+                eprintln!(
+                    "grinch: couldn't create the request log at {e} — check that its parent \
+                     directory is writable"
+                );
+                return;
+            }
+        };
+        let path_ns = NSString::from_str(&path.to_string_lossy());
+        let url = NSURL::fileURLWithPath(&path_ns);
+        if !NSWorkspace::sharedWorkspace().openURL(&url) {
+            eprintln!(
+                "grinch: couldn't open request log {} — associate .log files with an editor",
+                path.display()
+            );
+        }
     }
 
     fn toggle_start_at_login(&self) {
@@ -715,6 +777,73 @@ impl Delegate {
         println!("Note:      full JSContext create + prelude eval + rule compile per op");
     }
 
+    fn add_status_menu_header(&self, menu: &NSMenu) {
+        let mtm = self.mtm();
+        // Pre-built config-error item, hidden until a reload fails.
+        let error_item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str(""),
+                None,
+                &NSString::from_str(""),
+            )
+        };
+        error_item.setHidden(true);
+        menu.addItem(&error_item);
+        *self.ivars().error_menu_item.borrow_mut() = Some(error_item);
+
+        let version = format!("Grinch {}", env!("CARGO_PKG_VERSION"));
+        let version_item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str(&version),
+                None,
+                &NSString::from_str(""),
+            )
+        };
+        menu.addItem(&version_item);
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+    }
+
+    fn add_config_menu_items(&self, menu: &NSMenu, target: &AnyObject) {
+        let mtm = self.mtm();
+        let open_config = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Open Config"),
+                Some(sel!(openConfig:)),
+                &NSString::from_str("o"),
+            )
+        };
+        unsafe { open_config.setTarget(Some(target)) };
+        menu.addItem(&open_config);
+
+        let reload = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Reload Config"),
+                Some(sel!(reloadConfig:)),
+                &NSString::from_str("r"),
+            )
+        };
+        unsafe { reload.setTarget(Some(target)) };
+        menu.addItem(&reload);
+
+        let request_log = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Open Request Log"),
+                Some(sel!(openRequestLog:)),
+                &NSString::from_str(""),
+            )
+        };
+        unsafe { request_log.setTarget(Some(target)) };
+        menu.addItem(&request_log);
+        *self.ivars().request_log_menu_item.borrow_mut() = Some(request_log);
+
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+    }
+
     fn setup_menu_bar(&self) {
         // options.hideIcon — Finicky-compat. Skip status-item creation
         // entirely when the user opts out. Read once at launch; reloads
@@ -749,65 +878,8 @@ impl Delegate {
 
         let menu = NSMenu::new(mtm);
         let me: &AnyObject = self.as_ref();
-
-        // Pre-built "Config error: …" item at the top of the menu. Hidden
-        // by default; flipped on by refresh_error_menu_item() when a reload
-        // captures an error. Disabled (no action) so it reads as status,
-        // not a button. The separator after it is hidden too so the menu
-        // is visually unchanged in the healthy case.
-        let error_item = unsafe {
-            NSMenuItem::initWithTitle_action_keyEquivalent(
-                NSMenuItem::alloc(mtm),
-                &NSString::from_str(""),
-                None,
-                &NSString::from_str(""),
-            )
-        };
-        error_item.setHidden(true);
-        menu.addItem(&error_item);
-        *self.ivars().error_menu_item.borrow_mut() = Some(error_item);
-
-        // Version label: disabled menu item ("nil action" → grey, non-
-        // clickable). macOS convention is to put app-identity info at
-        // the top of a status menu so users can quickly check what
-        // version they're on without opening About. The value is the
-        // crate version stamped into the binary at compile time —
-        // matches what `Grinch --version` prints.
-        let version = format!("Grinch {}", env!("CARGO_PKG_VERSION"));
-        let version_item = unsafe {
-            NSMenuItem::initWithTitle_action_keyEquivalent(
-                NSMenuItem::alloc(mtm),
-                &NSString::from_str(&version),
-                None,
-                &NSString::from_str(""),
-            )
-        };
-        menu.addItem(&version_item);
-        menu.addItem(&NSMenuItem::separatorItem(mtm));
-
-        let open_config = unsafe {
-            NSMenuItem::initWithTitle_action_keyEquivalent(
-                NSMenuItem::alloc(mtm),
-                &NSString::from_str("Open Config"),
-                Some(sel!(openConfig:)),
-                &NSString::from_str("o"),
-            )
-        };
-        unsafe { open_config.setTarget(Some(me)) };
-        menu.addItem(&open_config);
-
-        let reload = unsafe {
-            NSMenuItem::initWithTitle_action_keyEquivalent(
-                NSMenuItem::alloc(mtm),
-                &NSString::from_str("Reload Config"),
-                Some(sel!(reloadConfig:)),
-                &NSString::from_str("r"),
-            )
-        };
-        unsafe { reload.setTarget(Some(me)) };
-        menu.addItem(&reload);
-
-        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        self.add_status_menu_header(&menu);
+        self.add_config_menu_items(&menu, me);
 
         let start_at_login = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
@@ -847,6 +919,7 @@ impl Delegate {
         // now that the icon and error item are live.
         self.refresh_status_item();
         self.refresh_error_menu_item();
+        self.refresh_request_log_menu_item();
     }
 }
 

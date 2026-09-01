@@ -123,7 +123,10 @@ make run</code></pre>
 3: fn: (url, ctx) =&gt; ctx.modifiers.shift → com.google.Chrome --profile-directory=Work</code></pre>
 
   <h3>Trace every resolve</h3>
-  <p>Set <code>options: { logRequests: true }</code> and Grinch writes one JSONL line per click to <code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code>:</p>
+  <p>Set <code>options: { logRequests: true }</code> and Grinch writes one JSONL line per
+    click to <code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code>. Use
+    <em>Open Request Log</em> in the menu bar to open the active file in its associated app:
+  </p>
 <pre><code>{
   "ts": 1778518645.634,
   "url": "https://github.com/foo",

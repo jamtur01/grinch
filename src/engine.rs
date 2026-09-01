@@ -766,6 +766,24 @@ impl Engine {
         self.options.hide_icon
     }
 
+    /// True when `options.logRequests` is enabled for the active config.
+    pub fn request_logging_enabled(&self) -> bool {
+        self.options.log_requests
+    }
+
+    /// Ensure the active request log exists and return its path.
+    ///
+    /// Returns `Ok(None)` when request logging is disabled. The explicit
+    /// create lets the menu open an empty log before the first URL arrives
+    /// without changing the normal lazy-open behavior.
+    pub fn ensure_request_log(&self) -> std::io::Result<Option<std::path::PathBuf>> {
+        let mut writer_ref = self.log_writer.borrow_mut();
+        let Some(writer) = writer_ref.as_mut() else {
+            return Ok(None);
+        };
+        writer.ensure_file().map(Some)
+    }
+
     /// Hot path: resolve a URL given the opener and modifier flags.
     ///
     /// Thin wrapper around `resolve_inner` that performs the (optional)

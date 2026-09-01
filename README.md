@@ -119,10 +119,10 @@ The `options` block accepts Finicky v4's keys (plus Grinch's own
   toggle the icon mid-session; restart Grinch to apply.
 - **`logRequests: true`** — write a JSONL trace to
   `~/Library/Logs/Grinch/Grinch_<timestamp>.log` with one line per
-  resolve. The file is opened lazily on the first resolve and appended
-  to thereafter; one file per app launch. Useful for figuring out *why*
-  a particular click went where it did without enabling the broader
-  `GRINCH_DEBUG=1` stderr trace.
+  resolve. The file is opened lazily on the first resolve, or when you
+  click **Open Request Log**, and appended to thereafter; one file per
+  app launch. Useful for figuring out *why* a particular click went where
+  it did without enabling the broader `GRINCH_DEBUG=1` stderr trace.
 
   Pair with **`logRotateBytes: <n>`** and/or **`logRotateDays: <n>`** to
   cap the log's growth. Rotation renames the current file to
@@ -413,6 +413,7 @@ Click the Grinch eyes in the menu bar:
 | **Grinch X.Y.Z** | Disabled label at the top showing the running binary's version. Matches `Grinch --version`. |
 | **Open Config** (⌘O) | Opens the active config file in your default `.js` handler (VS Code / Cursor / etc.). |
 | **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
+| **Open Request Log** | Opens the active JSONL log. Enabled by `options.logRequests`. |
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
 | **Quit Grinch** (⌘Q) | Exit. |
 

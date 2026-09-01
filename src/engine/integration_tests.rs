@@ -146,6 +146,68 @@ fn options_hideicon_default_is_false() {
 }
 
 #[test]
+fn request_log_is_unavailable_when_logging_is_disabled() {
+    let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
+    assert!(!e.request_logging_enabled());
+    assert_eq!(e.ensure_request_log().unwrap(), None);
+}
+
+#[test]
+fn ensure_request_log_creates_the_lazy_log_file() {
+    let tmp = unique_tmp("open-log");
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    with_home(&tmp, || {
+        let e = build_engine(
+            r#"module.exports = {
+                    default: "com.apple.Safari",
+                    options: { logRequests: true },
+                };"#,
+        );
+        assert!(e.request_logging_enabled());
+        let path = e
+            .ensure_request_log()
+            .expect("request log should be creatable")
+            .expect("logging is enabled");
+        assert!(path.exists(), "request log was not created at {path:?}");
+        assert_eq!(
+            path.parent(),
+            Some(tmp.join("Library/Logs/Grinch").as_path())
+        );
+
+        let _ = resolve(&e, "https://example.com/");
+        let body = std::fs::read_to_string(path).expect("request log should be readable");
+        assert_eq!(body.lines().count(), 1);
+    });
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn ensure_request_log_reports_filesystem_errors() {
+    let tmp = unique_tmp("open-log-error");
+    std::fs::write(&tmp, b"not a directory").expect("fixture file should be writable");
+
+    with_home(&tmp, || {
+        let e = build_engine(
+            r#"module.exports = {
+                    default: "com.apple.Safari",
+                    options: { logRequests: true },
+                };"#,
+        );
+        let error = e
+            .ensure_request_log()
+            .expect_err("a file cannot contain the log directory");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory);
+        assert!(error
+            .to_string()
+            .contains(&tmp.to_string_lossy().into_owned()));
+    });
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
 fn rule_listing_describes_each_rule_with_index_and_target() {
     let e = build_engine(
         r#"module.exports = {
@@ -198,8 +260,8 @@ fn matched_rule_in_log_uses_user_name_when_present() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// HOME is process-global. The two log tests serialise via this
-/// mutex so neither sees the other's HOME mid-engine-init. Other
+/// HOME is process-global. The log tests serialise via this mutex so
+/// none sees another's HOME mid-engine-init. Other
 /// integration tests don't read HOME from inside Engine::new (no
 /// log_requests) so they don't need the lock.
 static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

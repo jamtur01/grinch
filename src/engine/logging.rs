@@ -4,9 +4,8 @@
 use super::*;
 
 /// Outcome of parsing the user config's `options` block. Only fields
-/// Grinch actually acts on appear here — the others (urlShorteners,
-/// logRequests, checkForUpdates, keepRunning) are still accepted at
-/// parse time but discarded (see `parse_options_block`).
+/// Grinch acts on appear here. Known inert options are still accepted at
+/// parse time and discarded (see `parse_options_block`).
 #[derive(Default, Debug, Clone, Copy)]
 pub struct OptionsConfig {
     /// Whether the menu-bar status item should be skipped at app launch.
@@ -81,23 +80,14 @@ impl LogWriter {
         if self.should_rotate(about_to_write, now_unix()) {
             self.rotate();
         }
-        if self.file.is_none() {
-            match Self::open(&self.path) {
-                Ok((f, size)) => {
-                    self.file = Some(f);
-                    self.bytes_written = size;
-                    self.opened_at_unix = now_unix();
-                }
-                Err(e) => {
-                    eprintln!(
-                        "grinch: couldn't open log file {}: {e} — disabling \
-                         options.logRequests for this session",
-                        self.path.display()
-                    );
-                    self.failed = true;
-                    return;
-                }
-            }
+        if let Err(e) = self.ensure_open() {
+            eprintln!(
+                "grinch: couldn't open log file {}: {e} — disabling \
+                 options.logRequests for this session",
+                self.path.display()
+            );
+            self.failed = true;
+            return;
         }
         if let Some(f) = self.file.as_mut() {
             if let Err(e) = writeln!(f, "{line}") {
@@ -112,6 +102,26 @@ impl LogWriter {
                 self.bytes_written += about_to_write;
             }
         }
+    }
+
+    /// Create the log file if it has not been opened yet and return its path.
+    /// Used by the menu action so an explicit request can open an otherwise
+    /// lazy log before the first URL arrives.
+    pub(crate) fn ensure_file(&mut self) -> std::io::Result<std::path::PathBuf> {
+        self.ensure_open()
+            .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", self.path.display())))?;
+        Ok(self.path.clone())
+    }
+
+    fn ensure_open(&mut self) -> std::io::Result<()> {
+        if self.file.is_some() {
+            return Ok(());
+        }
+        let (file, size) = Self::open(&self.path)?;
+        self.file = Some(file);
+        self.bytes_written = size;
+        self.opened_at_unix = now_unix();
+        Ok(())
     }
 
     /// True when writing `extra_bytes` more would push the file past

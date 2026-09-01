@@ -786,27 +786,25 @@ fn scan_module_tokens(src: &str) -> Vec<ModuleToken> {
                     i += 1;
                     continue;
                 }
-                if stmt_start {
-                    if let Some((kind, end)) = try_match_module_keyword(bytes, i) {
-                        let token_line = line;
-                        // Update the line counter for any newlines inside
-                        // the span (e.g. `export\ndefault`) so subsequent
-                        // tokens get the right line number.
-                        for &x in &bytes[i..end] {
-                            if x == b'\n' {
-                                line += 1;
-                            }
+                if stmt_start && let Some((kind, end)) = try_match_module_keyword(bytes, i) {
+                    let token_line = line;
+                    // Update the line counter for any newlines inside
+                    // the span (e.g. `export\ndefault`) so subsequent
+                    // tokens get the right line number.
+                    for &x in &bytes[i..end] {
+                        if x == b'\n' {
+                            line += 1;
                         }
-                        tokens.push(ModuleToken {
-                            kind,
-                            start: i,
-                            end,
-                            line: token_line,
-                        });
-                        i = end;
-                        stmt_start = false;
-                        continue;
                     }
+                    tokens.push(ModuleToken {
+                        kind,
+                        start: i,
+                        end,
+                        line: token_line,
+                    });
+                    i = end;
+                    stmt_start = false;
+                    continue;
                 }
                 stmt_start = false;
                 i += 1;

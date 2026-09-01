@@ -107,10 +107,10 @@ fn parse_profile_names(content: &str) -> HashSet<String> {
         // valid entries, which downstream surfaced as the "profile
         // {profile:?} not found in profiles.ini" warning even though it
         // was right there. Split once on `=` and trim both sides.
-        if let Some((key, value)) = line.split_once('=') {
-            if key.trim() == "Name" {
-                out.insert(value.trim().to_string());
-            }
+        if let Some((key, value)) = line.split_once('=')
+            && key.trim() == "Name"
+        {
+            out.insert(value.trim().to_string());
         }
     }
     out

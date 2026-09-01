@@ -273,10 +273,11 @@ pub(crate) fn build_url_instance(
     if let Some(url_str) = js_string(ctx, url) {
         let url_str_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_str) };
         let args = NSArray::from_retained_slice(&[url_str_obj]);
-        if let Some(instance) = unsafe { url_ctor.constructWithArguments(Some(&args)) } {
-            if !unsafe { instance.isUndefined() } && !unsafe { instance.isNull() } {
-                return Some(instance);
-            }
+        if let Some(instance) = unsafe { url_ctor.constructWithArguments(Some(&args)) }
+            && !unsafe { instance.isUndefined() }
+            && !unsafe { instance.isNull() }
+        {
+            return Some(instance);
         }
     }
     // js_string failed (OOM) or `new URL(...)` returned undefined/null —
@@ -312,13 +313,8 @@ pub(crate) fn build_ctx_object(
     // and over) → engine's opener_str_cache. Modifier flags are bools and
     // we hold a single cached Retained<JSValue> per truth value on the
     // Engine — clones here are refcount bumps, not JSC bridge crossings.
-    let bool_v = |b: bool| -> Retained<JSValue> {
-        if b {
-            js_true.clone()
-        } else {
-            js_false.clone()
-        }
-    };
+    let bool_v =
+        |b: bool| -> Retained<JSValue> { if b { js_true.clone() } else { js_false.clone() } };
     // js_string / cached_js_string return None on JSC OOM. Propagate
     // via `?` to the function's Option return; the caller treats that
     // as "fn matcher won't match" and continues with the next rule.
@@ -398,10 +394,10 @@ pub(crate) fn js_array_to_strings(v: &JSValue) -> Vec<String> {
     let count = js_array_len(v);
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
-        if let Some(item) = js_array_at(v, i) {
-            if let Some(s) = js_to_string(&item) {
-                out.push(s);
-            }
+        if let Some(item) = js_array_at(v, i)
+            && let Some(s) = js_to_string(&item)
+        {
+            out.push(s);
         }
     }
     out
@@ -451,11 +447,7 @@ pub(crate) fn read_nonempty_string_property(
         return None;
     }
     let s = unsafe { prop.toString() }?.to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 pub(crate) fn js_string(ctx: &JSContext, s: &str) -> Option<Retained<JSValue>> {

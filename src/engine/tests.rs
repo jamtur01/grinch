@@ -217,8 +217,10 @@ fn safelink_passes_through_unrelated_hosts() {
 fn safelink_passes_through_teams_path_mismatch() {
     // The Teams CDN host serves more than just safelinks — only the
     // `/evergreen-assets/safelinks/` path qualifies for unwrapping.
-    let unrelated =
-            "https://statics.teams.cdn.office.net/evergreen-assets/other/?url=https%3A%2F%2Fexample.com";
+    let unrelated = concat!(
+        "https://statics.teams.cdn.office.net/evergreen-assets/other/",
+        "?url=https%3A%2F%2Fexample.com"
+    );
     assert!(unwrap_safelink(unrelated).is_none());
 }
 
@@ -330,10 +332,12 @@ fn teams_launcher_passes_through_unrelated_hosts() {
 #[test]
 fn teams_launcher_rejects_empty_or_malformed_inner_url() {
     // No `url` param → can't unwrap.
-    assert!(unwrap_teams_launcher(
-        "https://teams.microsoft.com/dl/launcher/launcher.html?type=meetup-join"
-    )
-    .is_none());
+    assert!(
+        unwrap_teams_launcher(
+            "https://teams.microsoft.com/dl/launcher/launcher.html?type=meetup-join"
+        )
+        .is_none()
+    );
     // Empty `url` param.
     assert!(
         unwrap_teams_launcher("https://teams.microsoft.com/dl/launcher/launcher.html?url=")

@@ -45,7 +45,7 @@ use std::sync::OnceLock;
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_authentication_services::{
     ASWebAuthenticationSessionRequest, ASWebAuthenticationSessionWebBrowserSessionHandling,
     ASWebAuthenticationSessionWebBrowserSessionManager,
@@ -55,7 +55,7 @@ use objc2_authentication_services::{
 use objc2_foundation::{NSError, NSString, NSURL};
 
 use crate::engine::{Engine, ModifierFlags};
-use crate::workspace::{open_url, Opener};
+use crate::workspace::{Opener, open_url};
 
 // Pending session requests, keyed by UUID string. Lives on the main
 // thread (the auth-services manager only dispatches on main, and the

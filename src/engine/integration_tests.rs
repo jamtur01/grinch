@@ -8,7 +8,7 @@
 //! that the pure-Rust unit tests in `mod tests` above can't reach
 //! without a JSC fixture.
 use super::*;
-use crate::helpers::{wrap_user_config, JS_PRELUDE};
+use crate::helpers::{JS_PRELUDE, wrap_user_config};
 use crate::loader::LoadedConfig;
 use crate::workspace::Opener;
 
@@ -199,9 +199,11 @@ fn ensure_request_log_reports_filesystem_errors() {
             .ensure_request_log()
             .expect_err("a file cannot contain the log directory");
         assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory);
-        assert!(error
-            .to_string()
-            .contains(&tmp.to_string_lossy().into_owned()));
+        assert!(
+            error
+                .to_string()
+                .contains(&tmp.to_string_lossy().into_owned())
+        );
     });
 
     let _ = std::fs::remove_file(&tmp);
@@ -1970,11 +1972,12 @@ fn parse_browser_jsval_open_in_new_window_composes_with_incognito_and_profile() 
             };"#,
     );
     let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
-    assert!(res
-        .browser
-        .args
-        .iter()
-        .any(|a| a.starts_with("--profile-directory=")));
+    assert!(
+        res.browser
+            .args
+            .iter()
+            .any(|a| a.starts_with("--profile-directory="))
+    );
     assert!(res.browser.args.iter().any(|a| a == "--incognito"));
     assert!(res.browser.args.iter().any(|a| a == "--new-window"));
     assert!(res.browser.creates_new_instance);
@@ -2007,11 +2010,12 @@ fn parse_browser_jsval_incognito_composes_with_profile() {
     );
     let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
     assert!(res.browser.args.iter().any(|a| a == "--incognito"));
-    assert!(res
-        .browser
-        .args
-        .iter()
-        .any(|a| a.starts_with("--profile-directory=")));
+    assert!(
+        res.browser
+            .args
+            .iter()
+            .any(|a| a.starts_with("--profile-directory="))
+    );
     assert!(res.browser.creates_new_instance);
 }
 

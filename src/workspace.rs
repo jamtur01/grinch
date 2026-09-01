@@ -9,16 +9,16 @@ use std::sync::{Arc, Mutex, OnceLock};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{class, msg_send, MainThreadMarker};
+use objc2::{MainThreadMarker, class, msg_send};
 use objc2_app_kit::{
     NSRunningApplication, NSWorkspace, NSWorkspaceDidLaunchApplicationNotification,
     NSWorkspaceDidTerminateApplicationNotification, NSWorkspaceOpenConfiguration,
 };
 use objc2_application_services::{
-    kAXTrustedCheckOptionPrompt, AXError, AXIsProcessTrusted, AXIsProcessTrustedWithOptions,
-    AXUIElement,
+    AXError, AXIsProcessTrusted, AXIsProcessTrustedWithOptions, AXUIElement,
+    kAXTrustedCheckOptionPrompt,
 };
-use objc2_core_foundation::{kCFBooleanTrue, CFDictionary, CFRetained, CFString, CFType};
+use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType, kCFBooleanTrue};
 use objc2_foundation::{
     NSActivityOptions, NSArray, NSBundle, NSError, NSNotification, NSProcessInfo, NSString, NSURL,
 };
@@ -38,7 +38,7 @@ const KCG_EVENT_FLAG_MASK_COMMAND: u64 = 1 << 20;
 const KCG_EVENT_FLAG_MASK_SECONDARY_FN: u64 = 1 << 23; // Fn / Globe
 
 #[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     fn CGEventSourceFlagsState(state_id: i32) -> u64;
 }
 
@@ -135,12 +135,12 @@ pub fn running_apps_cached() -> Arc<HashSet<String>> {
 fn resolved_app_url(bundle_id: &str) -> Option<Retained<NSURL>> {
     {
         let cache = BUNDLE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(map) = cache.as_ref() {
-            if let Some(hit) = map.get(bundle_id) {
-                return hit
-                    .as_ref()
-                    .and_then(|s| NSURL::URLWithString(&NSString::from_str(s)));
-            }
+        if let Some(map) = cache.as_ref()
+            && let Some(hit) = map.get(bundle_id)
+        {
+            return hit
+                .as_ref()
+                .and_then(|s| NSURL::URLWithString(&NSString::from_str(s)));
         }
     }
     let workspace = NSWorkspace::sharedWorkspace();
@@ -269,15 +269,15 @@ pub fn is_app_running(id: &str) -> bool {
     let count = apps.count();
     for i in 0..count {
         let app = apps.objectAtIndex(i);
-        if let Some(bundle) = app.bundleIdentifier() {
-            if bundle.to_string() == id {
-                return true;
-            }
+        if let Some(bundle) = app.bundleIdentifier()
+            && bundle.to_string() == id
+        {
+            return true;
         }
-        if let Some(name) = app.localizedName() {
-            if name.to_string() == id {
-                return true;
-            }
+        if let Some(name) = app.localizedName()
+            && name.to_string() == id
+        {
+            return true;
         }
     }
     false
@@ -674,10 +674,10 @@ static IDENTIFIER_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(Non
 pub fn resolve_browser_identifier(name: &str) -> String {
     {
         let cache = IDENTIFIER_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(map) = cache.as_ref() {
-            if let Some(hit) = map.get(name) {
-                return hit.clone();
-            }
+        if let Some(map) = cache.as_ref()
+            && let Some(hit) = map.get(name)
+        {
+            return hit.clone();
         }
     }
     let resolved = resolve_browser_identifier_uncached(name);
@@ -712,10 +712,10 @@ fn resolve_browser_identifier_uncached(name: &str) -> String {
     #[allow(deprecated)]
     if let Some(path) = workspace.fullPathForApplication(&name_ns) {
         let url = NSURL::fileURLWithPath(&path);
-        if let Some(bundle) = NSBundle::bundleWithURL(&url) {
-            if let Some(id) = bundle.bundleIdentifier() {
-                return id.to_string();
-            }
+        if let Some(bundle) = NSBundle::bundleWithURL(&url)
+            && let Some(id) = bundle.bundleIdentifier()
+        {
+            return id.to_string();
         }
     }
 
@@ -766,10 +766,10 @@ pub fn host_info() -> (String, String) {
 pub fn resolve_browser_path(path: &str) -> String {
     let path_ns = NSString::from_str(path);
     let url = NSURL::fileURLWithPath(&path_ns);
-    if let Some(bundle) = NSBundle::bundleWithURL(&url) {
-        if let Some(id) = bundle.bundleIdentifier() {
-            return id.to_string();
-        }
+    if let Some(bundle) = NSBundle::bundleWithURL(&url)
+        && let Some(id) = bundle.bundleIdentifier()
+    {
+        return id.to_string();
     }
     eprintln!("grinch: couldn't load bundle at path {path}");
     path.to_string()

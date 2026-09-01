@@ -22,7 +22,7 @@ use objc2::runtime::AnyObject;
 use objc2_foundation::{NSString, NSURL};
 use objc2_javascript_core::{JSContext, JSValue};
 
-use crate::helpers::{preprocess_es_module_syntax, wrap_user_config, JS_PRELUDE};
+use crate::helpers::{JS_PRELUDE, preprocess_es_module_syntax, wrap_user_config};
 
 pub struct LoadedConfig {
     pub exports: Retained<JSValue>,

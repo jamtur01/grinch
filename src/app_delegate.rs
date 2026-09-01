@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 /// GRINCH_DEBUG=1 enables per-resolve eprintln of opener / modifiers /
 /// chosen browser. Read once at startup so we don't pay for `std::env::var`
@@ -15,7 +15,7 @@ fn debug_enabled() -> bool {
 use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool};
-use objc2::{class, define_class, msg_send, sel, DefinedClass, MainThreadOnly};
+use objc2::{DefinedClass, MainThreadOnly, class, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSImage, NSMenu, NSMenuItem, NSSquareStatusItemLength,
     NSStatusBar, NSStatusItem, NSWorkspace,
@@ -23,21 +23,21 @@ use objc2_app_kit::{
 use objc2_core_services::{AEEventClass, AEEventID};
 use objc2_foundation::{
     MainThreadMarker, NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSObject,
-    NSObjectProtocol, NSString, NSUserActivity, NSUserActivityTypeBrowsingWeb, NSURL,
+    NSObjectProtocol, NSString, NSURL, NSUserActivity, NSUserActivityTypeBrowsingWeb,
 };
 
 use crate::engine::{Engine, ModifierFlags};
 use crate::loader::{find_config_path, load_config};
 use crate::workspace::{
-    current_modifier_flags, ensure_accessibility_permission, frontmost_opener, frontmost_opener_id,
-    list_http_browsers, open_url, opener_from_pid, Opener,
+    Opener, current_modifier_flags, ensure_accessibility_permission, frontmost_opener,
+    frontmost_opener_id, list_http_browsers, open_url, opener_from_pid,
 };
 
 // SMAppService lives in ServiceManagement.framework; not transitively pulled
 // in by any other dep so we link it explicitly. Empty extern is enough — we
 // reach the Obj-C class via the runtime.
 #[link(name = "ServiceManagement", kind = "framework")]
-extern "C" {}
+unsafe extern "C" {}
 
 // SMAppServiceStatus enum (from ServiceManagement/SMAppService.h).
 // 0 = NotRegistered (omitted; falls through the not-Enabled branch).

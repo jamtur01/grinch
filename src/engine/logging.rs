@@ -131,10 +131,10 @@ impl LogWriter {
         if self.file.is_none() {
             return false;
         }
-        if let Some(cap) = self.rotate_bytes {
-            if self.bytes_written.saturating_add(extra_bytes) > cap {
-                return true;
-            }
+        if let Some(cap) = self.rotate_bytes
+            && self.bytes_written.saturating_add(extra_bytes) > cap
+        {
+            return true;
         }
         if let Some(days) = self.rotate_days {
             let secs = u64::from(days).saturating_mul(86_400);

@@ -116,11 +116,11 @@ fn describe_single_matcher(v: &JSValue) -> String {
                 "from" | "running" => "apps",
                 _ => "",
             };
-            if !items_key.is_empty() {
-                if let Some(arr) = key(v, items_key) {
-                    let items = js_array_to_strings(&arr).join(",");
-                    return format!("{t}:{items}");
-                }
+            if !items_key.is_empty()
+                && let Some(arr) = key(v, items_key)
+            {
+                let items = js_array_to_strings(&arr).join(",");
+                return format!("{t}:{items}");
             }
             return t;
         }
@@ -244,10 +244,10 @@ fn compile_matchers(
         let count = js_array_len(v);
         let mut ms = Vec::with_capacity(count);
         for i in 0..count {
-            if let Some(item) = js_array_at(v, i) {
-                if let Some(m) = compile_matcher(&item, regexp_ctor, function_ctor) {
-                    ms.push(m);
-                }
+            if let Some(item) = js_array_at(v, i)
+                && let Some(m) = compile_matcher(&item, regexp_ctor, function_ctor)
+            {
+                ms.push(m);
             }
         }
         return ms;
@@ -276,32 +276,31 @@ pub(crate) fn compile_matcher(
         return Some(Matcher::Domain(vec![s.to_ascii_lowercase()]));
     }
     if unsafe { v.isObject() } {
-        if let Some(t) = key(v, "__type") {
-            if !unsafe { t.isUndefined() } {
-                if let Some(name) = js_to_string(&t) {
-                    match name.as_str() {
-                        "domain" => {
-                            if let Some(arr) = key(v, "hosts") {
-                                let hosts: Vec<String> = js_array_to_strings(&arr)
-                                    .into_iter()
-                                    .map(|s| s.to_ascii_lowercase())
-                                    .collect();
-                                return Some(Matcher::Domain(hosts));
-                            }
-                        }
-                        "from" => {
-                            if let Some(arr) = key(v, "apps") {
-                                return Some(Matcher::From(js_array_to_strings(&arr)));
-                            }
-                        }
-                        "running" => {
-                            if let Some(arr) = key(v, "apps") {
-                                return Some(Matcher::Running(js_array_to_strings(&arr)));
-                            }
-                        }
-                        _ => {}
+        if let Some(t) = key(v, "__type")
+            && !unsafe { t.isUndefined() }
+            && let Some(name) = js_to_string(&t)
+        {
+            match name.as_str() {
+                "domain" => {
+                    if let Some(arr) = key(v, "hosts") {
+                        let hosts: Vec<String> = js_array_to_strings(&arr)
+                            .into_iter()
+                            .map(|s| s.to_ascii_lowercase())
+                            .collect();
+                        return Some(Matcher::Domain(hosts));
                     }
                 }
+                "from" => {
+                    if let Some(arr) = key(v, "apps") {
+                        return Some(Matcher::From(js_array_to_strings(&arr)));
+                    }
+                }
+                "running" => {
+                    if let Some(arr) = key(v, "apps") {
+                        return Some(Matcher::Running(js_array_to_strings(&arr)));
+                    }
+                }
+                _ => {}
             }
         }
         // Regex literal /.../ — compile via the regex crate. Honour the JS
@@ -310,34 +309,34 @@ pub(crate) fn compile_matcher(
         // flags the user wrote; mirror that. Earlier versions of Grinch
         // forced case-insensitive matching, which was a silent semantic
         // divergence from Finicky and from JS's own `.test()` behaviour.
-        if is_instance_of(v, regexp_ctor) {
-            if let Some(pattern) = key(v, "source").and_then(|p| js_to_string(&p)) {
-                let ignore_case = key(v, "ignoreCase")
-                    .map(|p| unsafe { p.toBool() })
-                    .unwrap_or(false);
-                let multi_line = key(v, "multiline")
-                    .map(|p| unsafe { p.toBool() })
-                    .unwrap_or(false);
-                match RegexBuilder::new(&pattern)
-                    .case_insensitive(ignore_case)
-                    .multi_line(multi_line)
-                    .build()
-                {
-                    Ok(re) => return Some(Matcher::Regex(re)),
-                    Err(e) => {
-                        // The Rust `regex` crate doesn't speak JS-specific
-                        // regex syntax (lookbehinds, `\b` in some contexts).
-                        // Silently dropping the matcher meant rules whose
-                        // only pattern was a regex would never fire with
-                        // no diagnostic. Surface the failure at load time
-                        // so users can port the pattern to a supported
-                        // form (e.g. wildcards, fn matchers).
-                        eprintln!(
-                            "grinch: rule matcher regex /{pattern}/ failed to compile: \
+        if is_instance_of(v, regexp_ctor)
+            && let Some(pattern) = key(v, "source").and_then(|p| js_to_string(&p))
+        {
+            let ignore_case = key(v, "ignoreCase")
+                .map(|p| unsafe { p.toBool() })
+                .unwrap_or(false);
+            let multi_line = key(v, "multiline")
+                .map(|p| unsafe { p.toBool() })
+                .unwrap_or(false);
+            match RegexBuilder::new(&pattern)
+                .case_insensitive(ignore_case)
+                .multi_line(multi_line)
+                .build()
+            {
+                Ok(re) => return Some(Matcher::Regex(re)),
+                Err(e) => {
+                    // The Rust `regex` crate doesn't speak JS-specific
+                    // regex syntax (lookbehinds, `\b` in some contexts).
+                    // Silently dropping the matcher meant rules whose
+                    // only pattern was a regex would never fire with
+                    // no diagnostic. Surface the failure at load time
+                    // so users can port the pattern to a supported
+                    // form (e.g. wildcards, fn matchers).
+                    eprintln!(
+                        "grinch: rule matcher regex /{pattern}/ failed to compile: \
                              {e}. The rule will never match — replace with a wildcard, \
                              a `domain()` helper, or a `(url, ctx) => …` fn matcher."
-                        );
-                    }
+                    );
                 }
             }
         }

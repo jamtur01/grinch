@@ -1,5 +1,5 @@
-use objc2::runtime::ProtocolObject;
 use objc2::MainThreadMarker;
+use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
 mod app_delegate;

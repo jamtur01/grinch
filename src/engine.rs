@@ -7,19 +7,19 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use block2::RcBlock;
+use objc2::Message;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::Message;
 use objc2_foundation::{NSArray, NSString};
 use objc2_javascript_core::{JSContext, JSType, JSValue};
 use regex::{Regex, RegexBuilder};
 
 use crate::loader::LoadedConfig;
-use crate::workspace::{frontmost_window_title, resolve_browser_identifier, Opener};
+use crate::workspace::{Opener, frontmost_window_title, resolve_browser_identifier};
 
 // Submodules carved out of the original monolith. `engine` re-exports each
 // via `pub(crate) use` so every intra-crate path (and the test modules'
@@ -599,11 +599,11 @@ impl Engine {
         // browsers
         let mut browsers: std::collections::HashMap<String, Rc<BrowserSpec>> =
             std::collections::HashMap::new();
-        if let Some(b) = key(&exports, "browsers") {
-            if !is_undef_or_null(&b) {
-                for (k, v) in iter_object(&b) {
-                    browsers.insert(k, Rc::new(parse_browser_jsval(&v)));
-                }
+        if let Some(b) = key(&exports, "browsers")
+            && !is_undef_or_null(&b)
+        {
+            for (k, v) in iter_object(&b) {
+                browsers.insert(k, Rc::new(parse_browser_jsval(&v)));
             }
         }
 
@@ -1017,22 +1017,21 @@ impl Engine {
             },
             DefaultBrowser::Suppress => suppressed(),
             DefaultBrowser::Fn(uf) => 'fn_default: {
-                if let Some(args) = rc.fn_args(&current, uf.needs_ctx) {
-                    if let Some(r) = unsafe { uf.f.callWithArguments(Some(&args)) } {
-                        if !unsafe { r.isUndefined() } && !unsafe { r.isNull() } {
-                            let spec =
-                                resolve_browser(&r, &self.browsers, false).unwrap_or_else(|| {
-                                    Rc::new(BrowserSpec::from_bundle_id(
-                                        js_to_string(&r).unwrap_or_default(),
-                                    ))
-                                });
-                            break 'fn_default Resolution {
-                                browser: spec,
-                                url: current,
-                                matched_rule: None,
-                            };
-                        }
-                    }
+                if let Some(args) = rc.fn_args(&current, uf.needs_ctx)
+                    && let Some(r) = unsafe { uf.f.callWithArguments(Some(&args)) }
+                    && !unsafe { r.isUndefined() }
+                    && !unsafe { r.isNull() }
+                {
+                    let spec = resolve_browser(&r, &self.browsers, false).unwrap_or_else(|| {
+                        Rc::new(BrowserSpec::from_bundle_id(
+                            js_to_string(&r).unwrap_or_default(),
+                        ))
+                    });
+                    break 'fn_default Resolution {
+                        browser: spec,
+                        url: current,
+                        matched_rule: None,
+                    };
                 }
                 // Fn returned null/undefined or args build failed — same
                 // semantics as `open: null` (suppress). Resolution<'static>
@@ -1088,11 +1087,11 @@ fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> RuntimeNee
         }
     }
     fn rewriter_needs(r: &Rewriter, n: &mut RuntimeNeeds) {
-        if let Rewriter::Fn(uf) = r {
-            if uf.needs_ctx {
-                n.opener = true;
-                n.modifiers = true;
-            }
+        if let Rewriter::Fn(uf) = r
+            && uf.needs_ctx
+        {
+            n.opener = true;
+            n.modifiers = true;
         }
     }
 
@@ -1111,11 +1110,11 @@ fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> RuntimeNee
         if let Some(rw) = &rule.rewriter {
             rewriter_needs(rw, &mut n);
         }
-        if let Target::Fn(uf) = &rule.target {
-            if uf.needs_ctx {
-                n.opener = true;
-                n.modifiers = true;
-            }
+        if let Target::Fn(uf) = &rule.target
+            && uf.needs_ctx
+        {
+            n.opener = true;
+            n.modifiers = true;
         }
     }
 
@@ -1254,10 +1253,10 @@ impl<'a> ResolveCtx<'a> {
     /// propagate None up to the resolve path, which skips the affected fn
     /// matcher rather than panicking the daemon.
     fn url_instance(&self, url: &str) -> Option<Retained<JSValue>> {
-        if let Some((cached_url, instance)) = self.cached_url_instance.borrow().as_ref() {
-            if cached_url.as_ref() == url {
-                return Some(instance.clone());
-            }
+        if let Some((cached_url, instance)) = self.cached_url_instance.borrow().as_ref()
+            && cached_url.as_ref() == url
+        {
+            return Some(instance.clone());
         }
         let v = build_url_instance(self.url_ctor, self.ctx, url)?;
         *self.cached_url_instance.borrow_mut() = Some((Box::from(url), v.clone()));
@@ -1271,10 +1270,10 @@ impl<'a> ResolveCtx<'a> {
     /// doesn't match (rather than panicking).
     fn fn_args(&self, url: &str, needs_ctx: bool) -> Option<Retained<NSArray>> {
         if needs_ctx {
-            if let Some((cached_url, args)) = self.fn_args_cache_full.borrow().as_ref() {
-                if cached_url.as_ref() == url {
-                    return Some(args.clone());
-                }
+            if let Some((cached_url, args)) = self.fn_args_cache_full.borrow().as_ref()
+                && cached_url.as_ref() == url
+            {
+                return Some(args.clone());
             }
             let url_instance = self.url_instance(url)?;
             let ctx_val = self.ctx_object()?;
@@ -1284,10 +1283,10 @@ impl<'a> ResolveCtx<'a> {
             *self.fn_args_cache_full.borrow_mut() = Some((Box::from(url), args.clone()));
             Some(args)
         } else {
-            if let Some((cached_url, args)) = self.fn_args_cache_url_only.borrow().as_ref() {
-                if cached_url.as_ref() == url {
-                    return Some(args.clone());
-                }
+            if let Some((cached_url, args)) = self.fn_args_cache_url_only.borrow().as_ref()
+                && cached_url.as_ref() == url
+            {
+                return Some(args.clone());
             }
             let url_instance = self.url_instance(url)?;
             let url_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_instance) };
@@ -1468,11 +1467,7 @@ fn call_fn_matcher_dispatcher(
     let args = NSArray::from_retained_slice(&[url_obj, ctx_obj, start_obj]);
     let result = unsafe { run.dispatcher.callWithArguments(Some(&args)) }?;
     let n = unsafe { result.toInt32() };
-    if n < 0 {
-        None
-    } else {
-        Some(n as usize)
-    }
+    if n < 0 { None } else { Some(n as usize) }
 }
 
 #[cfg(test)]

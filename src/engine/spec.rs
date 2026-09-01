@@ -83,10 +83,10 @@ fn looks_like_app_path(s: &str) -> bool {
 /// only for path-form browser specs; the Chromium / Firefox profile
 /// path code already calls `std::env::var("HOME")` directly.
 fn expand_tilde(s: &str) -> String {
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return format!("{home}/{rest}");
-        }
+    if let Some(rest) = s.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return format!("{home}/{rest}");
     }
     s.to_string()
 }
@@ -143,10 +143,10 @@ pub(crate) fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
 
     // appType: "none" → no-op browser (same as `open: null`). Skip the
     // identifier resolution entirely.
-    if let Some(t) = key(v, "appType").and_then(|x| js_to_string(&x)) {
-        if t == "none" {
-            return BrowserSpec::empty();
-        }
+    if let Some(t) = key(v, "appType").and_then(|x| js_to_string(&x))
+        && t == "none"
+    {
+        return BrowserSpec::empty();
     }
 
     // Bundle ID source: `id`, `bundleId`, or `name`. The resolver dispatches
@@ -199,22 +199,22 @@ pub(crate) fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
     // flag. Same `creates_new_instance` reasoning as `profile:`: without
     // it, LaunchServices routes the URL into the existing window and the
     // flag is silently ignored on Chromium and Firefox.
-    if let Some(incognito) = key(v, "incognito").map(|b| unsafe { b.toBool() }) {
-        if incognito {
-            if let Some(flag) = expand_flag_for_family(&bundle_id, FlagFamily::Incognito) {
-                args.push(flag.to_string());
-                creates_new_instance = true;
-            } else {
-                // Fires for Safari AND for any bundle ID outside Grinch's
-                // Chromium/Firefox tables (path-form specs, less-common
-                // forks, typos). Naming the bundle in the message makes
-                // it actionable for the typo case.
-                eprintln!(
-                    "grinch: ignoring `incognito: true` for {bundle_id} — no \
+    if let Some(incognito) = key(v, "incognito").map(|b| unsafe { b.toBool() })
+        && incognito
+    {
+        if let Some(flag) = expand_flag_for_family(&bundle_id, FlagFamily::Incognito) {
+            args.push(flag.to_string());
+            creates_new_instance = true;
+        } else {
+            // Fires for Safari AND for any bundle ID outside Grinch's
+            // Chromium/Firefox tables (path-form specs, less-common
+            // forks, typos). Naming the bundle in the message makes
+            // it actionable for the typo case.
+            eprintln!(
+                "grinch: ignoring `incognito: true` for {bundle_id} — no \
                      CLI private-mode flag known for this browser family \
                      (supported: Chromium, Firefox)"
-                );
-            }
+            );
         }
     }
 
@@ -222,18 +222,18 @@ pub(crate) fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
     // running browser instead of opening as a tab. Distinct from
     // `creates_new_instance` (which spawns a fresh application process,
     // used for profile routing). Same family-flag pattern as incognito.
-    if let Some(new_window) = key(v, "openInNewWindow").map(|b| unsafe { b.toBool() }) {
-        if new_window {
-            if let Some(flag) = expand_flag_for_family(&bundle_id, FlagFamily::NewWindow) {
-                args.push(flag.to_string());
-                creates_new_instance = true;
-            } else {
-                eprintln!(
-                    "grinch: ignoring `openInNewWindow: true` for {bundle_id} — \
+    if let Some(new_window) = key(v, "openInNewWindow").map(|b| unsafe { b.toBool() })
+        && new_window
+    {
+        if let Some(flag) = expand_flag_for_family(&bundle_id, FlagFamily::NewWindow) {
+            args.push(flag.to_string());
+            creates_new_instance = true;
+        } else {
+            eprintln!(
+                "grinch: ignoring `openInNewWindow: true` for {bundle_id} — \
                      no CLI new-window flag known for this browser family \
                      (supported: Chromium, Firefox)"
-                );
-            }
+            );
         }
     }
 

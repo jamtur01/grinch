@@ -696,7 +696,7 @@ exercises that path.
 |---|---:|---:|---:|
 | Resident memory | 15.5 MB | 14.6 MB | 142.5 MB |
 | Peak memory | 16.6 MB | 15.5 MB | 391.2 MB |
-| JS engine | system JSC | n/a (Swift DSL) | bundled goja |
+| JS engine | system JSC | system JSC | bundled goja |
 | Bundled UI | menu bar only | menu bar only | WebView config app |
 
 Finicky bundles a WebKit instance for its config UI, which accounts for

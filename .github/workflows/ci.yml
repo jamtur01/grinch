@@ -10,6 +10,15 @@ permissions:
   contents: read
 
 jobs:
+  supply-chain:
+    name: Supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2.1.1
+
   test:
     name: Test (release)
     runs-on: macos-latest

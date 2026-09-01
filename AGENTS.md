@@ -90,6 +90,7 @@ universal app.
 - `scripts/`: release and browser-window diagnostic tooling.
 - `docs/`: static project site.
 - `brand/`: app, menu-bar, README, and social identity sources.
+- `deny.toml`: dependency advisory, license, ban, and source policy.
 
 ## External state
 
@@ -113,6 +114,7 @@ Run the checks relevant to the change, with this as the standard Rust path:
 cargo fmt --all -- --check
 cargo clippy --release --all-targets -- -D warnings
 cargo test --release --bin Grinch
+cargo deny check
 ```
 
 For brand changes, run `make icon`, round-trip the result through `iconutil`,

@@ -96,6 +96,20 @@ details. The bar is "would removing this test let a real bug ship?".
 Look at `src/engine.rs::tests` and `src/chromium.rs::tests` for the
 existing style.
 
+### Supply-chain policy
+
+Install the version used by CI, then check the dependency graph against
+[`deny.toml`](deny.toml):
+
+```sh
+cargo install --locked cargo-deny --version 0.20.2
+cargo deny check
+```
+
+The policy rejects known advisories, duplicate crate versions, wildcard
+dependency requirements, and dependencies outside crates.io. It permits only
+the license expressions needed by the current dependency graph.
+
 ### Benchmarks
 
 ```sh

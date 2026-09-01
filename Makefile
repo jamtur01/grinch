@@ -16,12 +16,13 @@ else
 RELEASE_BIN = target/release/Grinch
 endif
 
-# Icon: rendered from an emoji at build time so the binary stays self-
-# contained and the icon source-of-truth lives next to the menu bar emoji
-# in app_delegate.rs. Override via `make build ICON_EMOJI=…`.
-ICON_EMOJI ?= 🎄
-ICON_ICNS  = build/grinch.icns
-ICONSET    = build/grinch.iconset
+# Brand assets. The iconset is the source for the Finder/Dock icon; the
+# template PNGs let AppKit tint the menu-bar mark for light and dark modes.
+ICON_ICNS      = build/grinch.icns
+ICONSET        = brand/Grinch.iconset
+ICON_SOURCES   = $(wildcard $(ICONSET)/*.png)
+STATUS_ICON    = brand/grinchTemplate.png
+STATUS_ICON_2X = brand/grinchTemplate@2x.png
 
 DMG       = Grinch.dmg
 DMG_STAGE = build/dmg-staging
@@ -42,32 +43,18 @@ LSREGISTER = /System/Library/Frameworks/CoreServices.framework/Versions/A/Framew
 # grant survive rebuilds.
 MACOS_CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | awk '/Developer ID Application/ { print $$2; exit }')
 
-# Build the .icns from the emoji. Renders 10 sizes covering all macOS
-# icon rendering contexts (menu bar to Finder cover-flow), then folds
-# them into a single .icns via iconutil.
-$(ICON_ICNS): tools/render-icon.swift
-	@rm -rf $(ICONSET)
-	@mkdir -p $(ICONSET)
-	@swift tools/render-icon.swift $(ICON_EMOJI) 16   $(ICONSET)/icon_16x16.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 32   $(ICONSET)/icon_16x16@2x.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 32   $(ICONSET)/icon_32x32.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 64   $(ICONSET)/icon_32x32@2x.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 128  $(ICONSET)/icon_128x128.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 256  $(ICONSET)/icon_128x128@2x.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 256  $(ICONSET)/icon_256x256.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 512  $(ICONSET)/icon_256x256@2x.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 512  $(ICONSET)/icon_512x512.png
-	@swift tools/render-icon.swift $(ICON_EMOJI) 1024 $(ICONSET)/icon_512x512@2x.png
+# Fold the supplied 10-resolution iconset into the bundle's .icns file.
+$(ICON_ICNS): $(ICON_SOURCES)
+	@mkdir -p $(dir $(ICON_ICNS))
 	@iconutil -c icns $(ICONSET) -o $(ICON_ICNS)
-	@rm -rf $(ICONSET)
-	@echo "Built $(ICON_ICNS) from $(ICON_EMOJI)"
+	@echo "Built $(ICON_ICNS) from $(ICONSET)"
 
 icon: $(ICON_ICNS)
 
 clean-icon:
-	rm -rf build/
+	rm -f $(ICON_ICNS)
 
-build: $(ICON_ICNS)
+build: $(ICON_ICNS) $(STATUS_ICON) $(STATUS_ICON_2X)
 ifeq ($(UNIVERSAL),1)
 	cargo build --release --target aarch64-apple-darwin
 	cargo build --release --target x86_64-apple-darwin
@@ -84,6 +71,8 @@ endif
 	@cp Info.plist $(BUNDLE)/Info.plist
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(CARGO_VERSION)" $(BUNDLE)/Info.plist
 	@cp $(ICON_ICNS) $(BUNDLE)/Resources/grinch.icns
+	@cp $(STATUS_ICON) $(BUNDLE)/Resources/grinchTemplate.png
+	@cp $(STATUS_ICON_2X) $(BUNDLE)/Resources/
 ifeq ($(MACOS_CODESIGN_IDENTITY),)
 	@codesign --deep --force --sign - $(APP)
 	@echo "Built $(APP) (ad-hoc signed — Accessibility grant won't survive rebuilds)"

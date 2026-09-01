@@ -17,7 +17,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool};
 use objc2::{class, define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationDelegate, NSMenu, NSMenuItem, NSSquareStatusItemLength,
+    NSApplication, NSApplicationDelegate, NSImage, NSMenu, NSMenuItem, NSSquareStatusItemLength,
     NSStatusBar, NSStatusItem, NSWorkspace,
 };
 use objc2_core_services::{AEEventClass, AEEventID};
@@ -72,6 +72,9 @@ const KEY_SENDER_PID_ATTR: u32 = fourcc(b"spid");
 pub struct DelegateIvars {
     engine: RefCell<Option<Engine>>,
     status_item: RefCell<Option<Retained<NSStatusItem>>>,
+    // Retain the bundle's template image for the lifetime of the status
+    // item. AppKit applies the current menu-bar appearance automatically.
+    status_image: RefCell<Option<Retained<NSImage>>>,
     // Path the loader read (or would read) — kept around so "Open Config"
     // works even when the JS evaluation failed.
     config_path: RefCell<Option<PathBuf>>,
@@ -79,9 +82,10 @@ pub struct DelegateIvars {
     // successful (un)register.
     start_at_login_item: RefCell<Option<Retained<NSMenuItem>>>,
     // Last reload error message, or None on success. Drives the menu-bar
-    // icon (🎄 vs ⚠️) and the disabled "Config error: …" item at the top of
-    // the menu. Stderr is `/dev/null` for LaunchServices-launched apps, so
-    // without this the user gets no signal that a reload failed.
+    // identity (brand mark vs ⚠️) and the disabled "Config error: …"
+    // item at the top of the menu. Stderr is `/dev/null` for
+    // LaunchServices-launched apps, so without this the user gets no signal
+    // that a reload failed.
     load_error: RefCell<Option<String>>,
     // Pre-built menu item that renders `load_error` — hidden when no error.
     error_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
@@ -450,12 +454,20 @@ impl Delegate {
         let Some(button) = item.button(self.mtm()) else {
             return;
         };
-        let title = if self.ivars().load_error.borrow().is_some() {
-            "⚠️"
+        if self.ivars().load_error.borrow().is_some() {
+            button.setImage(None);
+            button.setTitle(&NSString::from_str("⚠️"));
+            return;
+        }
+
+        let image_ref = self.ivars().status_image.borrow();
+        if let Some(image) = image_ref.as_ref() {
+            button.setTitle(&NSString::from_str(""));
+            button.setImage(Some(image));
         } else {
-            "🎄"
-        };
-        button.setTitle(&NSString::from_str(title));
+            button.setImage(None);
+            button.setTitle(&NSString::from_str("G"));
+        }
     }
 
     fn refresh_error_menu_item(&self) {
@@ -723,14 +735,17 @@ impl Delegate {
         let mtm = self.mtm();
         let bar = NSStatusBar::systemStatusBar();
         let item = bar.statusItemWithLength(NSSquareStatusItemLength);
-        if let Some(button) = item.button(mtm) {
-            button.setTitle(&NSString::from_str("🎄"));
-        } else {
+        if item.button(mtm).is_none() {
             // Shouldn't happen on a healthy system — NSStatusBar.statusItemWithLength
             // returns an item with a button on macOS 10.10+. Log so a missing
             // menu-bar icon isn't completely silent.
             eprintln!("grinch: status item has no button — menu bar icon will be invisible");
         }
+        let status_image = load_status_image();
+        if status_image.is_none() {
+            eprintln!("grinch: bundled menu bar image is missing — falling back to a text icon");
+        }
+        *self.ivars().status_image.borrow_mut() = status_image;
 
         let menu = NSMenu::new(mtm);
         let me: &AnyObject = self.as_ref();
@@ -833,6 +848,13 @@ impl Delegate {
         self.refresh_status_item();
         self.refresh_error_menu_item();
     }
+}
+
+fn load_status_image() -> Option<Retained<NSImage>> {
+    let image = NSImage::imageNamed(&NSString::from_str("grinchTemplate"))?;
+    image.setTemplate(true);
+    image.setAccessibilityDescription(Some(&NSString::from_str("Grinch")));
+    Some(image)
 }
 
 fn terminate(mtm: MainThreadMarker) {

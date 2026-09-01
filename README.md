@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="brand/grinch-icon.svg" width="160" height="160" alt="Grinch logo">
+</p>
+
 # Grinch
 
-A small, fast native macOS browser router. Set it as your default browser
+A tiny, fast native macOS browser router. Set it as your default browser
 and it routes each URL to the right one based on rules in
 `~/.grinch.js`, `~/.config/grinch.js`, or `~/.config/grinch/grinch.js`
 (checked in that order; first found wins).
@@ -64,10 +68,11 @@ x86_64-apple-darwin`).
 
 ### After installing
 
-Launch Grinch (🎄 in your menu bar), open **System Settings → Desktop &
-Dock → Default web browser** and select Grinch. Edit `~/.config/grinch.js` to
-define your rules — see [`examples/grinch.example.js`](examples/grinch.example.js)
-for the full feature surface.
+Launch Grinch (look for its eyes in your menu bar), open **System Settings →
+Desktop & Dock → Default web browser** and select Grinch. Edit
+`~/.config/grinch.js` to define your rules — see
+[`examples/grinch.example.js`](examples/grinch.example.js) for the full feature
+surface.
 
 If your finicky.js works as a starting point, copy it across:
 
@@ -110,7 +115,7 @@ The `options` block accepts Finicky v4's keys (plus Grinch's own
 `logRotateBytes` / `logRotateDays`). Two are wired up:
 
 - **`hideIcon: true`** — skip the menu-bar status item at app launch.
-  Useful when you don't want the 🎄 in your menu bar. Reloads don't
+  Useful when you don't want Grinch's icon in your menu bar. Reloads don't
   toggle the icon mid-session; restart Grinch to apply.
 - **`logRequests: true`** — write a JSONL trace to
   `~/Library/Logs/Grinch/Grinch_<timestamp>.log` with one line per
@@ -401,7 +406,7 @@ inspection-style debugging.
 
 ### Menu bar
 
-Click the 🎄 in the menu bar:
+Click the Grinch eyes in the menu bar:
 
 | Item | Action |
 |---|---|
@@ -421,7 +426,8 @@ If a reload fails (syntax error, unreadable file, missing `default`),
 the menu bar icon flips to **⚠️** and a non-clickable "Config error:
 …" item appears at the top of the menu with the first line of the
 failure. The previous engine stays in place so routing keeps working
-until the config is fixed; the next successful reload restores 🎄.
+until the config is fixed; the next successful reload restores the Grinch
+icon.
 
 ## SSO / OAuth popups
 

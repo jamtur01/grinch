@@ -67,8 +67,9 @@ can tint it for the current appearance.
 
 Read `CONTRIBUTING.md` section **Releasing**, `Makefile`,
 `.github/workflows/release.yml`, and `scripts/release-notes.sh`. `Cargo.toml` is
-the version source of truth. The release workflow builds, signs, notarizes,
-packages, verifies, and publishes the universal app.
+the version source of truth. The release workflow rejects tag or built-bundle
+version mismatches before it signs, notarizes, packages, and publishes the
+universal app.
 
 ## Source map
 

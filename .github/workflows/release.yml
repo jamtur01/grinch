@@ -79,7 +79,12 @@ jobs:
             -k "$KEYCHAIN_PATH"
 
           # Prepend to the search list so codesign finds it without a prompt.
-          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychain -d user | tr -d '"')
+          existing_keychains=()
+          while read -r keychain; do
+            existing_keychains+=("${keychain//\"/}")
+          done < <(security list-keychain -d user)
+          security list-keychain -d user -s \
+            "$KEYCHAIN_PATH" "${existing_keychains[@]}"
           # Allow codesign/productsign to use the key non-interactively.
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
@@ -88,8 +93,17 @@ jobs:
           rm -f "$CERT_PATH"
 
       - name: Build Grinch.app (universal)
+        env:
+          EXPECTED_VERSION: ${{ steps.meta.outputs.version }}
         run: |
+          set -euo pipefail
           make build UNIVERSAL=1
+          BUNDLE_VERSION=$(plutil -extract CFBundleShortVersionString raw \
+            Grinch.app/Contents/Info.plist)
+          if [ "$BUNDLE_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Built app version $BUNDLE_VERSION does not match $EXPECTED_VERSION"
+            exit 1
+          fi
           # Sanity-check the binary really is fat.
           lipo -info Grinch.app/Contents/MacOS/Grinch
 

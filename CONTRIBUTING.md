@@ -193,6 +193,7 @@ but they live here for the maintainer's reference.
 2. Commit + push to `main`. Wait for CI to go green.
 3. `git tag -s -a vX.Y.Z -m "vX.Y.Z"` and `git push origin vX.Y.Z`.
 4. The release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml))
-   builds a universal `Grinch.app`, signs and notarises it, packages
-   the DMG, generates release notes from `git log` between this tag and
-   the previous `v*` tag, and uploads everything to the GitHub release.
+   builds a universal `Grinch.app`, verifies its bundle version matches the
+   tag, signs and notarises it, packages the DMG, generates release notes from
+   `git log` between this tag and the previous `v*` tag, and uploads everything
+   to the GitHub release.

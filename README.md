@@ -52,6 +52,18 @@ Always install from the DMG to `/Applications` directly. Running
 translocation, which makes the same app appear multiple times in the
 default-browser picker.
 
+### With Homebrew
+
+A community-maintained cask is available from
+[`bric3/tap`](https://github.com/bric3/homebrew-tap/blob/main/Casks/grinch.rb):
+
+```sh
+brew tap bric3/tap
+brew install --cask grinch
+```
+
+The cask is maintained outside the Grinch project.
+
 ### From source
 
 Requires a recent Rust toolchain.

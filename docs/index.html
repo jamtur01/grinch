@@ -72,6 +72,12 @@ ditto "/Volumes/Grinch "*/Grinch.app /Applications/Grinch.app
 hdiutil detach "/Volumes/Grinch "* -quiet
 open /Applications/Grinch.app</code></pre>
   <p class="note">Always install to <code>/Applications</code> directly — running out of <code>~/Downloads</code> triggers Gatekeeper translocation, which makes the same app appear multiple times in the default-browser picker.</p>
+  <p>Or install the community-maintained
+    <a href="https://github.com/bric3/homebrew-tap/blob/main/Casks/grinch.rb">Homebrew cask</a>:
+  </p>
+<pre><code>brew tap bric3/tap
+brew install --cask grinch</code></pre>
+  <p class="note">The cask is maintained outside the Grinch project.</p>
   <p>Or build from source:</p>
 <pre><code>git clone https://github.com/jamtur01/grinch
 cd grinch

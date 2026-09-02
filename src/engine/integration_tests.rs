@@ -16,6 +16,8 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_foundation::NSString;
 use objc2_javascript_core::JSContext;
+use std::path::PathBuf;
+use std::rc::Rc;
 
 /// Build an `Engine` from a JS config source. Each call gets its own
 /// `JSContext` (and its own JavaScriptCore VM) so two parallel tests
@@ -25,10 +27,21 @@ fn build_engine(user_src: &str) -> Engine {
     try_build_engine(user_src).expect("engine init failed")
 }
 
+fn build_engine_with_diagnostics(user_src: &str, diagnostics: Rc<DiagnosticLog>) -> Engine {
+    try_build_engine_with_diagnostics(user_src, diagnostics).expect("engine init failed")
+}
+
 /// Variant that returns the Result so tests can assert on
 /// EngineError variants (e.g. PreludeBroken when a hostile config
 /// trashes a prelude global).
 fn try_build_engine(user_src: &str) -> Result<Engine, EngineError> {
+    try_build_engine_with_diagnostics(user_src, Rc::new(DiagnosticLog::default()))
+}
+
+fn try_build_engine_with_diagnostics(
+    user_src: &str,
+    diagnostics: Rc<DiagnosticLog>,
+) -> Result<Engine, EngineError> {
     let ctx: Retained<JSContext> = unsafe { JSContext::new() };
 
     let prelude_ns = NSString::from_str(JS_PRELUDE);
@@ -53,7 +66,12 @@ fn try_build_engine(user_src: &str) -> Result<Engine, EngineError> {
     let exports = unsafe { module.objectForKeyedSubscript(Some(exports_ref)) }
         .expect("__grinchModule.exports missing");
 
-    Engine::new(LoadedConfig { exports, ctx })
+    Engine::new(LoadedConfig {
+        exports,
+        ctx,
+        path: PathBuf::from("test-config.js"),
+        diagnostics,
+    })
 }
 
 /// Synthetic opener for tests. `pid = 0` short-circuits any AX/IPC
@@ -146,57 +164,43 @@ fn options_hideicon_default_is_false() {
 }
 
 #[test]
-fn request_log_is_unavailable_when_logging_is_disabled() {
-    let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
-    assert!(!e.request_logging_enabled());
-    assert_eq!(e.ensure_request_log().unwrap(), None);
-}
-
-#[test]
-fn ensure_request_log_creates_the_lazy_log_file() {
+fn diagnostic_log_is_available_without_request_logging() {
     let tmp = unique_tmp("open-log");
     let _ = std::fs::remove_dir_all(&tmp);
 
     with_home(&tmp, || {
-        let e = build_engine(
-            r#"module.exports = {
-                    default: "com.apple.Safari",
-                    options: { logRequests: true },
-                };"#,
+        let diagnostics = Rc::new(DiagnosticLog::default());
+        let engine = build_engine_with_diagnostics(
+            r#"module.exports = { default: "com.apple.Safari" };"#,
+            Rc::clone(&diagnostics),
         );
-        assert!(e.request_logging_enabled());
-        let path = e
-            .ensure_request_log()
-            .expect("request log should be creatable")
-            .expect("logging is enabled");
-        assert!(path.exists(), "request log was not created at {path:?}");
+        assert!(!engine.options.log_requests);
+        let path = diagnostics
+            .ensure_file()
+            .expect("diagnostic log should be creatable");
+        assert!(path.exists(), "diagnostic log was not created at {path:?}");
         assert_eq!(
             path.parent(),
             Some(tmp.join("Library/Logs/Grinch").as_path())
         );
 
-        let _ = resolve(&e, "https://example.com/");
-        let body = std::fs::read_to_string(path).expect("request log should be readable");
-        assert_eq!(body.lines().count(), 1);
+        let _ = resolve(&engine, "https://example.com/");
+        let body = std::fs::read_to_string(path).expect("diagnostic log should be readable");
+        assert!(body.is_empty(), "resolve events must remain opt-in");
     });
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
-fn ensure_request_log_reports_filesystem_errors() {
+fn ensure_diagnostic_log_reports_filesystem_errors() {
     let tmp = unique_tmp("open-log-error");
     std::fs::write(&tmp, b"not a directory").expect("fixture file should be writable");
 
     with_home(&tmp, || {
-        let e = build_engine(
-            r#"module.exports = {
-                    default: "com.apple.Safari",
-                    options: { logRequests: true },
-                };"#,
-        );
-        let error = e
-            .ensure_request_log()
+        let diagnostics = DiagnosticLog::default();
+        let error = diagnostics
+            .ensure_file()
             .expect_err("a file cannot contain the log directory");
         assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory);
         assert!(
@@ -299,6 +303,83 @@ fn unique_tmp(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("grinch-{}-{}-{}", name, std::process::id(), n))
 }
 
+fn read_log_events(path: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(path)
+        .expect("diagnostic log should be readable")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("diagnostic event should be JSON"))
+        .collect()
+}
+
+#[test]
+fn direct_runtime_js_error_is_recorded_without_request_logging() {
+    let tmp = unique_tmp("runtime-error");
+    let path = tmp.join("diagnostic.log");
+    let diagnostics = Rc::new(DiagnosticLog::at_path(path.clone()));
+    let engine = build_engine_with_diagnostics(
+        r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [{
+                    match: () => { throw new Error("direct boom"); },
+                    open: "com.google.Chrome",
+                }],
+            };"#,
+        diagnostics,
+    );
+
+    assert!(!engine.options.log_requests);
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.apple.Safari"
+    );
+    let events = read_log_events(&path);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["event"], "runtime_js_error");
+    assert_eq!(events[0]["path"], "test-config.js");
+    assert!(
+        events[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("direct boom")
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn batched_runtime_js_error_is_recorded_and_later_rule_runs() {
+    let tmp = unique_tmp("batched-runtime-error");
+    let path = tmp.join("diagnostic.log");
+    let diagnostics = Rc::new(DiagnosticLog::at_path(path.clone()));
+    let engine = build_engine_with_diagnostics(
+        r#"module.exports = {
+                default: "com.apple.Safari",
+                rules: [
+                    {
+                        match: () => { throw new Error("batched boom"); },
+                        open: "com.brave.Browser",
+                    },
+                    { match: () => true, open: "com.google.Chrome" },
+                ],
+            };"#,
+        diagnostics,
+    );
+
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.google.Chrome"
+    );
+    let events = read_log_events(&path);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["event"], "runtime_js_error");
+    assert!(
+        events[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("batched boom")
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[test]
 fn options_log_requests_writes_jsonl_per_resolve() {
     let tmp = unique_tmp("log-on");
@@ -333,6 +414,7 @@ fn options_log_requests_writes_jsonl_per_resolve() {
     // Rule-hit row: matchedRule object with index + auto-derived name,
     // opener nested, modifiers nested with all four booleans,
     // rewritten = false.
+    assert_eq!(row0["event"], "resolve");
     assert_eq!(row0["url"], "https://github.com/");
     assert_eq!(row0["final"], "https://github.com/");
     assert_eq!(row0["rewritten"], false);

@@ -482,6 +482,16 @@ pub(crate) fn build_fn_matcher_runs(ctx: &JSContext, rules: &[Rule]) -> Vec<FnMa
                         } catch (e) {
                             // Matcher threw — treat as no-match, same as the
                             // Rust loop's `result.map(...).unwrap_or(false)`.
+                            // Report through the app-owned diagnostic sink;
+                            // this catch prevents JSC's exception handler from
+                            // seeing batched matcher failures.
+                            try {
+                                if (typeof __grinchRuntimeError === "function") {
+                                    var message = String(e);
+                                    if (e && e.line) message += " (line " + e.line + ")";
+                                    __grinchRuntimeError(message);
+                                }
+                            } catch (_) {}
                         }
                     }
                     return -1;

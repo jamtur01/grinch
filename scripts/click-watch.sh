@@ -1,5 +1,5 @@
 #!/bin/bash
-# Watch the running Grinch instance's request log and correlate each routed
+# Watch the running Grinch instance's diagnostic log and correlate each routed
 # click with continuously sampled Chrome window state. The Python helper keeps
 # a pre-event ring buffer and compares stable Chrome window IDs before and after
 # launch, which distinguishes real creation from reordering and preserves
@@ -20,7 +20,7 @@ log="$(lsof -p "${pid}" 2>/dev/null |
 	grep -oE '/Users/[^[:space:]]+/Library/Logs/Grinch/[^[:space:]]+\.log' |
 	head -1 || true)"
 if [ -z "${log}" ]; then
-	echo "Grinch (pid ${pid}) has no request log open." >&2
+	echo "Grinch (pid ${pid}) has no diagnostic log open." >&2
 	echo "Set options.logRequests: true in your config, route one link, re-run." >&2
 	exit 1
 fi

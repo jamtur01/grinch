@@ -78,7 +78,7 @@ impl BrowserSpec {
 /// [`BrowserSpec`] to macOS. Extracted from the side-effecting NSWorkspace call
 /// so the launch *decision* — which strategy, which flags, which exact argv —
 /// is unit-testable without a running app, and so the chosen strategy can be
-/// recorded per-resolve in the request log. That log line is the only way to
+/// recorded in each resolve event. That event is the only way to
 /// correlate the intermittent Chrome window-reuse behaviour with what Grinch
 /// actually asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,8 +125,8 @@ impl LaunchPlan {
     }
 
     /// Stable, log-friendly identifier for the chosen strategy. Recorded in the
-    /// per-resolve request log so intermittent new-window behaviour can be
-    /// correlated with the launch path Grinch selected.
+    /// diagnostic log's resolve event so intermittent new-window behaviour
+    /// can be correlated with the launch path Grinch selected.
     pub fn strategy(&self) -> &'static str {
         match self {
             LaunchPlan::Suppress => "suppress",
@@ -283,7 +283,7 @@ pub struct Resolution<'u> {
     /// Zero-based index of the rule whose matcher fired, or `None` for
     /// default-fallback / top-level rewriter Drop. Only the index is
     /// carried on the hot path — the corresponding name/label is looked
-    /// up against `Engine.rules` inside the (cold) log writer so resolves
+    /// up against `Engine.rules` inside the (cold) event writer so resolves
     /// without `logRequests` don't pay for a String clone per click.
     pub matched_rule: Option<usize>,
 }
@@ -423,8 +423,8 @@ pub(crate) struct Rule {
     rewriter: Option<Rewriter>,
     target: Target,
     /// Optional user-supplied `name:` field on the rule entry. Surfaced in
-    /// the JSONL request log under `matchedRule.name` and in `--list-rules`
-    /// output. None when the user didn't tag the rule.
+    /// diagnostic JSONL resolve events under `matchedRule.name` and in
+    /// `--list-rules` output. None when the user didn't tag the rule.
     name: Option<String>,
     /// Auto-derived label describing the matcher(s) — set even when `name`
     /// is None so logs always have something readable. For declarative
@@ -513,12 +513,10 @@ pub struct Engine {
     needs_host: bool,
     /// Parsed `options` block — the few keys Grinch actually acts on.
     options: OptionsConfig,
-    /// Per-resolve JSONL log file. `None` when `options.logRequests` is
-    /// off, otherwise a lazy-opened append writer at
-    /// `~/Library/Logs/Grinch/Grinch_<engine-init-timestamp>.log`. The
-    /// file is created on first write so a flag-on-but-no-traffic engine
-    /// doesn't litter empty files.
-    log_writer: RefCell<Option<LogWriter>>,
+    /// App-owned diagnostic log shared by every engine created during this
+    /// process. Resolve events remain gated by `options.logRequests`; config
+    /// and runtime-JavaScript errors are recorded independently.
+    diagnostics: Rc<DiagnosticLog>,
     /// Cached JSValue strings for opener fields (bundleId / name / path).
     /// Most clicks come from the same handful of openers (Mail, Slack,
     /// Outlook…), and the JSC bridge crossing for NSString::from_str +
@@ -569,6 +567,8 @@ impl Engine {
     pub fn new(loaded: LoadedConfig) -> Result<Self, EngineError> {
         let ctx = loaded.ctx;
         let exports = loaded.exports;
+        let config_path = loaded.path;
+        let diagnostics = loaded.diagnostics;
 
         // Prelude lookups — turn missing / null / undefined globals into
         // config-load errors rather than letting the engine wander off
@@ -679,6 +679,9 @@ impl Engine {
             global: "valueWithBool(false)",
         })?;
 
+        diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_days);
+        install_runtime_error_handlers(&ctx, &config_path, Rc::clone(&diagnostics));
+
         Ok(Self {
             default_browser,
             browsers,
@@ -698,15 +701,7 @@ impl Engine {
             needs_modifiers: needs.modifiers,
             needs_host: needs.host,
             options,
-            log_writer: RefCell::new(if options.log_requests {
-                Some(LogWriter::new(
-                    log_file_path(),
-                    options.log_rotate_bytes,
-                    options.log_rotate_days,
-                ))
-            } else {
-                None
-            }),
+            diagnostics,
             opener_str_cache: RefCell::new(std::collections::HashMap::new()),
             js_true,
             js_false,
@@ -766,24 +761,6 @@ impl Engine {
         self.options.hide_icon
     }
 
-    /// True when `options.logRequests` is enabled for the active config.
-    pub fn request_logging_enabled(&self) -> bool {
-        self.options.log_requests
-    }
-
-    /// Ensure the active request log exists and return its path.
-    ///
-    /// Returns `Ok(None)` when request logging is disabled. The explicit
-    /// create lets the menu open an empty log before the first URL arrives
-    /// without changing the normal lazy-open behavior.
-    pub fn ensure_request_log(&self) -> std::io::Result<Option<std::path::PathBuf>> {
-        let mut writer_ref = self.log_writer.borrow_mut();
-        let Some(writer) = writer_ref.as_mut() else {
-            return Ok(None);
-        };
-        writer.ensure_file().map(Some)
-    }
-
     /// Hot path: resolve a URL given the opener and modifier flags.
     ///
     /// Thin wrapper around `resolve_inner` that performs the (optional)
@@ -830,10 +807,8 @@ impl Engine {
                 (idx, name)
             })
         });
-        let entry = format_log_entry(url_string, opener, modifiers, res, matched);
-        if let Some(w) = self.log_writer.borrow_mut().as_mut() {
-            w.write(&entry);
-        }
+        let event = format_resolve_event(url_string, opener, modifiers, res, matched);
+        self.diagnostics.write_event(event);
     }
 
     /// Inner resolve loop. Same shape as the pre-logging version: every

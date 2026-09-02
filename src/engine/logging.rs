@@ -13,30 +13,83 @@ pub struct OptionsConfig {
     /// hide or re-show the icon mid-session (consistent with most macOS
     /// background apps that surface this kind of toggle).
     pub hide_icon: bool,
-    /// Whether to write a per-resolve JSONL log to
-    /// `~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Each line is one
-    /// resolve: input URL, final URL after rewrites, target browser,
-    /// opener bundle ID, and a Unix timestamp. Mirrors Finicky's
-    /// `options.logRequests` semantics.
+    /// Whether to add resolve events to the app's diagnostic JSONL log.
+    /// Config-load and runtime-JavaScript errors are recorded regardless;
+    /// this flag preserves Finicky's opt-in request-logging semantics.
     pub log_requests: bool,
-    /// Rotate the request log when it grows past this many bytes.
+    /// Rotate the diagnostic log when it grows past this many bytes.
     /// `None` (the default) disables size-based rotation. Rotation
     /// renames the current file to `<path>.<iso-timestamp>` and starts
     /// a fresh empty file, so older entries are preserved on disk for
     /// post-mortem until the user prunes them.
     pub log_rotate_bytes: Option<u64>,
-    /// Rotate the request log when it has been written to for this many
+    /// Rotate the diagnostic log when it has been written to for this many
     /// days (since the file was opened or most-recently rotated).
     /// `None` disables time-based rotation. Combine with
     /// `log_rotate_bytes` to get "rotate on either trigger".
     pub log_rotate_days: Option<u32>,
 }
 
-/// Per-resolve JSONL log writer used when `options.logRequests` is on.
-/// Opens the destination file lazily on first `write` so an engine that
-/// never resolves doesn't create an empty log file. After a write
-/// failure the writer marks itself failed and stops trying — better
-/// than spamming stderr per resolve.
+/// App-owned JSONL diagnostic log shared across config reloads and engines.
+/// Error events are always recorded; `Engine` decides whether to add resolve
+/// events from `options.logRequests`. The file is opened lazily on the first
+/// event or when the menu action explicitly opens it.
+pub(crate) struct DiagnosticLog {
+    writer: RefCell<LogWriter>,
+}
+
+impl Default for DiagnosticLog {
+    fn default() -> Self {
+        Self::new(log_file_path())
+    }
+}
+
+impl DiagnosticLog {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            writer: RefCell::new(LogWriter::new(path, None, None)),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn at_path(path: std::path::PathBuf) -> Self {
+        Self::new(path)
+    }
+
+    pub(crate) fn configure_rotation(&self, bytes: Option<u64>, days: Option<u32>) {
+        self.writer.borrow_mut().configure_rotation(bytes, days);
+    }
+
+    pub(crate) fn ensure_file(&self) -> std::io::Result<std::path::PathBuf> {
+        self.writer.borrow_mut().ensure_file()
+    }
+
+    pub(crate) fn record_config_error(&self, path: Option<&std::path::Path>, message: &str) {
+        let path = path.map(|value| value.display().to_string());
+        self.write_event(serde_json::json!({
+            "event": "config_error",
+            "ts": now_unix_f64(),
+            "path": path,
+            "message": message,
+        }));
+    }
+
+    pub(crate) fn record_runtime_js_error(&self, path: &str, message: &str) {
+        self.write_event(serde_json::json!({
+            "event": "runtime_js_error",
+            "ts": now_unix_f64(),
+            "path": path,
+            "message": message,
+        }));
+    }
+
+    pub(crate) fn write_event(&self, event: serde_json::Value) {
+        self.writer.borrow_mut().write(&event.to_string());
+    }
+}
+
+/// Append-only writer behind [`DiagnosticLog`]. After a write failure it
+/// stops trying so one broken destination cannot spam stderr per resolve.
 ///
 /// Rotation: when either `rotate_bytes` or `rotate_days` is set and the
 /// corresponding threshold is exceeded, the current file is renamed to
@@ -83,7 +136,7 @@ impl LogWriter {
         if let Err(e) = self.ensure_open() {
             eprintln!(
                 "grinch: couldn't open log file {}: {e} — disabling \
-                 options.logRequests for this session",
+                 diagnostic file logging for this session",
                 self.path.display()
             );
             self.failed = true;
@@ -93,7 +146,7 @@ impl LogWriter {
             if let Err(e) = writeln!(f, "{line}") {
                 eprintln!(
                     "grinch: write to {} failed: {e} — disabling \
-                     options.logRequests for this session",
+                     diagnostic file logging for this session",
                     self.path.display()
                 );
                 self.failed = true;
@@ -110,7 +163,13 @@ impl LogWriter {
     pub(crate) fn ensure_file(&mut self) -> std::io::Result<std::path::PathBuf> {
         self.ensure_open()
             .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", self.path.display())))?;
+        self.failed = false;
         Ok(self.path.clone())
+    }
+
+    fn configure_rotation(&mut self, bytes: Option<u64>, days: Option<u32>) {
+        self.rotate_bytes = bytes;
+        self.rotate_days = days;
     }
 
     fn ensure_open(&mut self) -> std::io::Result<()> {
@@ -188,8 +247,16 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// One JSONL entry per resolve. Schema:
+fn now_unix_f64() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+/// One `resolve` JSONL event. Schema:
 ///
+/// - `event`: always `resolve`
 /// - `ts`: unix seconds with millisecond fractional precision
 /// - `url` / `final`: input URL and post-rewrite URL (equal when no
 ///   rewriter fired)
@@ -208,22 +275,19 @@ fn now_unix() -> u64 {
 ///   auto-derived label (string pattern, `domain:foo,bar`, or first line of
 ///   the fn source for fn matchers). `null` when the URL fell through to
 ///   the default browser.
-pub(crate) fn format_log_entry(
+pub(crate) fn format_resolve_event(
     input_url: &str,
     opener: &Opener,
     modifiers: ModifierFlags,
     res: &Resolution<'_>,
     matched: Option<(usize, &str)>,
-) -> String {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0);
+) -> serde_json::Value {
     let final_url = res.url.as_ref();
     let strategy = LaunchPlan::from_spec(&res.browser, final_url).strategy();
     let matched_json = matched.map(|(idx, name)| serde_json::json!({"index": idx, "name": name}));
-    let entry = serde_json::json!({
-        "ts": ts,
+    serde_json::json!({
+        "event": "resolve",
+        "ts": now_unix_f64(),
         "url": input_url,
         "final": final_url,
         "rewritten": final_url != input_url,
@@ -242,8 +306,7 @@ pub(crate) fn format_log_entry(
             "control": modifiers.control,
         },
         "matchedRule": matched_json,
-    });
-    entry.to_string()
+    })
 }
 
 /// Build a per-launch log path under `~/Library/Logs/Grinch/`. Falls back
@@ -294,7 +357,7 @@ fn iso_timestamp_for_filename() -> String {
 /// | Key | Grinch behaviour |
 /// |---|---|
 /// | `urlShorteners` | silently ignored — Finicky's hard-coded list isn't user-configurable there either; Grinch expects external expansion (see `examples/expand-shortener.sh`) |
-/// | `logRequests`   | **honoured** — writes per-resolve JSONL to `~/Library/Logs/Grinch/Grinch_<timestamp>.log` |
+/// | `logRequests`   | **honoured** — adds resolve events to the app-wide diagnostic JSONL log |
 /// | `checkForUpdates` | silently ignored — Grinch doesn't poll for updates |
 /// | `keepRunning`   | silently ignored — Grinch is always resident |
 /// | `hideIcon`      | **honoured** — propagated through `OptionsConfig` to AppDelegate, which skips menu-bar status item creation when set |

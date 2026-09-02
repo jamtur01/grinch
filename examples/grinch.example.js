@@ -270,7 +270,7 @@ module.exports = {
     // from() — match the bundle ID of the app that opened the URL.
     //
     // The optional `name:` field labels this rule in --list-rules output
-    // and in matchedRule.name of the logRequests JSONL. Doesn't affect
+    // and in matchedRule.name of diagnostic-log resolve events. Doesn't affect
     // routing. Especially handy for fn matchers, whose auto-derived
     // label is just the first line of `f.toString()`.
     {

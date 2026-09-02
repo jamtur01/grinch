@@ -43,7 +43,7 @@ class WindowDelta:
     reordered: tuple[int, ...]
 
 
-APPLE_SCRIPT = r'''
+APPLE_SCRIPT = r"""
 set delim to ASCII character 9
 tell application "System Events"
     set chromeRunning to exists process "Google Chrome"
@@ -66,7 +66,7 @@ tell application "Google Chrome"
     end repeat
     return out
 end tell
-'''
+"""
 
 
 def _bool(value: str) -> bool:
@@ -80,7 +80,9 @@ def _bool(value: str) -> bool:
 def parse_snapshot_output(raw: str, ts: float) -> Snapshot:
     lines = raw.splitlines()
     if not lines:
-        return Snapshot(ts=ts, available=False, windows=None, error="empty AppleScript output")
+        return Snapshot(
+            ts=ts, available=False, windows=None, error="empty AppleScript output"
+        )
     header = lines[0].split("\t", 1)
     if header[0] != "OK":
         error = header[1] if len(header) > 1 else "AppleScript unavailable"
@@ -101,12 +103,24 @@ def parse_snapshot_output(raw: str, ts: float) -> Snapshot:
                     tabs=int(fields[2]),
                     minimized=_bool(fields[3]),
                     mode=fields[4],
-                    bounds=tuple(int(item) for item in fields[5:9]),
+                    bounds=(
+                        int(fields[5]),
+                        int(fields[6]),
+                        int(fields[7]),
+                        int(fields[8]),
+                    ),
                 )
             )
-        return Snapshot(ts=ts, available=True, chrome_frontmost=frontmost, windows=tuple(windows))
+        return Snapshot(
+            ts=ts, available=True, chrome_frontmost=frontmost, windows=tuple(windows)
+        )
     except (IndexError, TypeError, ValueError) as error:
-        return Snapshot(ts=ts, available=False, windows=None, error=f"invalid AppleScript output: {error}")
+        return Snapshot(
+            ts=ts,
+            available=False,
+            windows=None,
+            error=f"invalid AppleScript output: {error}",
+        )
 
 
 def snapshot_to_record(snapshot: Snapshot) -> dict:
@@ -134,7 +148,12 @@ def snapshot_from_record(record: dict) -> Snapshot:
                 tabs=int(window["tabs"]),
                 minimized=bool(window["minimized"]),
                 mode=str(window["mode"]),
-                bounds=tuple(int(value) for value in window["bounds"]),
+                bounds=(
+                    int(window["bounds"][0]),
+                    int(window["bounds"][1]),
+                    int(window["bounds"][2]),
+                    int(window["bounds"][3]),
+                ),
             )
             for window in raw_windows
         )
@@ -148,7 +167,12 @@ def snapshot_from_record(record: dict) -> Snapshot:
 
 
 def compare_snapshots(before: Snapshot, after: Snapshot) -> Optional[WindowDelta]:
-    if not before.available or not after.available or before.windows is None or after.windows is None:
+    if (
+        not before.available
+        or not after.available
+        or before.windows is None
+        or after.windows is None
+    ):
         return None
     before_by_id = {window.id: window for window in before.windows}
     after_by_id = {window.id: window for window in after.windows}
@@ -156,13 +180,19 @@ def compare_snapshots(before: Snapshot, after: Snapshot) -> Optional[WindowDelta
         created=tuple(sorted(after_by_id.keys() - before_by_id.keys())),
         removed=tuple(sorted(before_by_id.keys() - after_by_id.keys())),
         reordered=tuple(
-            sorted(window_id for window_id in before_by_id.keys() & after_by_id.keys() if before_by_id[window_id].index != after_by_id[window_id].index)
+            sorted(
+                window_id
+                for window_id in before_by_id.keys() & after_by_id.keys()
+                if before_by_id[window_id].index != after_by_id[window_id].index
+            )
         ),
     )
 
 
 def nearest_before(snapshots: Iterable[Snapshot], ts: float) -> Optional[Snapshot]:
-    candidates = [snapshot for snapshot in snapshots if snapshot.available and snapshot.ts <= ts]
+    candidates = [
+        snapshot for snapshot in snapshots if snapshot.available and snapshot.ts <= ts
+    ]
     return max(candidates, key=lambda snapshot: snapshot.ts, default=None)
 
 
@@ -174,7 +204,9 @@ def sanitize_event(event: dict) -> dict:
             profile_arg = arg.split("=", 1)[1]
             break
     matched_rule = event.get("matchedRule")
-    rule = matched_rule.get("name", "none") if isinstance(matched_rule, dict) else "none"
+    rule = (
+        matched_rule.get("name", "none") if isinstance(matched_rule, dict) else "none"
+    )
     opener = event.get("opener")
     opener_name = opener.get("name", "?") if isinstance(opener, dict) else "?"
     return {
@@ -186,6 +218,16 @@ def sanitize_event(event: dict) -> dict:
         "rule": str(rule),
         "opener": str(opener_name),
     }
+
+
+def parse_resolve_event(line: str) -> Optional[dict]:
+    """Parse a diagnostic-log line, returning only resolve events."""
+    record = json.loads(line)
+    if not isinstance(record, dict):
+        raise TypeError("diagnostic event must be an object")
+    if record.get("event") != "resolve":
+        return None
+    return sanitize_event(record)
 
 
 def _format_window(window: WindowState) -> str:
@@ -209,14 +251,20 @@ def format_diagnostic(
 
     event_ts = float(event.get("ts") or before.ts + 0.1)
     deltas = [compare_snapshots(before, sample) for sample in after]
-    created = sorted({window_id for delta in deltas if delta for window_id in delta.created})
+    created = sorted(
+        {window_id for delta in deltas if delta for window_id in delta.created}
+    )
     final = next((sample for sample in reversed(after) if sample.available), None)
     before_count = len(before.windows or ())
     final_count = len(final.windows or ()) if final else "?"
     if not created:
         return f"[reuse {before_count}->{final_count}] {event.get('opener', '?')} -> {strategy} | host: {host} | rule: {rule}"
 
-    lines = [f"[win {before_count}->{final_count}] <<< NEW WINDOW added={created} profile={profile} | host: {host} | rule: {rule} | strategy: {strategy}"]
+    lines = [
+        f"[win {before_count}->{final_count}] <<< NEW WINDOW "
+        f"added={created} profile={profile} | host: {host} | rule: {rule} "
+        f"| strategy: {strategy}"
+    ]
     background = (
         f" chrome_background_for={chrome_background_age:.1f}s"
         if chrome_background_age is not None
@@ -235,7 +283,11 @@ def format_diagnostic(
         if not sample.available:
             lines.append(f"after {offset:+d}ms unavailable={sample.error or '?'}")
         elif delta is not None:
-            lines.append(f"after {offset:+d}ms added={list(delta.created)} removed={list(delta.removed)} reordered={list(delta.reordered)}")
+            lines.append(
+                f"after {offset:+d}ms added={list(delta.created)} "
+                f"removed={list(delta.removed)} "
+                f"reordered={list(delta.reordered)}"
+            )
     return "\n".join(lines)
 
 
@@ -278,7 +330,11 @@ class SnapshotBuffer:
                 elif self.chrome_background_since is None:
                     self.chrome_background_since = snapshot.ts
                 index_one = next(
-                    (window.id for window in snapshot.windows or () if window.index == 1),
+                    (
+                        window.id
+                        for window in snapshot.windows or ()
+                        if window.index == 1
+                    ),
                     None,
                 )
                 if index_one != self.index_one_id:
@@ -295,7 +351,9 @@ class SnapshotBuffer:
         deadline = time.monotonic() + timeout
         with self.condition:
             while True:
-                candidate = next((snapshot for snapshot in self.snapshots if snapshot.ts >= ts), None)
+                candidate = next(
+                    (snapshot for snapshot in self.snapshots if snapshot.ts >= ts), None
+                )
                 if candidate is not None:
                     return candidate
                 remaining = deadline - time.monotonic()
@@ -305,7 +363,10 @@ class SnapshotBuffer:
 
     def index_one_ages(self, at: float) -> dict[int, float]:
         with self.condition:
-            return {window_id: max(0.0, at - seen) for window_id, seen in self.last_index_one_at.items()}
+            return {
+                window_id: max(0.0, at - seen)
+                for window_id, seen in self.last_index_one_at.items()
+            }
 
     def background_age(self, at: float) -> Optional[float]:
         with self.condition:
@@ -331,7 +392,9 @@ class RawWriter:
             self.file.close()
 
 
-def sampler(buffer: SnapshotBuffer, writer: RawWriter, stop: threading.Event, interval: float) -> None:
+def sampler(
+    buffer: SnapshotBuffer, writer: RawWriter, stop: threading.Event, interval: float
+) -> None:
     while not stop.is_set():
         started = time.monotonic()
         snapshot = take_snapshot()
@@ -357,14 +420,18 @@ def run(args: argparse.Namespace) -> int:
         signal.signal(signum, lambda _signum, _frame: stop.set())
     buffer = SnapshotBuffer(retention_seconds=args.retention)
     writer = RawWriter(args.raw_jsonl)
-    thread = threading.Thread(target=sampler, args=(buffer, writer, stop, args.interval), daemon=True)
+    thread = threading.Thread(
+        target=sampler, args=(buffer, writer, stop, args.interval), daemon=True
+    )
     thread.start()
     try:
         for line in follow_lines(args.log, stop):
             try:
-                event = sanitize_event(json.loads(line))
+                event = parse_resolve_event(line)
             except (TypeError, ValueError, json.JSONDecodeError):
                 print("[unparseable Grinch log line]", flush=True)
+                continue
+            if event is None:
                 continue
             writer.write(event)
             event_ts = event["ts"] or time.time()
@@ -383,7 +450,14 @@ def run(args: argparse.Namespace) -> int:
                 chrome_background_age=buffer.background_age(event_ts),
             )
             print(diagnostic, flush=True)
-            writer.write({"kind": "diagnostic", "ts": time.time(), "event": event, "text": diagnostic})
+            writer.write(
+                {
+                    "kind": "diagnostic",
+                    "ts": time.time(),
+                    "event": event,
+                    "text": diagnostic,
+                }
+            )
     finally:
         stop.set()
         thread.join(timeout=2.0)
@@ -393,10 +467,23 @@ def run(args: argparse.Namespace) -> int:
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--log", required=True, type=pathlib.Path, help="running Grinch JSONL request log")
-    parser.add_argument("--raw-jsonl", type=pathlib.Path, help="append privacy-safe samples and analyses")
-    parser.add_argument("--interval", type=float, default=0.25, help="Chrome sample interval in seconds")
-    parser.add_argument("--retention", type=float, default=10.0, help="pre-event ring-buffer duration")
+    parser.add_argument(
+        "--log",
+        required=True,
+        type=pathlib.Path,
+        help="running Grinch JSONL diagnostic log",
+    )
+    parser.add_argument(
+        "--raw-jsonl",
+        type=pathlib.Path,
+        help="append privacy-safe samples and analyses",
+    )
+    parser.add_argument(
+        "--interval", type=float, default=0.25, help="Chrome sample interval in seconds"
+    )
+    parser.add_argument(
+        "--retention", type=float, default=10.0, help="pre-event ring-buffer duration"
+    )
     return parser.parse_args(argv)
 
 

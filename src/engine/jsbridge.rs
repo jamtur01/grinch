@@ -37,6 +37,76 @@ unsafe impl block2::ManualBlockEncoding for OneStringArgEncoding {
     };
 }
 
+/// Render a JavaScriptCore exception with its source line when available.
+///
+/// # Safety
+///
+/// `exception` must be null or a valid `JSValue` pointer supplied by the
+/// active `JSContext` exception handler.
+pub(crate) unsafe fn js_exception_detail(exception: *mut JSValue) -> String {
+    if exception.is_null() {
+        return "unknown".to_string();
+    }
+    let exception = unsafe { &*exception };
+    let message = unsafe { exception.toString() }
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let line_key = NSString::from_str("line");
+    let line_ref: &AnyObject = &line_key;
+    let line = unsafe { exception.objectForKeyedSubscript(Some(line_ref)) }
+        .filter(|value| !unsafe { value.isUndefined() || value.isNull() })
+        .and_then(|value| unsafe { value.toString() })
+        .map(|value| value.to_string());
+    match line {
+        Some(line) => format!("{message} (line {line})"),
+        None => message,
+    }
+}
+
+/// Replace the config-load exception handler with runtime diagnostics and
+/// install the callback used by batched matchers that catch exceptions in JS.
+pub(crate) fn install_runtime_error_handlers(
+    ctx: &JSContext,
+    config_path: &std::path::Path,
+    diagnostics: Rc<DiagnosticLog>,
+) {
+    let path = config_path.display().to_string();
+    let debug = std::env::var("GRINCH_DEBUG").is_ok();
+
+    let callback_diagnostics = Rc::clone(&diagnostics);
+    let callback_path = path.clone();
+    let callback =
+        RcBlock::with_encoding::<_, _, _, OneStringArgEncoding>(move |message: *mut NSString| {
+            let message = if message.is_null() {
+                "unknown".to_string()
+            } else {
+                unsafe { (*message).to_string() }
+            };
+            report_runtime_js_error(&callback_diagnostics, &callback_path, &message, debug);
+        });
+    let callback_ref: &block2::Block<_> = &callback;
+    let callback_obj: &AnyObject = unsafe { &*(callback_ref as *const _ as *const AnyObject) };
+    let key = NSString::from_str("__grinchRuntimeError");
+    let key_ref: &objc2_foundation::NSObject = &key;
+    unsafe {
+        ctx.setObject_forKeyedSubscript(Some(callback_obj), Some(key_ref));
+    }
+    drop(callback);
+
+    let handler = RcBlock::new(move |_ctx_ptr: *mut JSContext, exception: *mut JSValue| {
+        let message = unsafe { js_exception_detail(exception) };
+        report_runtime_js_error(&diagnostics, &path, &message, debug);
+    });
+    unsafe { ctx.setExceptionHandler(Some(&handler)) };
+}
+
+fn report_runtime_js_error(diagnostics: &DiagnosticLog, path: &str, message: &str, debug: bool) {
+    diagnostics.record_runtime_js_error(path, message);
+    if debug {
+        eprintln!("grinch: js error during resolve in {path}: {message}");
+    }
+}
+
 pub(crate) fn install_console_callbacks(ctx: &JSContext) {
     fn install(ctx: &JSContext, key: &str, level: &'static str) {
         let block =

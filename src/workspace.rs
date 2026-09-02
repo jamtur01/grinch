@@ -785,8 +785,8 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     let _ = mtm;
     // Decide the launch strategy first (pure, testable — see `LaunchPlan`),
     // then perform the NSWorkspace side effects. Keeping the decision out of
-    // this function is what lets the tests assert the plan and lets the
-    // request log record which strategy actually fired.
+    // this function is what lets the tests assert the plan and lets diagnostic
+    // resolve events record which strategy actually fired.
     let plan = LaunchPlan::from_spec(spec, url);
     if let LaunchPlan::Suppress = plan {
         return;
@@ -819,7 +819,7 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     // Launch-completion diagnostic: NSWorkspace copies the block, so it
     // outlives this scope and fires on an arbitrary queue when the launch
     // resolves. Logs failures always (successes only under GRINCH_DEBUG),
-    // tagged with the strategy — the async outcome the JSONL request log
+    // tagged with the strategy — the async outcome the JSONL resolve event
     // (which records the strategy at resolve time) can't capture.
     let handler = launch_completion_handler(plan.strategy(), spec.bundle_id.clone());
 

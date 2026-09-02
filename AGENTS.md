@@ -82,7 +82,7 @@ universal app.
 - `src/engine/rewrite.rs`: native URL transformations and link unwrapping.
 - `src/engine/spec.rs`: browser-spec parsing and launch-plan construction.
 - `src/engine/jsbridge.rs`: JavaScriptCore and Objective-C bridge functions.
-- `src/engine/logging.rs`: optional per-resolve JSONL logging and rotation.
+- `src/engine/logging.rs`: app-wide diagnostic JSONL events and rotation.
 - `src/workspace.rs`: LaunchServices, app discovery, opener data, launches.
 - `src/chromium.rs`, `src/firefox.rs`: browser-family profiles and metadata.
 - `src/session_handler.rs`: AuthenticationServices requests and callbacks.

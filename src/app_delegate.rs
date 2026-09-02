@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -26,7 +27,7 @@ use objc2_foundation::{
     NSObjectProtocol, NSString, NSURL, NSUserActivity, NSUserActivityTypeBrowsingWeb,
 };
 
-use crate::engine::{Engine, ModifierFlags};
+use crate::engine::{DiagnosticLog, Engine, ModifierFlags};
 use crate::loader::{find_config_path, load_config};
 use crate::workspace::{
     Opener, current_modifier_flags, ensure_accessibility_permission, frontmost_opener,
@@ -81,9 +82,9 @@ pub struct DelegateIvars {
     // Held so `toggle_start_at_login` can flip the checkmark after a
     // successful (un)register.
     start_at_login_item: RefCell<Option<Retained<NSMenuItem>>>,
-    // Disabled unless the active engine has options.logRequests enabled.
-    // Retained so config reloads can update the state in place.
-    request_log_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
+    // Created with the delegate so config failures can be recorded before
+    // the first Engine exists. Shared by every engine across reloads.
+    diagnostics: Rc<DiagnosticLog>,
     // Last reload error message, or None on success. Drives the menu-bar
     // identity (brand mark vs ⚠️) and the disabled "Config error: …"
     // item at the top of the menu. Stderr is `/dev/null` for
@@ -405,10 +406,10 @@ define_class!(
             self.open_config();
         }
 
-        // Menu bar action: open the active JSONL request log.
-        #[unsafe(method(openRequestLog:))]
-        fn menu_open_request_log(&self, _sender: Option<&AnyObject>) {
-            self.open_request_log();
+        // Menu bar action: open the app-wide JSONL diagnostic log.
+        #[unsafe(method(openDiagnosticLog:))]
+        fn menu_open_diagnostic_log(&self, _sender: Option<&AnyObject>) {
+            self.open_diagnostic_log();
         }
 
         // Menu bar action: toggle Start at Login (SMAppService).
@@ -429,20 +430,22 @@ impl Delegate {
         // Refresh the path even if loading fails — keeps "Open Config"
         // pointed at the actual file the user wants to fix.
         *self.ivars().config_path.borrow_mut() = find_config_path();
-        let result = match load_config() {
-            Ok(loaded) => Engine::new(loaded)
-                .map(|e| {
-                    *self.ivars().engine.borrow_mut() = Some(e);
-                })
-                .map_err(|e| {
-                    let msg = format!("engine init failed: {e}");
-                    eprintln!("grinch: {msg}");
-                    msg
-                }),
-            Err(msg) => Err(msg),
-        };
+        let result = self.load_engine().map(|engine| {
+            *self.ivars().engine.borrow_mut() = Some(engine);
+        });
         self.set_load_error(result.err());
-        self.refresh_request_log_menu_item();
+    }
+
+    fn load_engine(&self) -> Result<Engine, String> {
+        let loaded = load_config(Rc::clone(&self.ivars().diagnostics))?;
+        let path = loaded.path.clone();
+        let diagnostics = Rc::clone(&loaded.diagnostics);
+        Engine::new(loaded).map_err(|error| {
+            let message = format!("engine init failed: {error}");
+            eprintln!("grinch: {message}");
+            diagnostics.record_config_error(Some(&path), &message);
+            message
+        })
     }
 
     fn set_load_error(&self, err: Option<String>) {
@@ -499,20 +502,6 @@ impl Delegate {
         }
     }
 
-    fn refresh_request_log_menu_item(&self) {
-        let item_ref = self.ivars().request_log_menu_item.borrow();
-        let Some(item) = item_ref.as_ref() else {
-            return;
-        };
-        let enabled = self
-            .ivars()
-            .engine
-            .borrow()
-            .as_ref()
-            .is_some_and(Engine::request_logging_enabled);
-        item.setEnabled(enabled);
-    }
-
     fn open_config(&self) {
         let path_ref = self.ivars().config_path.borrow();
         let Some(path) = path_ref.as_ref() else {
@@ -532,29 +521,12 @@ impl Delegate {
         workspace.openURL(&url);
     }
 
-    fn open_request_log(&self) {
-        let result = {
-            let engine_ref = self.ivars().engine.borrow();
-            let Some(engine) = engine_ref.as_ref() else {
+    fn open_diagnostic_log(&self) {
+        let path = match self.ivars().diagnostics.ensure_file() {
+            Ok(path) => path,
+            Err(error) => {
                 eprintln!(
-                    "grinch: no active engine — fix the config before opening its request log"
-                );
-                return;
-            };
-            engine.ensure_request_log()
-        };
-        let path = match result {
-            Ok(Some(path)) => path,
-            Ok(None) => {
-                eprintln!(
-                    "grinch: request logging is disabled — set options.logRequests to true \
-                     and reload the config"
-                );
-                return;
-            }
-            Err(e) => {
-                eprintln!(
-                    "grinch: couldn't create the request log at {e} — check that its parent \
+                    "grinch: couldn't create diagnostic log at {error} — check that its parent \
                      directory is writable"
                 );
                 return;
@@ -564,7 +536,7 @@ impl Delegate {
         let url = NSURL::fileURLWithPath(&path_ns);
         if !NSWorkspace::sharedWorkspace().openURL(&url) {
             eprintln!(
-                "grinch: couldn't open request log {} — associate .log files with an editor",
+                "grinch: couldn't open diagnostic log {} — associate .log files with an editor",
                 path.display()
             );
         }
@@ -747,7 +719,7 @@ impl Delegate {
     fn bench_init(&self, n: usize) {
         // One eager load so a broken config fails loudly before the timing
         // loop instead of silently measuring N error-return paths.
-        match load_config().and_then(|c| Engine::new(c).map_err(|e| e.to_string())) {
+        match self.load_engine() {
             Ok(_) => {}
             Err(msg) => {
                 println!("grinch: config load/build failed: {msg}");
@@ -756,18 +728,14 @@ impl Delegate {
         }
         let warmup = (n / 10).min(50);
         for _ in 0..warmup {
-            if let Ok(c) = load_config() {
-                let _ = Engine::new(c);
-            }
+            let _ = self.load_engine();
         }
         let start = std::time::Instant::now();
         for _ in 0..n {
             // `expect`-free: the eager load above proved the path works, and
             // a mid-run failure (e.g. the user edits the file) shouldn't
             // panic the benchmark — skip the sample and keep going.
-            if let Ok(c) = load_config() {
-                let _ = Engine::new(c);
-            }
+            let _ = self.load_engine();
         }
         let elapsed = start.elapsed();
         let us_per_op = elapsed.as_secs_f64() * 1_000_000.0 / n.max(1) as f64;
@@ -829,17 +797,16 @@ impl Delegate {
         unsafe { reload.setTarget(Some(target)) };
         menu.addItem(&reload);
 
-        let request_log = unsafe {
+        let diagnostic_log = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(mtm),
-                &NSString::from_str("Open Request Log"),
-                Some(sel!(openRequestLog:)),
+                &NSString::from_str("Open Diagnostic Log"),
+                Some(sel!(openDiagnosticLog:)),
                 &NSString::from_str(""),
             )
         };
-        unsafe { request_log.setTarget(Some(target)) };
-        menu.addItem(&request_log);
-        *self.ivars().request_log_menu_item.borrow_mut() = Some(request_log);
+        unsafe { diagnostic_log.setTarget(Some(target)) };
+        menu.addItem(&diagnostic_log);
 
         menu.addItem(&NSMenuItem::separatorItem(mtm));
     }
@@ -919,7 +886,6 @@ impl Delegate {
         // now that the icon and error item are live.
         self.refresh_status_item();
         self.refresh_error_menu_item();
-        self.refresh_request_log_menu_item();
     }
 }
 

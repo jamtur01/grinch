@@ -117,48 +117,73 @@ The `options` block accepts Finicky v4's keys (plus Grinch's own
 - **`hideIcon: true`** — skip the menu-bar status item at app launch.
   Useful when you don't want Grinch's icon in your menu bar. Reloads don't
   toggle the icon mid-session; restart Grinch to apply.
-- **`logRequests: true`** — write a JSONL trace to
-  `~/Library/Logs/Grinch/Grinch_<timestamp>.log` with one line per
-  resolve. The file is opened lazily on the first resolve, or when you
-  click **Open Request Log**, and appended to thereafter; one file per
-  app launch. Useful for figuring out *why* a particular click went where
-  it did without enabling the broader `GRINCH_DEBUG=1` stderr trace.
+- **`logRequests: true`** — add a `resolve` event for every routed URL to
+  the app's JSONL diagnostic log. Useful for figuring out *why* a particular
+  click went where it did without enabling the broader `GRINCH_DEBUG=1`
+  stderr trace.
 
   Pair with **`logRotateBytes: <n>`** and/or **`logRotateDays: <n>`** to
-  cap the log's growth. Rotation renames the current file to
+  cap the diagnostic log's growth. Rotation renames the current file to
   `<original-name>.log.<iso-timestamp>` and starts a fresh empty file;
   both triggers can be combined (whichever fires first wins). Default:
   no rotation, file grows until you delete it.
 
-  ```json
-  {
-    "ts": 1778518645.634,
-    "url": "https://example.com/",
-    "final": "https://example.com/",
-    "rewritten": false,
-    "browser": "com.google.Chrome",
-    "args": ["--profile-directory=Profile 10"],
-    "opener": {
-      "bundleId": "com.tinyspeck.slackmacgap",
-      "name": "Slack",
-      "pid": 731
-    },
-    "modifiers": {"shift": true, "option": false, "command": false, "control": false},
-    "matchedRule": {"index": 11, "name": "shift-override"}
-  }
-  ```
+Grinch keeps one diagnostic log per app launch at
+`~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Config-load errors and
+runtime JavaScript exceptions are recorded even when `logRequests` is false;
+that option controls only the higher-volume `resolve` events. The file opens
+lazily on the first event or when you click **Open Diagnostic Log**. Rotation
+settings take effect after a config loads successfully.
 
-  Field notes:
-  - `rewritten` — true iff `final != url` (a rewrite fired).
-  - `opener` — the app that *sent* the URL, identified via the GURL Apple
-    Event's sender PID. Empty `bundleId` means neither the sender PID
-    nor the frontmost-app fallback identified one (rare).
-  - `matchedRule` — `{index, name}` of the rule whose matcher fired, or
-    `null` when the URL fell through to `default`. `name` is the rule's
-    user-supplied `name:` if present, otherwise an auto-derived label
-    (string pattern, `domain:foo,bar`, or first line of the fn source
-    for fn matchers). Pair with `Grinch --list-rules` to map indices
-    to their full source.
+```json
+{
+  "event": "resolve",
+  "ts": 1778518645.634,
+  "url": "https://example.com/",
+  "final": "https://example.com/",
+  "rewritten": false,
+  "browser": "com.google.Chrome",
+  "args": ["--profile-directory=Profile 10"],
+  "strategy": "launch_new_instance",
+  "opener": {
+    "bundleId": "com.tinyspeck.slackmacgap",
+    "name": "Slack",
+    "pid": 731
+  },
+  "modifiers": {
+    "shift": true,
+    "option": false,
+    "command": false,
+    "control": false
+  },
+  "matchedRule": {"index": 11, "name": "shift-override"}
+}
+```
+
+Field notes:
+
+- `event` — `resolve`, `config_error`, or `runtime_js_error`.
+- `rewritten` — true iff `final != url` (a rewrite fired).
+- `opener` — the app that *sent* the URL, identified via the GURL Apple
+  Event's sender PID. Empty `bundleId` means neither the sender PID
+  nor the frontmost-app fallback identified one (rare).
+- `matchedRule` — `{index, name}` of the rule whose matcher fired, or
+  `null` when the URL fell through to `default`. `name` is the rule's
+  user-supplied `name:` if present, otherwise an auto-derived label
+  (string pattern, `domain:foo,bar`, or first line of the fn source
+  for fn matchers). Pair with `Grinch --list-rules` to map indices
+  to their full source.
+
+Error events include the config path, when one was found, and the captured
+JavaScript message:
+
+```json
+{"event":"config_error","ts":1.0,"path":"~/.grinch.js","message":"SyntaxError (line 4)"}
+{"event":"runtime_js_error","ts":2.0,"path":"~/.grinch.js","message":"TypeError (line 18)"}
+```
+
+`console.log/warn/error/info/debug` remain on stderr with their existing
+`grinch [level]:` prefix; they are not copied into the diagnostic log.
 
 The other three are inert: `urlShorteners` (expects
 [external expansion](#working-with-url-shorteners)), `checkForUpdates`
@@ -338,7 +363,7 @@ rules: [
 
 Each rule entry accepts an optional **`name`** string. It doesn't affect
 routing — it labels the rule in `Grinch --list-rules` output and in the
-`matchedRule.name` field of the `logRequests` JSONL. Useful when chasing
+`matchedRule.name` field of diagnostic-log `resolve` events. Useful when chasing
 "why did this click go there?" through a config with a dozen fn matchers,
 since the auto-derived label for fn rules is just the first line of
 `f.toString()`.
@@ -413,7 +438,7 @@ Click the Grinch eyes in the menu bar:
 | **Grinch X.Y.Z** | Disabled label at the top showing the running binary's version. Matches `Grinch --version`. |
 | **Open Config** (⌘O) | Opens the active config file in your default `.js` handler (VS Code / Cursor / etc.). |
 | **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
-| **Open Request Log** | Opens the active JSONL log. Enabled by `options.logRequests`. |
+| **Open Diagnostic Log** | Opens the app-wide JSONL diagnostic log. |
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
 | **Quit Grinch** (⌘Q) | Exit. |
 
@@ -428,7 +453,8 @@ the menu bar icon flips to **⚠️** and a non-clickable "Config error:
 …" item appears at the top of the menu with the first line of the
 failure. The previous engine stays in place so routing keeps working
 until the config is fixed; the next successful reload restores the Grinch
-icon.
+icon. The full failure is also written as a `config_error` event in the
+diagnostic log.
 
 ## SSO / OAuth popups
 
@@ -602,7 +628,7 @@ The binary also accepts:
 | `--version` | Print the crate version. |
 | `--test <url>` | Dry-run a URL through the rules. `grinch:<inner>` URLs are unwrapped, so `--test grinch:tel:+15551234567` exercises the routing for `tel:+15551234567`. |
 | `--bench N <url>` | In-process resolve benchmarking, N iterations. |
-| `--list-rules` | Print the loaded rules with their indices, labels, and targets — pair with `logRequests` to map `matchedRule.index` back to the entry in your config. |
+| `--list-rules` | Print rule indices, labels, and targets. |
 | `--list-browsers` | List every app registered to handle `https://` URLs, one bundle ID per line with its display name. Useful for finding the right bundle ID when writing a config. |
 | `--validate` | Load the config and print whether it parses cleanly. Exits 0 on success, 1 on any load error (with the captured message + the path it was reading). Designed for editor save-hooks and CI. |
 

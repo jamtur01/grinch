@@ -13,7 +13,7 @@
 // per-user provisioning.
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use block2::RcBlock;
@@ -22,12 +22,15 @@ use objc2::runtime::AnyObject;
 use objc2_foundation::{NSString, NSURL};
 use objc2_javascript_core::{JSContext, JSValue};
 
+use crate::engine::{DiagnosticLog, js_exception_detail};
 use crate::helpers::{JS_PRELUDE, preprocess_es_module_syntax, wrap_user_config};
 
 pub struct LoadedConfig {
     pub exports: Retained<JSValue>,
     // Context owns all JSValues; must outlive the engine.
     pub ctx: Retained<JSContext>,
+    pub path: PathBuf,
+    pub diagnostics: Rc<DiagnosticLog>,
 }
 
 /// Returns the path to the config file the loader would (or did) read,
@@ -37,7 +40,7 @@ pub fn find_config_path() -> Option<PathBuf> {
     config_paths().into_iter().find(|p| p.is_file())
 }
 
-pub fn load_config() -> Result<LoadedConfig, String> {
+pub fn load_config(diagnostics: Rc<DiagnosticLog>) -> Result<LoadedConfig, String> {
     let (path, source) = match read_first_existing(&config_paths()) {
         ReadOutcome::Found { path, source } => (path, source),
         ReadOutcome::Unreadable { path, error } => {
@@ -49,7 +52,7 @@ pub fn load_config() -> Result<LoadedConfig, String> {
             // there at the path it claimed didn't exist.
             let msg = format!("couldn't read config at {}: {error}", path.display());
             eprintln!("grinch: {msg}");
-            return Err(msg);
+            return Err(record_config_error(&diagnostics, Some(&path), msg));
         }
         ReadOutcome::Missing => {
             let msg = "no config at any of: ~/.grinch.js, ~/.config/grinch.js, \
@@ -57,9 +60,17 @@ pub fn load_config() -> Result<LoadedConfig, String> {
                        /Library/Application Support/Grinch/grinch.js — create one"
                 .to_string();
             eprintln!("grinch: {msg}");
-            return Err(msg);
+            return Err(record_config_error(&diagnostics, None, msg));
         }
     };
+    evaluate_config(path, source, diagnostics)
+}
+
+fn evaluate_config(
+    path: PathBuf,
+    source: String,
+    diagnostics: Rc<DiagnosticLog>,
+) -> Result<LoadedConfig, String> {
     let path_str = path.display().to_string();
 
     let ctx: Retained<JSContext> = unsafe { JSContext::new() };
@@ -73,25 +84,7 @@ pub fn load_config() -> Result<LoadedConfig, String> {
         let last_error = last_error.clone();
         let path_for_handler = path_str.clone();
         let handler = RcBlock::new(move |_ctx_ptr: *mut JSContext, ex_ptr: *mut JSValue| {
-            let detail = if ex_ptr.is_null() {
-                "unknown".to_string()
-            } else {
-                unsafe {
-                    let ex = &*ex_ptr;
-                    let msg = ex
-                        .toString()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                    let line_key = NSString::from_str("line");
-                    let line_ref: &AnyObject = &line_key;
-                    let line = ex
-                        .objectForKeyedSubscript(Some(line_ref))
-                        .and_then(|v| v.toString())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "?".to_string());
-                    format!("{msg} (line {line})")
-                }
-            };
+            let detail = unsafe { js_exception_detail(ex_ptr) };
             eprintln!("grinch: js error in {path_for_handler}: {detail}");
             // First error wins — chained exceptions during a single load
             // typically all stem from the first parse failure.
@@ -111,7 +104,8 @@ pub fn load_config() -> Result<LoadedConfig, String> {
     };
 
     if eval(&ctx, JS_PRELUDE).is_none() || last_error.borrow().is_some() {
-        return Err(take_error("prelude eval failed"));
+        let msg = take_error("prelude eval failed");
+        return Err(record_config_error(&diagnostics, Some(&path), msg));
     }
     // Console blocks must be installed BEFORE the user config evaluates so
     // top-level `console.log("…")` calls land on the wired blocks, not the
@@ -127,66 +121,61 @@ pub fn load_config() -> Result<LoadedConfig, String> {
         Ok(s) => s,
         Err(msg) => {
             eprintln!("grinch: js error in {path_str}: {msg}");
-            return Err(msg);
+            return Err(record_config_error(&diagnostics, Some(&path), msg));
         }
     };
     let wrapped = wrap_user_config(&preprocessed);
     if eval(&ctx, &wrapped).is_none() || last_error.borrow().is_some() {
-        return Err(take_error("config eval failed"));
+        let msg = take_error("config eval failed");
+        return Err(record_config_error(&diagnostics, Some(&path), msg));
     }
 
     // Pull __grinchModule.exports off the global object.
     let module_key = NSString::from_str("__grinchModule");
     let module_ref: &AnyObject = &module_key;
-    let module = unsafe { ctx.objectForKeyedSubscript(Some(module_ref)) }
-        .ok_or_else(|| "__grinchModule missing from global".to_string())?;
+    let Some(module) = (unsafe { ctx.objectForKeyedSubscript(Some(module_ref)) }) else {
+        let msg = "__grinchModule missing from global".to_string();
+        eprintln!("grinch: {msg}");
+        return Err(record_config_error(&diagnostics, Some(&path), msg));
+    };
     let exports_key = NSString::from_str("exports");
     let exports_ref: &AnyObject = &exports_key;
-    let exports = unsafe { module.objectForKeyedSubscript(Some(exports_ref)) }
-        .ok_or_else(|| "__grinchModule.exports missing".to_string())?;
+    let Some(exports) = (unsafe { module.objectForKeyedSubscript(Some(exports_ref)) }) else {
+        let msg = "__grinchModule.exports missing".to_string();
+        eprintln!("grinch: {msg}");
+        return Err(record_config_error(&diagnostics, Some(&path), msg));
+    };
     if unsafe { exports.isUndefined() } || unsafe { exports.isNull() } {
         let msg = "config did not export anything (use module.exports = {...})".to_string();
         eprintln!("grinch: {msg}");
-        return Err(msg);
+        return Err(record_config_error(&diagnostics, Some(&path), msg));
     }
 
-    // Swap the loud load-time exception handler for a quiet resolve-time
-    // one. The load-time handler logs every JS exception with file/line —
-    // useful for catching syntax errors and broken-helper exports, but
-    // catastrophic during resolve(): a single malformed URL like
-    // `https://x/?key=%ZZ` makes user fn matchers throw on every click,
-    // and the loud handler then floods stderr with one
-    // `grinch: js error in <path>: URI malformed` per click, forever.
-    //
-    // The replacement no-ops by default; user fn matchers that throw
-    // still produce a None result inside the engine and silently fail
-    // to match (same as before). Set GRINCH_DEBUG=1 to re-enable
-    // per-exception logging when chasing a bad rule.
-    install_resolve_exception_handler(&ctx, path_str.clone());
+    // Engine compilation has recoverable JSC fallbacks of its own. Keep that
+    // phase quiet, then let Engine::new install the runtime diagnostic handler
+    // only after compilation succeeds.
+    install_quiet_exception_handler(&ctx);
 
-    Ok(LoadedConfig { exports, ctx })
+    Ok(LoadedConfig {
+        exports,
+        ctx,
+        path,
+        diagnostics,
+    })
 }
 
-fn install_resolve_exception_handler(ctx: &JSContext, path: String) {
-    let debug = std::env::var("GRINCH_DEBUG").is_ok();
-    let handler = RcBlock::new(move |_ctx_ptr: *mut JSContext, ex_ptr: *mut JSValue| {
-        if !debug {
-            return;
-        }
-        if ex_ptr.is_null() {
-            eprintln!("grinch: js error during resolve in {path}: unknown");
-            return;
-        }
-        unsafe {
-            let ex = &*ex_ptr;
-            let msg = ex
-                .toString()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            eprintln!("grinch: js error during resolve in {path}: {msg}");
-        }
-    });
+fn install_quiet_exception_handler(ctx: &JSContext) {
+    let handler = RcBlock::new(|_ctx_ptr: *mut JSContext, _exception: *mut JSValue| {});
     unsafe { ctx.setExceptionHandler(Some(&handler)) };
+}
+
+fn record_config_error(
+    diagnostics: &DiagnosticLog,
+    path: Option<&Path>,
+    message: String,
+) -> String {
+    diagnostics.record_config_error(path, &message);
+    message
 }
 
 fn eval(ctx: &JSContext, script: &str) -> Option<Retained<JSValue>> {
@@ -257,6 +246,40 @@ fn read_first_existing(paths: &[PathBuf]) -> ReadOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_path(name: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let value = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "grinch-loader-{}-{}-{value}",
+            std::process::id(),
+            name
+        ))
+    }
+
+    #[test]
+    fn config_syntax_error_is_recorded_in_diagnostic_log() {
+        let root = test_path("syntax-error");
+        let config_path = root.join("grinch.js");
+        let log_path = root.join("diagnostic.log");
+        let diagnostics = Rc::new(DiagnosticLog::at_path(log_path.clone()));
+        let result = evaluate_config(
+            config_path.clone(),
+            "module.exports = { default: ; };".to_string(),
+            diagnostics,
+        );
+
+        let error = result.err().expect("invalid JavaScript should fail");
+        assert!(error.contains("SyntaxError"));
+        let body = std::fs::read_to_string(&log_path).expect("diagnostic log should exist");
+        let event: serde_json::Value =
+            serde_json::from_str(body.trim()).expect("config error should be JSON");
+        assert_eq!(event["event"], "config_error");
+        assert_eq!(event["path"], config_path.display().to_string());
+        assert!(event["message"].as_str().unwrap().contains("SyntaxError"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn config_paths_search_order() {

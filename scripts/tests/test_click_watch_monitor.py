@@ -7,7 +7,11 @@ import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("click_watch_monitor", ROOT / "click-watch-monitor.py")
+SPEC = importlib.util.spec_from_file_location(
+    "click_watch_monitor", ROOT / "click-watch-monitor.py"
+)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError("could not load click-watch-monitor.py")
 monitor = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = monitor
 SPEC.loader.exec_module(monitor)
@@ -24,7 +28,9 @@ class SnapshotParsingTests(unittest.TestCase):
         self.assertTrue(snapshot.windows[1].minimized)
 
     def test_unavailable_snapshot_is_not_an_empty_success(self):
-        snapshot = monitor.parse_snapshot_output("UNAVAILABLE\tApple event timed out\n", 100.0)
+        snapshot = monitor.parse_snapshot_output(
+            "UNAVAILABLE\tApple event timed out\n", 100.0
+        )
         self.assertFalse(snapshot.available)
         self.assertIsNone(snapshot.windows)
         self.assertIn("timed out", snapshot.error)
@@ -63,13 +69,17 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(delta.reordered, (121,))
 
     def test_unavailable_sample_has_no_delta(self):
-        unavailable = monitor.Snapshot(ts=10.3, available=False, windows=None, error="denied")
+        unavailable = monitor.Snapshot(
+            ts=10.3, available=False, windows=None, error="denied"
+        )
         self.assertIsNone(monitor.compare_snapshots(self.before, unavailable))
 
     def test_nearest_before_never_selects_post_event_sample(self):
         snapshots = [
             self.before,
-            monitor.Snapshot(ts=10.2, available=True, chrome_frontmost=False, windows=()),
+            monitor.Snapshot(
+                ts=10.2, available=True, chrome_frontmost=False, windows=()
+            ),
         ]
         self.assertIs(monitor.nearest_before(snapshots, 10.1), self.before)
 
@@ -92,9 +102,27 @@ class AnalysisTests(unittest.TestCase):
         self.assertNotIn("secret", encoded)
         self.assertNotIn("source.invalid", encoded)
 
+    def test_parser_ignores_non_resolve_diagnostic_events(self):
+        event = {"event": "runtime_js_error", "ts": 10.1, "message": "boom"}
+        self.assertIsNone(monitor.parse_resolve_event(json.dumps(event)))
+
+    def test_parser_accepts_resolve_diagnostic_events(self):
+        event = {
+            "event": "resolve",
+            "ts": 10.1,
+            "final": "https://example.com/private",
+            "strategy": "open_urls",
+        }
+        parsed = monitor.parse_resolve_event(json.dumps(event))
+        self.assertEqual(parsed["host"], "example.com")
+        self.assertEqual(parsed["strategy"], "open_urls")
+
     def test_fixture_preserves_unavailable_instead_of_fabricating_zero(self):
         fixture = ROOT / "tests" / "fixtures" / "window_samples.jsonl"
-        snapshots = [monitor.snapshot_from_record(json.loads(line)) for line in fixture.read_text().splitlines()]
+        snapshots = [
+            monitor.snapshot_from_record(json.loads(line))
+            for line in fixture.read_text().splitlines()
+        ]
         self.assertTrue(snapshots[0].available)
         self.assertFalse(snapshots[1].available)
         self.assertIsNone(snapshots[1].windows)
@@ -103,21 +131,43 @@ class AnalysisTests(unittest.TestCase):
     def test_index_one_timestamp_changes_only_when_front_window_changes(self):
         buffer = monitor.SnapshotBuffer()
         buffer.append(self.before)
-        buffer.append(monitor.Snapshot(ts=11.0, available=True, chrome_frontmost=False, windows=self.before.windows))
+        buffer.append(
+            monitor.Snapshot(
+                ts=11.0,
+                available=True,
+                chrome_frontmost=False,
+                windows=self.before.windows,
+            )
+        )
         self.assertEqual(buffer.index_one_ages(12.0)[121], 2.0)
 
         swapped = tuple(
             dataclasses.replace(window, index=2 if window.id == 121 else 1)
             for window in self.before.windows
         )
-        buffer.append(monitor.Snapshot(ts=11.5, available=True, chrome_frontmost=False, windows=swapped))
+        buffer.append(
+            monitor.Snapshot(
+                ts=11.5, available=True, chrome_frontmost=False, windows=swapped
+            )
+        )
         self.assertEqual(buffer.index_one_ages(12.0)[122], 0.5)
 
 
 class FormattingTests(unittest.TestCase):
     def test_reuse_is_one_concise_line(self):
-        event = {"host": "example.com", "rule": "work", "strategy": "launch_new_instance", "profile_arg": "Profile 10", "opener": "Mail"}
-        after = monitor.Snapshot(ts=10.3, available=True, chrome_frontmost=True, windows=self.self_before_windows())
+        event = {
+            "host": "example.com",
+            "rule": "work",
+            "strategy": "launch_new_instance",
+            "profile_arg": "Profile 10",
+            "opener": "Mail",
+        }
+        after = monitor.Snapshot(
+            ts=10.3,
+            available=True,
+            chrome_frontmost=True,
+            windows=self.self_before_windows(),
+        )
         text = monitor.format_diagnostic(event, self.before_snapshot(), [after], {})
         self.assertEqual(len(text.splitlines()), 1)
         self.assertIn("reuse", text)
@@ -126,9 +176,22 @@ class FormattingTests(unittest.TestCase):
     def test_created_window_gets_pre_and_post_diagnostic(self):
         before = self.before_snapshot()
         created = monitor.WindowState(999, 1, 1, False, "normal", (10, 10, 1000, 800))
-        after = monitor.Snapshot(ts=10.3, available=True, chrome_frontmost=True, windows=(created,) + before.windows)
-        event = {"host": "example.com", "rule": "work", "strategy": "launch_new_instance", "profile_arg": "Profile 10", "opener": "Mail"}
-        text = monitor.format_diagnostic(event, before, [after], {121: 120.0}, chrome_background_age=30.0)
+        after = monitor.Snapshot(
+            ts=10.3,
+            available=True,
+            chrome_frontmost=True,
+            windows=(created,) + before.windows,
+        )
+        event = {
+            "host": "example.com",
+            "rule": "work",
+            "strategy": "launch_new_instance",
+            "profile_arg": "Profile 10",
+            "opener": "Mail",
+        }
+        text = monitor.format_diagnostic(
+            event, before, [after], {121: 120.0}, chrome_background_age=30.0
+        )
         self.assertIn("NEW WINDOW", text)
         self.assertIn("chrome_background_for=30.0s", text)
         self.assertIn("added=[999]", text)
@@ -142,7 +205,12 @@ class FormattingTests(unittest.TestCase):
 
     @classmethod
     def before_snapshot(cls):
-        return monitor.Snapshot(ts=10.0, available=True, chrome_frontmost=False, windows=cls.self_before_windows())
+        return monitor.Snapshot(
+            ts=10.0,
+            available=True,
+            chrome_frontmost=False,
+            windows=cls.self_before_windows(),
+        )
 
 
 if __name__ == "__main__":

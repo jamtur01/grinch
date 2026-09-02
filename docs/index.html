@@ -86,7 +86,7 @@ make run</code></pre>
 
   rules: [
     // Slack invitations open in Chrome. `name:` is optional — it labels
-    // the rule in --list-rules and the request log; doesn't affect routing.
+    // the rule in --list-rules and resolve log events; doesn't affect routing.
     { match: from("com.tinyspeck.slackmacgap"),
       open: "Google Chrome",
       name: "slack-to-chrome" },
@@ -122,22 +122,40 @@ make run</code></pre>
 2: github.com → com.google.Chrome --profile-directory=Work
 3: fn: (url, ctx) =&gt; ctx.modifiers.shift → com.google.Chrome --profile-directory=Work</code></pre>
 
-  <h3>Trace every resolve</h3>
-  <p>Set <code>options: { logRequests: true }</code> and Grinch writes one JSONL line per
-    click to <code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code>. Use
-    <em>Open Request Log</em> in the menu bar to open the active file in its associated app:
+  <h3>Open the diagnostic log</h3>
+  <p>Grinch records config-load and runtime JavaScript errors in one JSONL file per app
+    launch at <code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code>. Set
+    <code>options: { logRequests: true }</code> to add one <code>resolve</code> event per
+    routed URL. Use <em>Open Diagnostic Log</em> in the menu bar to open the active file:
   </p>
 <pre><code>{
+  "event": "resolve",
   "ts": 1778518645.634,
   "url": "https://github.com/foo",
   "final": "https://github.com/foo",
   "rewritten": false,
   "browser": "com.google.Chrome",
   "args": ["--profile-directory=Work"],
-  "opener": { "bundleId": "com.tinyspeck.slackmacgap", "name": "Slack", "pid": 731 },
-  "modifiers": { "shift": false, "option": false, "command": false, "control": false },
+  "strategy": "launch_new_instance",
+  "opener": {
+    "bundleId": "com.tinyspeck.slackmacgap",
+    "name": "Slack",
+    "pid": 731
+  },
+  "modifiers": {
+    "shift": false,
+    "option": false,
+    "command": false,
+    "control": false
+  },
   "matchedRule": { "index": 2, "name": "github.com" }
 }</code></pre>
+<pre><code>
+{"event":"config_error","ts":1.0,"path":"~/.grinch.js","message":"SyntaxError"}
+{"event":"runtime_js_error","ts":2.0,"path":"~/.grinch.js","message":"TypeError"}
+</code></pre>
+  <p><code>console.log/warn/error/info/debug</code> remain on stderr and are not copied
+    into the diagnostic log.</p>
   <p class="note">The opener is identified via the GURL Apple Event's <code>keySenderPIDAttr</code>, so it's the app that actually sent the URL — not whichever app happens to be frontmost when Grinch's callback fires.</p>
 
   <h3>Headless checks</h3>

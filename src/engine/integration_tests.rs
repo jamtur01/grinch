@@ -1925,6 +1925,8 @@ fn profile_read_failures_and_reload() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("1 passed"), "child ran no tests:\n{stdout}");
         return;
     }
     let tmp = unique_tmp("profile-access");

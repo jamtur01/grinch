@@ -257,6 +257,8 @@ verify the directory key. If macOS denies access, check Grinch's permissions
 in **System Settings → Privacy & Security**; Full Disk Access is a broader
 permission option. Choose **Reload Config** after restoring access or changing
 browser profiles: both browser families' profile caches are refreshed.
+Read failures are cached too: dynamic browser functions do not retry a failed
+read on the next click. Use **Reload Config** after a transient filesystem error.
 
 Firefox profiles use the name from `profiles.ini`. Unreadable files are logged;
 when a nonempty inventory is available, unknown names are logged too. Grinch

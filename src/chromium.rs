@@ -76,6 +76,8 @@ fn local_state_path(bundle_id: &str) -> Option<PathBuf> {
 /// Cache of {bundle_id → {display_name → directory_name}}, cleared on config reload. Local
 /// State is small but parsing JSON has some cost; resolving is rare so a
 /// OnceLock-guarded HashMap is enough.
+/// Read failures are cached as empty maps too, including for dynamic targets.
+/// ponytail: no per-click retries; Reload Config is required after a transient failure.
 static CACHE: OnceLock<std::sync::Mutex<HashMap<String, NameMap>>> = OnceLock::new();
 
 type NameMap = HashMap<String, String>;

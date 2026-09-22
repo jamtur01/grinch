@@ -66,6 +66,8 @@ fn profiles_ini_path(bundle_id: &str) -> Option<PathBuf> {
 /// Cache of `{bundle_id → set of profile names}`, cleared on config reload. profiles.ini
 /// is small and resolution is rare (config-load only) but caching keeps
 /// repeated lookups for the same browser cheap.
+/// Read failures are cached as empty sets too, including for dynamic targets.
+/// ponytail: validation retries on Reload Config, not on each click after a transient failure.
 static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, HashSet<String>>>> =
     OnceLock::new();
 

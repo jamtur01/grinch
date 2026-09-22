@@ -18,6 +18,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use crate::engine::DiagnosticLog;
+
 /// Single source of truth for the Firefox-family bundle IDs Grinch knows
 /// about, plus their per-app data directory under
 /// `~/Library/Application Support/`. Mirrors `chromium::CHROMIUM_FAMILY`
@@ -61,20 +63,46 @@ fn profiles_ini_path(bundle_id: &str) -> Option<PathBuf> {
     )))
 }
 
-/// Per-process cache of `{bundle_id → set of profile names}`. profiles.ini
+/// Cache of `{bundle_id → set of profile names}`, cleared on config reload. profiles.ini
 /// is small and resolution is rare (config-load only) but caching keeps
 /// repeated lookups for the same browser cheap.
+/// Read failures are cached as empty sets too, including for dynamic targets.
+/// ponytail: validation retries on Reload Config, not on each click after a transient failure.
 static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, HashSet<String>>>> =
     OnceLock::new();
 
-fn load_profile_names(bundle_id: &str) -> HashSet<String> {
+/// Discard cached names so the next lookup rereads profile data.
+pub fn clear_profile_cache() {
+    if let Some(cache) = CACHE.get() {
+        cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+}
+
+fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<String> {
     let Some(path) = profiles_ini_path(bundle_id) else {
+        diagnostics.record_profile_warning(
+            bundle_id,
+            None,
+            "Cannot locate profiles.ini; check HOME.",
+        );
         return HashSet::new();
     };
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return HashSet::new();
-    };
-    parse_profile_names(&content)
+    match std::fs::read_to_string(&path) {
+        Ok(content) => parse_profile_names(&content),
+        Err(error) => {
+            diagnostics.record_profile_warning(
+                bundle_id,
+                Some(&path),
+                &format!(
+                    "Cannot read {}: {error}; passing profile names through to Firefox. \
+                     To restore validation, open the browser once, check the profile-data \
+                     path and file access, then Reload Config.",
+                    path.display()
+                ),
+            );
+            HashSet::new()
+        }
+    }
 }
 
 /// Pure helper: extract profile names from a `profiles.ini` body. Walks
@@ -123,21 +151,25 @@ fn parse_profile_names(content: &str) -> HashSet<String> {
 /// - If it doesn't (or profiles.ini can't be read), warn and return as-is
 ///   so Firefox can either find it (e.g. profile created since Grinch
 ///   loaded the config) or surface its own error.
-pub fn resolve_profile_name(bundle_id: &str, profile: &str) -> String {
+pub fn resolve_profile_name(bundle_id: &str, profile: &str, diagnostics: &DiagnosticLog) -> String {
     let mutex = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut cache = mutex.lock().unwrap_or_else(|e| e.into_inner());
     let names = cache
         .entry(bundle_id.to_string())
-        .or_insert_with(|| load_profile_names(bundle_id));
+        .or_insert_with(|| load_profile_names(bundle_id, diagnostics));
 
     if names.is_empty() || names.contains(profile) {
         return profile.to_string();
     }
 
     let known: Vec<&str> = names.iter().map(String::as_str).collect();
-    eprintln!(
-        "grinch: Firefox profile {profile:?} not found in profiles.ini for {bundle_id} \
-         (known profiles: {known:?}); passing through to Firefox unchanged"
+    diagnostics.record_profile_warning(
+        bundle_id,
+        profiles_ini_path(bundle_id).as_deref(),
+        &format!(
+            "Firefox profile {profile:?} not found in profiles.ini \
+                  (known profiles: {known:?}); passing through to Firefox unchanged"
+        ),
     );
     profile.to_string()
 }

@@ -36,6 +36,8 @@ pub struct OptionsConfig {
 /// event or when the menu action explicitly opens it.
 pub(crate) struct DiagnosticLog {
     writer: RefCell<LogWriter>,
+    profile_error: RefCell<Option<String>>,
+    profile_error_handler: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl Default for DiagnosticLog {
@@ -48,6 +50,8 @@ impl DiagnosticLog {
     fn new(path: std::path::PathBuf) -> Self {
         Self {
             writer: RefCell::new(LogWriter::new(path, None, None)),
+            profile_error: RefCell::new(None),
+            profile_error_handler: RefCell::new(None),
         }
     }
 
@@ -62,6 +66,26 @@ impl DiagnosticLog {
 
     pub(crate) fn ensure_file(&self) -> std::io::Result<std::path::PathBuf> {
         self.writer.borrow_mut().ensure_file()
+    }
+
+    /// Return the first launch-suppressing profile failure since the last config load.
+    pub(crate) fn profile_error(&self) -> Option<String> {
+        self.profile_error.borrow().clone()
+    }
+
+    /// Notify the app when profile warning state changes, including during resolution.
+    /// The handler may run under a profile-cache lock; it must not re-enter resolution.
+    pub(crate) fn set_profile_error_handler(&self, handler: impl Fn() + 'static) {
+        *self.profile_error_handler.borrow_mut() = Some(Box::new(handler));
+    }
+
+    pub(crate) fn clear_profile_error(&self) {
+        let previous = self.profile_error.borrow_mut().take();
+        if previous.is_some()
+            && let Some(handler) = self.profile_error_handler.borrow().as_ref()
+        {
+            handler();
+        }
     }
 
     pub(crate) fn record_config_error(&self, path: Option<&std::path::Path>, message: &str) {
@@ -79,6 +103,40 @@ impl DiagnosticLog {
             "event": "runtime_js_error",
             "ts": now_unix_f64(),
             "path": path,
+            "message": message,
+        }));
+    }
+
+    pub(crate) fn record_profile_error(
+        &self,
+        browser: &str,
+        path: Option<&std::path::Path>,
+        message: &str,
+    ) {
+        let first_error = self.profile_error.borrow().is_none();
+        if first_error {
+            *self.profile_error.borrow_mut() = Some(format!("{browser}: {message}"));
+        }
+        self.record_profile_warning(browser, path, message);
+        if first_error && let Some(handler) = self.profile_error_handler.borrow().as_ref() {
+            handler();
+        }
+    }
+
+    /// Log a recoverable profile issue without changing the launch-suppression status.
+    /// Keeps the existing `profile_error` event schema for diagnostic consumers.
+    pub(crate) fn record_profile_warning(
+        &self,
+        browser: &str,
+        path: Option<&std::path::Path>,
+        message: &str,
+    ) {
+        eprintln!("grinch: {browser}: {message}");
+        self.write_event(serde_json::json!({
+            "event": "profile_error",
+            "ts": now_unix_f64(),
+            "browser": browser,
+            "path": path.map(|p| p.display().to_string()),
             "message": message,
         }));
     }

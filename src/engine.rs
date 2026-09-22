@@ -570,6 +570,10 @@ impl Engine {
         let config_path = loaded.path;
         let diagnostics = loaded.diagnostics;
 
+        crate::chromium::clear_profile_cache();
+        crate::firefox::clear_profile_cache();
+        diagnostics.clear_profile_error();
+
         // Prelude lookups — turn missing / null / undefined globals into
         // config-load errors rather than letting the engine wander off
         // with a broken constructor in hand. A user config that does
@@ -603,7 +607,7 @@ impl Engine {
             && !is_undef_or_null(&b)
         {
             for (k, v) in iter_object(&b) {
-                browsers.insert(k, Rc::new(parse_browser_jsval(&v)));
+                browsers.insert(k, Rc::new(parse_browser_jsval(&v, &diagnostics)));
             }
         }
 
@@ -629,11 +633,12 @@ impl Engine {
             // read opener / modifiers / url) and a URL polyfill instance.
             DefaultBrowser::Fn(UserFn::new(default_val.retain()))
         } else {
-            let spec = resolve_browser(&default_val, &browsers, true).unwrap_or_else(|| {
-                Rc::new(BrowserSpec::from_bundle_id(
-                    js_to_string(&default_val).unwrap_or_default(),
-                ))
-            });
+            let spec =
+                resolve_browser(&default_val, &browsers, true, &diagnostics).unwrap_or_else(|| {
+                    Rc::new(BrowserSpec::from_bundle_id(
+                        js_to_string(&default_val).unwrap_or_default(),
+                    ))
+                });
             DefaultBrowser::Static(spec)
         };
 
@@ -645,7 +650,9 @@ impl Engine {
         // rules — accept Finicky's `handlers` as well as Grinch's `rules`
         let rules_val = key(&exports, "rules").or_else(|| key(&exports, "handlers"));
         let rules = rules_val
-            .map(|arr| parse_rule_array(&arr, &browsers, &regexp_ctor, &function_ctor))
+            .map(|arr| {
+                parse_rule_array(&arr, &browsers, &regexp_ctor, &function_ctor, &diagnostics)
+            })
             .unwrap_or_default();
 
         // Pre-compile JS dispatchers for any runs of consecutive fn-only
@@ -959,11 +966,12 @@ impl Engine {
                             // Runtime fn return: don't apply Name:Profile shorthand —
                             // an opaque debug string like "t:function" must stay literal.
                             let spec =
-                                resolve_browser(&r, &self.browsers, false).unwrap_or_else(|| {
-                                    Rc::new(BrowserSpec::from_bundle_id(
-                                        js_to_string(&r).unwrap_or_default(),
-                                    ))
-                                });
+                                resolve_browser(&r, &self.browsers, false, &self.diagnostics)
+                                    .unwrap_or_else(|| {
+                                        Rc::new(BrowserSpec::from_bundle_id(
+                                            js_to_string(&r).unwrap_or_default(),
+                                        ))
+                                    });
                             return Resolution {
                                 browser: spec,
                                 url: current,
@@ -997,11 +1005,12 @@ impl Engine {
                     && !unsafe { r.isUndefined() }
                     && !unsafe { r.isNull() }
                 {
-                    let spec = resolve_browser(&r, &self.browsers, false).unwrap_or_else(|| {
-                        Rc::new(BrowserSpec::from_bundle_id(
-                            js_to_string(&r).unwrap_or_default(),
-                        ))
-                    });
+                    let spec = resolve_browser(&r, &self.browsers, false, &self.diagnostics)
+                        .unwrap_or_else(|| {
+                            Rc::new(BrowserSpec::from_bundle_id(
+                                js_to_string(&r).unwrap_or_default(),
+                            ))
+                        });
                     break 'fn_default Resolution {
                         browser: spec,
                         url: current,

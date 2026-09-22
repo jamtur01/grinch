@@ -68,12 +68,13 @@ impl DiagnosticLog {
         self.writer.borrow_mut().ensure_file()
     }
 
-    /// Return the first profile failure since the last config load.
+    /// Return the first launch-suppressing profile failure since the last config load.
     pub(crate) fn profile_error(&self) -> Option<String> {
         self.profile_error.borrow().clone()
     }
 
     /// Notify the app when profile warning state changes, including during resolution.
+    /// The handler may run under a profile-cache lock; it must not re-enter resolution.
     pub(crate) fn set_profile_error_handler(&self, handler: impl Fn() + 'static) {
         *self.profile_error_handler.borrow_mut() = Some(Box::new(handler));
     }
@@ -116,6 +117,20 @@ impl DiagnosticLog {
         if first_error {
             *self.profile_error.borrow_mut() = Some(format!("{browser}: {message}"));
         }
+        self.record_profile_warning(browser, path, message);
+        if first_error && let Some(handler) = self.profile_error_handler.borrow().as_ref() {
+            handler();
+        }
+    }
+
+    /// Log a recoverable profile issue without changing the launch-suppression status.
+    /// Keeps the existing `profile_error` event schema for diagnostic consumers.
+    pub(crate) fn record_profile_warning(
+        &self,
+        browser: &str,
+        path: Option<&std::path::Path>,
+        message: &str,
+    ) {
         eprintln!("grinch: {browser}: {message}");
         self.write_event(serde_json::json!({
             "event": "profile_error",
@@ -124,9 +139,6 @@ impl DiagnosticLog {
             "path": path.map(|p| p.display().to_string()),
             "message": message,
         }));
-        if first_error && let Some(handler) = self.profile_error_handler.borrow().as_ref() {
-            handler();
-        }
     }
 
     pub(crate) fn write_event(&self, event: serde_json::Value) {

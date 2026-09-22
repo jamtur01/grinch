@@ -167,8 +167,9 @@ make run</code></pre>
     display names suppress the launch; explicit <code>Default</code> and
     <code>Profile N</code> directory values need no file access. Firefox still receives
     <code>-P &lt;name&gt;</code> when validation fails. Reload Config refreshes both
-    profile caches after file access or browser profiles change. The first profile
-    error also shows a warning icon and a <strong>Profile error:</strong> menu item,
+    profile caches after file access or browser profiles change. Firefox warnings
+    stay in the log without changing the status item. The first launch-suppressing
+    Chromium error shows a warning icon and a <strong>Profile error:</strong> menu item,
     with the full message in its tooltip. This includes errors discovered on a
     click; a successful reload clears the warning unless the error recurs.</p>
   <p class="note">The opener is identified via the GURL Apple Event's <code>keySenderPIDAttr</code>, so it's the app that actually sent the URL — not whichever app happens to be frontmost when Grinch's callback fires.</p>

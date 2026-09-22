@@ -80,7 +80,7 @@ pub fn clear_profile_cache() {
 
 fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<String> {
     let Some(path) = profiles_ini_path(bundle_id) else {
-        diagnostics.record_profile_error(
+        diagnostics.record_profile_warning(
             bundle_id,
             None,
             "Cannot locate profiles.ini; check HOME.",
@@ -90,7 +90,7 @@ fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<S
     match std::fs::read_to_string(&path) {
         Ok(content) => parse_profile_names(&content),
         Err(error) => {
-            diagnostics.record_profile_error(
+            diagnostics.record_profile_warning(
                 bundle_id,
                 Some(&path),
                 &format!(
@@ -163,7 +163,7 @@ pub fn resolve_profile_name(bundle_id: &str, profile: &str, diagnostics: &Diagno
     }
 
     let known: Vec<&str> = names.iter().map(String::as_str).collect();
-    diagnostics.record_profile_error(
+    diagnostics.record_profile_warning(
         bundle_id,
         profiles_ini_path(bundle_id).as_deref(),
         &format!(

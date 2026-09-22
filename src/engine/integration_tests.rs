@@ -325,8 +325,12 @@ fn profile_warning_survives_log_failure_and_clears_on_reload() {
             .push(weak.upgrade().unwrap().profile_error());
     });
 
+    diagnostics.record_profile_warning("org.mozilla.firefox", None, "Cannot validate Personal");
+    assert!(diagnostics.profile_error().is_none());
+    assert!(states.borrow().is_empty());
     diagnostics.record_profile_error("com.google.Chrome", None, "Cannot resolve Work");
-    diagnostics.record_profile_error("org.mozilla.firefox", None, "Cannot validate Personal");
+    diagnostics.record_profile_warning("org.mozilla.firefox", None, "Cannot validate Personal");
+    diagnostics.record_profile_error("com.google.Chrome", None, "Cannot resolve Other");
     assert_eq!(
         *states.borrow(),
         [Some("com.google.Chrome: Cannot resolve Work".into())]
@@ -345,7 +349,9 @@ fn profile_warning_survives_log_failure_and_clears_on_reload() {
         diagnostics.profile_error().is_none(),
         "intentional suppression is not an error"
     );
-    diagnostics.record_profile_error("org.mozilla.firefox", None, "Cannot validate Personal");
+    diagnostics.record_profile_warning("org.mozilla.firefox", None, "Cannot validate Personal");
+    assert_eq!(states.borrow().len(), 2);
+    diagnostics.record_profile_error("com.google.Chrome", None, "Cannot resolve Work");
     assert_eq!(states.borrow().len(), 3);
     std::fs::remove_file(tmp).unwrap();
 }
@@ -1997,6 +2003,7 @@ fn check_profile_read_failures(tmp: &std::path::Path) {
     }
     let log = tmp.join("profile.log");
     let diagnostics = Rc::new(DiagnosticLog::at_path(log.clone()));
+    check_firefox_warning_does_not_mask_suppression(&diagnostics);
     check_blocked_profile_routes(&diagnostics);
     let events = read_log_events(&log);
     for path in [&chrome, &firefox] {
@@ -2033,7 +2040,58 @@ fn check_profile_read_failures(tmp: &std::path::Path) {
             .unwrap()
             .contains("known profiles: [\"Work\"]")
     }));
+    assert!(diagnostics.profile_error().is_none());
+    check_firefox_warning_does_not_mask_suppression(&diagnostics);
     check_missing_and_invalid_profile_data(&chrome, &diagnostics, &log);
+    // Still in the isolated child; with_home restores HOME after this final check.
+    diagnostics.clear_profile_error();
+    crate::firefox::clear_profile_cache();
+    unsafe { std::env::remove_var("HOME") };
+    assert_eq!(
+        crate::firefox::resolve_profile_name("org.mozilla.firefox", "Missing", &diagnostics),
+        "Missing"
+    );
+    assert!(diagnostics.profile_error().is_none());
+    let events = read_log_events(&log);
+    let event = events.last().unwrap();
+    assert_eq!(event["event"], "profile_error");
+    assert_eq!(event["browser"], "org.mozilla.firefox");
+    assert!(event["path"].is_null());
+    assert_eq!(event["message"], "Cannot locate profiles.ini; check HOME.");
+}
+
+fn check_firefox_warning_does_not_mask_suppression(diagnostics: &Rc<DiagnosticLog>) {
+    for target in [
+        r#"{ name: "com.google.Chrome", profile: "Missing" }"#,
+        r#"() => ({ name: "com.google.Chrome", profile: "Missing" })"#,
+    ] {
+        // The default is compiled before rules: Firefox warns before Chromium.
+        let source = format!(
+            r#"module.exports = {{ default: "org.mozilla.firefox:Missing",
+                rules: [{{ match: "x", open: {target} }}] }};"#
+        );
+        let engine = build_engine_with_diagnostics(&source, Rc::clone(diagnostics));
+        if target.starts_with("()") {
+            assert!(
+                diagnostics.profile_error().is_none(),
+                "Firefox must not claim the status slot"
+            );
+        }
+        let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert_eq!(
+            LaunchPlan::from_spec(&result.browser, &result.url),
+            LaunchPlan::Suppress
+        );
+        let error = diagnostics.profile_error().unwrap();
+        assert!(
+            error.starts_with("com.google.Chrome:"),
+            "wrong status error: {error}"
+        );
+        let result = engine.resolve("https://y/", &Opener::default(), ModifierFlags::default());
+        assert_eq!(result.browser.bundle_id, "org.mozilla.firefox");
+        assert_eq!(result.browser.args, ["-P", "Missing"]);
+        assert_eq!(diagnostics.profile_error().as_deref(), Some(error.as_str()));
+    }
 }
 
 fn check_blocked_profile_routes(diagnostics: &Rc<DiagnosticLog>) {
@@ -2095,6 +2153,7 @@ fn check_blocked_profile_routes(diagnostics: &Rc<DiagnosticLog>) {
         let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
         assert_eq!(result.browser.args, expected);
         assert!(result.browser.creates_new_instance);
+        assert!(diagnostics.profile_error().is_none());
     }
     // Populate both failed caches after the last engine construction cleared them.
     assert_eq!(

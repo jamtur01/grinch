@@ -250,13 +250,23 @@ that launch, including dynamic browser targets. It does not try a later rule
 or the default browser. This prevents a display name from accidentally
 selecting or creating a different profile directory.
 
-For blocked Chromium profile reads, use the final directory component shown
+If profile resolution fails, first open the browser once so it creates its
+profile data, and check the current profile name (especially after a rename).
+Inspect the diagnostic log's file path and OS error to distinguish a missing
+`Local State` file from a read denial. Choose **Reload Config** after correcting
+the name, restoring the file, or changing browser profiles; this refreshes both
+browser families' profile caches.
+
+To route without reading `Local State`, use the final directory component shown
 in **Profile Path** at `chrome://version`, for example `profile: "Profile 1"`.
-For other directory names, restore access to `Local State` so Grinch can
-verify the directory key. If macOS denies access, check Grinch's permissions
-in **System Settings → Privacy & Security**; Full Disk Access is a broader
-permission option. Choose **Reload Config** after restoring access or changing
-browser profiles: both browser families' profile caches are refreshed.
+Other directory names require a readable `Local State` entry so Grinch can verify
+the key. For an access-denied error, check file ownership and permissions first.
+If macOS privacy controls are blocking the read, **System Settings → Privacy &
+Security → Full Disk Access** may be relevant; this is a broader permission,
+reported as a workaround in [Finicky #556](https://github.com/johnste/finicky/issues/556),
+not a requirement for every profile-resolution failure. Reload Config after
+restoring access.
+
 Read failures are cached too: dynamic browser functions do not retry a failed
 read on the next click. Use **Reload Config** after a transient filesystem error.
 

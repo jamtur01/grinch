@@ -95,8 +95,8 @@ fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<S
                 Some(&path),
                 &format!(
                     "Cannot read {}: {error}; passing profile names through to Firefox. \
-                          To restore validation, check file access and Grinch's macOS \
-                          Privacy & Security settings, then Reload Config.",
+                     To restore validation, open the browser once, check the profile-data \
+                     path and file access, then Reload Config.",
                     path.display()
                 ),
             );

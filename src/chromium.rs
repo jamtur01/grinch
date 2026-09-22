@@ -101,10 +101,9 @@ fn load_name_map(bundle_id: &str, diagnostics: &DiagnosticLog) -> NameMap {
                 bundle_id,
                 Some(&path),
                 &format!(
-                    "Cannot read profile mapping at {}: {error}. Use the directory from \
-                     chrome://version (Default or Profile N), or restore file access \
-                     and Reload Config. \
-                     For permission denials, check Grinch's macOS Privacy & Security settings.",
+                    "Cannot read profile mapping at {}: {error}. Open the browser once, \
+                     check the profile-data path and file access, then Reload Config. \
+                     Alternatively, use the directory from chrome://version (Default or Profile N).",
                     path.display()
                 ),
             );
@@ -192,9 +191,9 @@ pub fn resolve_profile_dir(
             bundle_id,
             local_state_path(bundle_id).as_deref(),
             &format!(
-                "Cannot resolve profile {profile:?}; launch suppressed. Use the directory \
-                      from chrome://version (Default or Profile N), or restore profile data \
-                      access and Reload Config."
+                "Cannot resolve profile {profile:?}; launch suppressed. Check the browser's \
+                 current profile name and Reload Config, or use the directory from \
+                 chrome://version (Default or Profile N)."
             ),
         );
     }

@@ -14,7 +14,7 @@ fn debug_enabled() -> bool {
 }
 
 use dispatch2::DispatchQueue;
-use objc2::rc::Retained;
+use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, Bool};
 use objc2::{DefinedClass, MainThreadOnly, class, define_class, msg_send, sel};
 use objc2_app_kit::{
@@ -85,13 +85,13 @@ pub struct DelegateIvars {
     // Created with the delegate so config failures can be recorded before
     // the first Engine exists. Shared by every engine across reloads.
     diagnostics: Rc<DiagnosticLog>,
-    // Last reload error message, or None on success. Drives the menu-bar
-    // identity (brand mark vs ⚠️) and the disabled "Config error: …"
-    // item at the top of the menu. Stderr is `/dev/null` for
+    // Last reload error message, or None on success. Along with the diagnostic
+    // log's profile warning, drives the menu-bar identity and error item.
+    // Stderr is `/dev/null` for
     // LaunchServices-launched apps, so without this the user gets no signal
     // that a reload failed.
     load_error: RefCell<Option<String>>,
-    // Pre-built menu item that renders `load_error` — hidden when no error.
+    // Pre-built menu item for config or profile errors — hidden when neither exists.
     error_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
 }
 
@@ -423,7 +423,15 @@ define_class!(
 impl Delegate {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(DelegateIvars::default());
-        unsafe { msg_send![super(this), init] }
+        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+        let weak = Weak::from_retained(&this);
+        this.ivars().diagnostics.set_profile_error_handler(move || {
+            if let Some(delegate) = weak.load() {
+                delegate.refresh_status_item();
+                delegate.refresh_error_menu_item();
+            }
+        });
+        this
     }
 
     pub fn reload_engine(&self) {
@@ -467,7 +475,7 @@ impl Delegate {
         let Some(button) = item.button(self.mtm()) else {
             return;
         };
-        if self.ivars().load_error.borrow().is_some() {
+        if self.status_error().is_some() {
             button.setImage(None);
             button.setTitle(&NSString::from_str("⚠️"));
             return;
@@ -488,18 +496,34 @@ impl Delegate {
         let Some(item) = item_ref.as_ref() else {
             return;
         };
-        let err_ref = self.ivars().load_error.borrow();
-        match err_ref.as_ref() {
+        match self.status_error() {
             Some(msg) => {
                 // Menu titles wrap awkwardly past ~80 chars in the macOS
-                // status bar; the full message is still on stderr / in
-                // `Console.app` if the user wants the whole thing.
-                let truncated = truncate_for_menu(msg, 80);
-                item.setTitle(&NSString::from_str(&format!("⚠ Config error: {truncated}")));
+                // status bar; the tooltip and diagnostic log keep the full message.
+                let truncated = truncate_for_menu(&msg, 80);
+                item.setTitle(&NSString::from_str(&format!("⚠ {truncated}")));
+                item.setToolTip(Some(&NSString::from_str(&msg)));
                 item.setHidden(false);
             }
-            None => item.setHidden(true),
+            None => {
+                item.setHidden(true);
+                item.setToolTip(None);
+            }
         }
+    }
+
+    fn status_error(&self) -> Option<String> {
+        self.ivars()
+            .load_error
+            .borrow()
+            .as_ref()
+            .map(|message| format!("Config error: {message}"))
+            .or_else(|| {
+                self.ivars()
+                    .diagnostics
+                    .profile_error()
+                    .map(|message| format!("Profile error: {message}"))
+            })
     }
 
     fn open_config(&self) {

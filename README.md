@@ -201,6 +201,11 @@ JavaScript message:
 `profile_error` events include the browser bundle ID, profile-data file path
 (when available), and an actionable message. They report unreadable profile
 files and unresolved profile names through **Open Diagnostic Log**.
+The first profile error after a config load also changes the menu-bar icon to
+**⚠️** and displays **Profile error: …**, including errors first discovered by
+dynamic browser targets on a click. Hover over the error for the full message
+or open the diagnostic log. A config-load error takes precedence in the menu;
+a successful reload clears the profile warning unless a profile error recurs.
 
 The other three are inert: `urlShorteners` (expects
 [external expansion](#working-with-url-shorteners)), `checkForUpdates`

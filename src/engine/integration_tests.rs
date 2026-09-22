@@ -312,6 +312,45 @@ fn read_log_events(path: &std::path::Path) -> Vec<serde_json::Value> {
 }
 
 #[test]
+fn profile_warning_survives_log_failure_and_clears_on_reload() {
+    let tmp = unique_tmp("profile-warning");
+    std::fs::write(&tmp, "not a directory").unwrap();
+    let diagnostics = Rc::new(DiagnosticLog::at_path(tmp.join("diagnostic.log")));
+    let states = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&states);
+    let weak = Rc::downgrade(&diagnostics);
+    diagnostics.set_profile_error_handler(move || {
+        observed
+            .borrow_mut()
+            .push(weak.upgrade().unwrap().profile_error());
+    });
+
+    diagnostics.record_profile_error("com.google.Chrome", None, "Cannot resolve Work");
+    diagnostics.record_profile_error("org.mozilla.firefox", None, "Cannot validate Personal");
+    assert_eq!(
+        *states.borrow(),
+        [Some("com.google.Chrome: Cannot resolve Work".into())]
+    );
+
+    let engine = build_engine_with_diagnostics(
+        "module.exports = { default: null };",
+        Rc::clone(&diagnostics),
+    );
+    assert!(resolve(&engine, "https://x/").0.is_empty());
+    assert_eq!(
+        *states.borrow(),
+        [Some("com.google.Chrome: Cannot resolve Work".into()), None]
+    );
+    assert!(
+        diagnostics.profile_error().is_none(),
+        "intentional suppression is not an error"
+    );
+    diagnostics.record_profile_error("org.mozilla.firefox", None, "Cannot validate Personal");
+    assert_eq!(states.borrow().len(), 3);
+    std::fs::remove_file(tmp).unwrap();
+}
+
+#[test]
 fn direct_runtime_js_error_is_recorded_without_request_logging() {
     let tmp = unique_tmp("runtime-error");
     let path = tmp.join("diagnostic.log");
@@ -1985,6 +2024,7 @@ fn check_profile_read_failures(tmp: &std::path::Path) {
     let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
     assert_eq!(result.browser.args, ["--profile-directory=Profile 7"]);
     assert!(result.browser.creates_new_instance);
+    assert!(diagnostics.profile_error().is_none());
     // Firefox validation must refresh as well: an unknown name now reports known profiles.
     crate::firefox::resolve_profile_name("org.mozilla.firefox", "Missing", &diagnostics);
     assert!(read_log_events(&log).iter().any(|event| {
@@ -2003,25 +2043,41 @@ fn check_blocked_profile_routes(diagnostics: &Rc<DiagnosticLog>) {
         r#"() => ({ name: "com.google.Chrome", profile: "Work" })"#,
         r#""work""#,
     ] {
+        let browsers = if target == r#""work""# {
+            r#"browsers: { work: { name: "com.google.Chrome", profile: "Work" } },"#
+        } else {
+            ""
+        };
         let source = format!(
             r#"module.exports = {{ default: "com.apple.Safari",
-            browsers: {{ work: {{ name: "com.google.Chrome", profile: "Work" }} }}, rules: [
+            {browsers} rules: [
             {{ match: "x", open: {target} }}, {{ match: "x", open: "com.apple.Safari" }}
         ] }};"#
         );
         let engine = build_engine_with_diagnostics(&source, Rc::clone(diagnostics));
+        if target.starts_with("()") {
+            assert!(
+                diagnostics.profile_error().is_none(),
+                "dynamic target has not run yet"
+            );
+        }
         let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
         assert_eq!(
             LaunchPlan::from_spec(&result.browser, &result.url),
             LaunchPlan::Suppress
         );
         assert_eq!(result.matched_rule, Some(0));
-        let source = format!(
-            r#"module.exports = {{ default: {target},
-            browsers: {{ work: {{ name: "com.google.Chrome", profile: "Work" }} }} }};"#
-        );
+        assert!(diagnostics.profile_error().is_some());
+        let source = format!("module.exports = {{ {browsers} default: {target} }};");
         let engine = build_engine_with_diagnostics(&source, Rc::clone(diagnostics));
+        if target.starts_with("()") {
+            assert!(
+                diagnostics.profile_error().is_none(),
+                "dynamic default has not run yet"
+            );
+        }
         assert!(resolve(&engine, "https://x/").0.is_empty());
+        assert!(diagnostics.profile_error().is_some());
     }
     for (target, expected) in [
         (
@@ -2085,25 +2141,34 @@ fn browser_spec_string_with_no_colon_unchanged() {
 
 #[test]
 fn parse_browser_jsval_firefox_profile_resolves_via_p_flag() {
-    // Firefox-family bundle with a profile string should produce
-    // `-P <name>` args, not `--profile-directory=…`. We can't easily
-    // observe the args without a real BrowserSpec accessor, but we
-    // can at least check the engine accepts the config without
-    // erroring (Firefox profile validation logs to stderr if the
-    // name is unknown but doesn't fail the load).
-    let e = build_engine(
+    let tmp = unique_tmp("firefox-profile");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let e = build_engine_with_diagnostics(
         r#"module.exports = {
                 default: { name: "org.mozilla.firefox", profile: "Work" },
             };"#,
+        Rc::new(DiagnosticLog::at_path(tmp.join("diagnostic.log"))),
     );
-    // Bundle ID survives unchanged.
-    assert_eq!(resolve(&e, "https://x/").0, "org.mozilla.firefox");
+    let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+    assert_eq!(result.browser.bundle_id, "org.mozilla.firefox");
+    assert_eq!(result.browser.args, ["-P", "Work"]);
+    assert!(result.browser.creates_new_instance);
+    std::fs::remove_dir_all(tmp).unwrap();
 }
 
 #[test]
 fn parse_browser_jsval_firefox_profile_via_shorthand_string() {
-    let e = build_engine(r#"module.exports = { default: "org.mozilla.firefox:Work" };"#);
-    assert_eq!(resolve(&e, "https://x/").0, "org.mozilla.firefox");
+    let tmp = unique_tmp("firefox-profile-shorthand");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let e = build_engine_with_diagnostics(
+        r#"module.exports = { default: "org.mozilla.firefox:Work" };"#,
+        Rc::new(DiagnosticLog::at_path(tmp.join("diagnostic.log"))),
+    );
+    let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+    assert_eq!(result.browser.bundle_id, "org.mozilla.firefox");
+    assert_eq!(result.browser.args, ["-P", "Work"]);
+    assert!(result.browser.creates_new_instance);
+    std::fs::remove_dir_all(tmp).unwrap();
 }
 
 #[test]

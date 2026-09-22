@@ -218,7 +218,7 @@ fn rule_listing_describes_each_rule_with_index_and_target() {
     let e = build_engine(
         r#"module.exports = {
                 default: "com.apple.Safari",
-                browsers: { work: { name: "com.google.Chrome", profile: "Work" } },
+                browsers: { work: { name: "com.google.Chrome", profile: "Profile 1" } },
                 rules: [
                     { match: "github.com", open: "com.google.Chrome", name: "code-hosts" },
                     { match: "slack:*", open: "com.tinyspeck.slackmacgap" },
@@ -392,7 +392,7 @@ fn options_log_requests_writes_jsonl_per_resolve() {
                     options: { logRequests: true },
                     rules: [{
                         match: "github.com",
-                        open: { name: "com.google.Chrome", profile: "Work" },
+                        open: { name: "com.google.Chrome", profile: "Profile 1" },
                     }],
                 };"#,
         );
@@ -430,7 +430,7 @@ fn options_log_requests_writes_jsonl_per_resolve() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|a| a.as_str() == Some("--profile-directory=Work")),
+            .any(|a| a.as_str() == Some("--profile-directory=Profile 1")),
         "profile launch should log the profile-directory arg"
     );
     assert!(row0["opener"].is_object(), "opener should be an object");
@@ -1898,11 +1898,181 @@ fn parse_browser_jsval_handles_args_and_openinbackground() {
 fn browser_spec_string_with_profile_shorthand() {
     // Finicky-style "Name:Profile" shorthand. Splits on first `:`
     // when the prefix resolves to a Chromium-family browser.
-    let e = build_engine(r#"module.exports = { default: "com.google.Chrome:Work" };"#);
+    let e = build_engine(r#"module.exports = { default: "com.google.Chrome:Profile 1" };"#);
     // Browser ID survives unchanged; profile expansion is into args
     // (not directly observable from resolve()'s public surface, but
     // we can at least verify the bundle ID is right).
     assert_eq!(resolve(&e, "https://x/").0, "com.google.Chrome");
+}
+
+#[test]
+fn profile_read_failures_and_reload() {
+    // Run alone: the fixture changes HOME and exercises process-wide profile caches.
+    const CHILD: &str = "GRINCH_PROFILE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "engine::integration_tests::profile_read_failures_and_reload",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let tmp = unique_tmp("profile-access");
+    std::fs::create_dir_all(&tmp).unwrap();
+    with_home(&tmp, || check_profile_read_failures(&tmp));
+    std::fs::remove_dir_all(tmp).unwrap();
+}
+
+fn check_profile_read_failures(tmp: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let chrome = tmp.join("Library/Application Support/Google/Chrome/Local State");
+    let firefox = tmp.join("Library/Application Support/Firefox/profiles.ini");
+    for path in [&chrome, &firefox] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    }
+    std::fs::write(
+        &chrome,
+        r#"{"profile":{"info_cache":{"Profile 7":{"name":"Work"}}}}"#,
+    )
+    .unwrap();
+    std::fs::write(&firefox, "[Profile0]\nName=Work\n").unwrap();
+    for path in [&chrome, &firefox] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+    let log = tmp.join("profile.log");
+    let diagnostics = Rc::new(DiagnosticLog::at_path(log.clone()));
+    check_blocked_profile_routes(&diagnostics);
+    let events = read_log_events(&log);
+    for path in [&chrome, &firefox] {
+        assert!(events.iter().any(|event| {
+            event["event"] == "profile_error"
+                && event["path"] == path.to_str().unwrap()
+                && event["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Permission denied")
+        }));
+    }
+    for path in [&chrome, &firefox] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    // Reads stay cached until the same Engine::new path used by Reload Config runs.
+    assert_eq!(
+        crate::chromium::resolve_profile_dir("com.google.Chrome", "Work", diagnostics.as_ref()),
+        None
+    );
+    let engine = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.google.Chrome:Work" };"#,
+        Rc::clone(&diagnostics),
+    );
+    let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+    assert_eq!(result.browser.args, ["--profile-directory=Profile 7"]);
+    assert!(result.browser.creates_new_instance);
+    // Firefox validation must refresh as well: an unknown name now reports known profiles.
+    crate::firefox::resolve_profile_name("org.mozilla.firefox", "Missing", &diagnostics);
+    assert!(read_log_events(&log).iter().any(|event| {
+        event["message"]
+            .as_str()
+            .unwrap()
+            .contains("known profiles: [\"Work\"]")
+    }));
+    check_missing_and_invalid_profile_data(&chrome, &diagnostics, &log);
+}
+
+fn check_blocked_profile_routes(diagnostics: &Rc<DiagnosticLog>) {
+    for target in [
+        r#""com.google.Chrome:Work""#,
+        r#"{ name: "com.google.Chrome", profile: "Work", incognito: true }"#,
+        r#"() => ({ name: "com.google.Chrome", profile: "Work" })"#,
+        r#""work""#,
+    ] {
+        let source = format!(
+            r#"module.exports = {{ default: "com.apple.Safari",
+            browsers: {{ work: {{ name: "com.google.Chrome", profile: "Work" }} }}, rules: [
+            {{ match: "x", open: {target} }}, {{ match: "x", open: "com.apple.Safari" }}
+        ] }};"#
+        );
+        let engine = build_engine_with_diagnostics(&source, Rc::clone(diagnostics));
+        let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert_eq!(
+            LaunchPlan::from_spec(&result.browser, &result.url),
+            LaunchPlan::Suppress
+        );
+        assert_eq!(result.matched_rule, Some(0));
+        let source = format!(
+            r#"module.exports = {{ default: {target},
+            browsers: {{ work: {{ name: "com.google.Chrome", profile: "Work" }} }} }};"#
+        );
+        let engine = build_engine_with_diagnostics(&source, Rc::clone(diagnostics));
+        assert!(resolve(&engine, "https://x/").0.is_empty());
+    }
+    for (target, expected) in [
+        (
+            "com.google.Chrome:Profile 7",
+            vec!["--profile-directory=Profile 7"],
+        ),
+        (
+            "com.google.Chrome:Default",
+            vec!["--profile-directory=Default"],
+        ),
+        ("org.mozilla.firefox:Work", vec!["-P", "Work"]),
+    ] {
+        let source = format!(r#"module.exports = {{ default: "{target}" }};"#);
+        let engine = build_engine_with_diagnostics(&source, Rc::clone(diagnostics));
+        let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert_eq!(result.browser.args, expected);
+        assert!(result.browser.creates_new_instance);
+    }
+    // Populate both failed caches after the last engine construction cleared them.
+    assert_eq!(
+        crate::chromium::resolve_profile_dir("com.google.Chrome", "Work", diagnostics),
+        None
+    );
+}
+
+fn check_missing_and_invalid_profile_data(
+    chrome: &std::path::Path,
+    diagnostics: &Rc<DiagnosticLog>,
+    log: &std::path::Path,
+) {
+    std::fs::remove_file(chrome).unwrap();
+    let engine = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.google.Chrome:Work" };"#,
+        Rc::clone(diagnostics),
+    );
+    assert!(resolve(&engine, "https://x/").0.is_empty());
+    assert!(
+        read_log_events(log)
+            .iter()
+            .any(|event| event["message"].as_str().unwrap().contains("No such file"))
+    );
+    std::fs::write(chrome, "not json").unwrap();
+    let engine = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.google.Chrome:Work" };"#,
+        Rc::clone(diagnostics),
+    );
+    assert!(resolve(&engine, "https://x/").0.is_empty());
+    assert!(read_log_events(log).iter().any(|event| {
+        event["message"]
+            .as_str()
+            .unwrap()
+            .contains("expected ident")
+    }));
 }
 
 #[test]
@@ -2048,7 +2218,7 @@ fn parse_browser_jsval_open_in_new_window_composes_with_incognito_and_profile() 
     let e = build_engine(
         r#"module.exports = {
                 default: { name: "com.google.Chrome",
-                           profile: "Work",
+                           profile: "Profile 1",
                            incognito: true,
                            openInNewWindow: true },
             };"#,
@@ -2087,7 +2257,7 @@ fn parse_browser_jsval_incognito_composes_with_profile() {
     let e = build_engine(
         r#"module.exports = {
                 default: { name: "com.google.Chrome",
-                           profile: "Work", incognito: true },
+                           profile: "Profile 1", incognito: true },
             };"#,
     );
     let res = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());

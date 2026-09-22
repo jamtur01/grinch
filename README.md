@@ -141,9 +141,10 @@ The `options` block accepts Finicky v4's keys (plus Grinch's own
   no rotation, file grows until you delete it.
 
 Grinch keeps one diagnostic log per app launch at
-`~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Config-load errors and
-runtime JavaScript exceptions are recorded even when `logRequests` is false;
-that option controls only the higher-volume `resolve` events. The file opens
+`~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Config-load errors,
+runtime JavaScript exceptions, and profile errors are recorded even when
+`logRequests` is false; that option controls only the higher-volume `resolve`
+events. The file opens
 lazily on the first event or when you click **Open Diagnostic Log**. Rotation
 settings take effect after a config loads successfully.
 
@@ -174,7 +175,7 @@ settings take effect after a config loads successfully.
 
 Field notes:
 
-- `event` — `resolve`, `config_error`, or `runtime_js_error`.
+- `event` — `resolve`, `config_error`, `runtime_js_error`, or `profile_error`.
 - `rewritten` — true iff `final != url` (a rewrite fired).
 - `opener` — the app that *sent* the URL, identified via the GURL Apple
   Event's sender PID. Empty `bundleId` means neither the sender PID
@@ -197,6 +198,10 @@ JavaScript message:
 `console.log/warn/error/info/debug` remain on stderr with their existing
 `grinch [level]:` prefix; they are not copied into the diagnostic log.
 
+`profile_error` events include the browser bundle ID, profile-data file path
+(when available), and an actionable message. They report unreadable profile
+files and unresolved profile names through **Open Diagnostic Log**.
+
 The other three are inert: `urlShorteners` (expects
 [external expansion](#working-with-url-shorteners)), `checkForUpdates`
 (Grinch doesn't poll), `keepRunning` (Grinch is always resident).
@@ -210,10 +215,10 @@ A browser is one of:
 |---|---|
 | `"Google Chrome"` | App display name; Grinch resolves to bundle ID at config-load |
 | `"com.google.Chrome"` | Bundle ID (any reverse-DNS string is treated as one) |
-| `"Google Chrome:Work"` | `Name:Profile` shorthand (Finicky-compatible) — splits on the first `:`, expands the suffix to `--profile-directory=Work` (Chromium) or `-P Work` (Firefox). Only applied to literal config strings; fn-returned strings are treated opaquely |
+| `"Google Chrome:Work"` | `Name:Profile` shorthand — splits on the first `:`, resolves the profile to Chromium's directory flag or Firefox's `-P Work`. Only applied to literal config strings; fn-returned strings are treated opaquely |
 | `"/Applications/Foo.app"` or `"~/Apps/Bar.app"` | Path autodetect (Finicky-compatible) — bare-string spec ending in `.app` is resolved via `NSBundle` directly, no `appType: "path"` required. Useful for browsers outside `/Applications` or not registered with LaunchServices |
 | `{ name: "..." }` | Same as a bare string |
-| `{ name: "Google Chrome", profile: "Work" }` | Profile shorthand — expanded to `--profile-directory=Work` (Chromium-family) or `-P Work` (Firefox-family) |
+| `{ name: "Google Chrome", profile: "Work" }` | Profile shorthand — resolves the display name to `--profile-directory=<directory>` (Chromium-family) or `-P Work` (Firefox-family) |
 | `{ name: "...", args: ["--incognito"] }` | Bundle ID + extra launch args |
 | `{ name: "...", incognito: true }` | Family-aware private-mode shorthand — `--incognito` (Chromium) or `--private-window` (Firefox). Forces a new instance so the flag is honoured. Safari is not supported (no CLI flag exists) and logs a warning |
 | `{ name: "...", openInNewWindow: true }` | Open as a new top-level window instead of a tab. Chromium and Firefox both honour `--new-window`. Safari has no equivalent CLI flag and logs a warning |
@@ -232,9 +237,27 @@ Finicky's `browsers.json` — see `src/chromium.rs` and `src/firefox.rs` for
 the current set.
 Chromium profiles can be referenced by either their on-disk directory
 ("Profile 10") or their display name ("Work") — Grinch resolves through
-Chrome's `Local State`. Firefox profiles use the name from `profiles.ini`;
-unknown names log a warning naming the known profiles. Other browsers'
-`profile` is silently dropped with a load-time warning.
+Chrome's `Local State`. `Default` and `Profile N` (ASCII digits) are explicit
+directory names and need no profile-file access. Other values must match a
+display name or directory key in `Local State`. If the file is unreadable,
+invalid, or has no matching entry, Grinch logs a `profile_error` and suppresses
+that launch, including dynamic browser targets. It does not try a later rule
+or the default browser. This prevents a display name from accidentally
+selecting or creating a different profile directory.
+
+For blocked Chromium profile reads, use the final directory component shown
+in **Profile Path** at `chrome://version`, for example `profile: "Profile 1"`.
+For other directory names, restore access to `Local State` so Grinch can
+verify the directory key. If macOS denies access, check Grinch's permissions
+in **System Settings → Privacy & Security**; Full Disk Access is a broader
+permission option. Choose **Reload Config** after restoring access or changing
+browser profiles: both browser families' profile caches are refreshed.
+
+Firefox profiles use the name from `profiles.ini`. Unreadable files are logged;
+when a nonempty inventory is available, unknown names are logged too. Grinch
+still passes `-P <name>` to Firefox to resolve.
+Names from Firefox's newer profile-group store are not resolved by Grinch.
+Other browsers' `profile` is dropped with a load-time warning.
 
 You can predefine browsers in a top-level `browsers` map:
 

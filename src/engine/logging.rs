@@ -83,6 +83,22 @@ impl DiagnosticLog {
         }));
     }
 
+    pub(crate) fn record_profile_error(
+        &self,
+        browser: &str,
+        path: Option<&std::path::Path>,
+        message: &str,
+    ) {
+        eprintln!("grinch: {browser}: {message}");
+        self.write_event(serde_json::json!({
+            "event": "profile_error",
+            "ts": now_unix_f64(),
+            "browser": browser,
+            "path": path.map(|p| p.display().to_string()),
+            "message": message,
+        }));
+    }
+
     pub(crate) fn write_event(&self, event: serde_json::Value) {
         self.writer.borrow_mut().write(&event.to_string());
     }

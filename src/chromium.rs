@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use crate::engine::DiagnosticLog;
+
 /// Single source of truth for Chromium-family browsers Grinch knows about,
 /// plus their per-app data directory under `~/Library/Application Support/`.
 /// Both `is_chromium` (recognise the bundle) and `data_dir` (find Local State)
@@ -71,58 +73,87 @@ fn local_state_path(bundle_id: &str) -> Option<PathBuf> {
     )))
 }
 
-/// Per-process cache of {bundle_id → {display_name → directory_name}}. Local
+/// Cache of {bundle_id → {display_name → directory_name}}, cleared on config reload. Local
 /// State is small but parsing JSON has some cost; resolving is rare so a
 /// OnceLock-guarded HashMap is enough.
 static CACHE: OnceLock<std::sync::Mutex<HashMap<String, NameMap>>> = OnceLock::new();
 
 type NameMap = HashMap<String, String>;
 
-fn load_name_map(bundle_id: &str) -> NameMap {
+/// Discard cached mappings so the next lookup rereads profile data.
+pub fn clear_profile_cache() {
+    if let Some(cache) = CACHE.get() {
+        cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+}
+
+fn load_name_map(bundle_id: &str, diagnostics: &DiagnosticLog) -> NameMap {
     let Some(path) = local_state_path(bundle_id) else {
+        diagnostics.record_profile_error(bundle_id, None, "Cannot locate Local State; check HOME.");
         return NameMap::new();
     };
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return NameMap::new();
-    };
+    match read_name_map(&path) {
+        Ok(map) => map,
+        Err(error) => {
+            diagnostics.record_profile_error(
+                bundle_id,
+                Some(&path),
+                &format!(
+                    "Cannot read profile mapping at {}: {error}. Use the directory from \
+                     chrome://version (Default or Profile N), or restore file access \
+                     and Reload Config. \
+                     For permission denials, check Grinch's macOS Privacy & Security settings.",
+                    path.display()
+                ),
+            );
+            NameMap::new()
+        }
+    }
+}
+
+fn read_name_map(path: &std::path::Path) -> std::io::Result<NameMap> {
+    let content = std::fs::read_to_string(path)?;
     parse_name_map(&content)
 }
 
 /// Pure helper: extract {display_name → directory_name} from the JSON contents
-/// of Chrome's `Local State`. Returns an empty map on any parse failure or
-/// when the expected `profile.info_cache` shape is missing — the resolver
-/// falls back to passing the user's value through unchanged.
-fn parse_name_map(content: &str) -> NameMap {
+/// of Chrome's `Local State`. Rejects malformed JSON or missing profile data.
+fn parse_name_map(content: &str) -> std::io::Result<NameMap> {
     let mut out = NameMap::new();
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(content) else {
-        return out;
-    };
-    let Some(info_cache) = json
+    let json = serde_json::from_str::<serde_json::Value>(content)?;
+    let info_cache = json
         .get("profile")
         .and_then(|p| p.get("info_cache"))
         .and_then(|c| c.as_object())
-    else {
-        return out;
-    };
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Local State has no profile.info_cache object",
+            )
+        })?;
     for (dir_name, info) in info_cache {
         if let Some(display) = info.get("name").and_then(|n| n.as_str()) {
             out.insert(display.to_string(), dir_name.clone());
         }
     }
-    out
+    Ok(out)
 }
 
 /// Pure helper: resolve a user-supplied `profile` value against a name map.
 /// Pulled out of `resolve_profile_dir` so the lookup logic can be tested
 /// without faking `HOME` to point at a Chrome data dir.
-fn resolve_in_map(profile: &str, map: &NameMap) -> String {
+fn resolve_in_map(profile: &str, map: &NameMap) -> Option<String> {
     if map.values().any(|d| d == profile) {
-        return profile.to_string();
+        return Some(profile.to_string());
     }
-    if let Some(dir) = map.get(profile) {
-        return dir.clone();
-    }
-    profile.to_string()
+    map.get(profile).cloned()
+}
+
+fn is_profile_directory(profile: &str) -> bool {
+    profile == "Default"
+        || profile.strip_prefix("Profile ").is_some_and(|number| {
+            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 /// Resolve a user-supplied `profile` value to the on-disk directory name.
@@ -132,22 +163,40 @@ fn resolve_in_map(profile: &str, map: &NameMap) -> String {
 ///      directory name like "Profile 10"), use as-is.
 ///   2. Otherwise, search `info_cache` for an entry whose display `name`
 ///      matches the value, and return its directory key.
-///   3. If nothing matches (or Local State can't be read), return the value
-///      unchanged so Chrome will create a fresh profile with that name —
-///      the same behaviour as Finicky's fallback.
+///   3. If nothing matches (or Local State can't be read), suppress the launch.
+///      Standard directory names bypass the lookup and need no file access.
 ///
 /// The Local State JSON is parsed once per bundle ID and cached. The lookup
 /// runs while holding the mutex (no map clone) so dynamic `open` fns that
 /// return profile-bearing browser specs don't pay map-copy cost per click.
-pub fn resolve_profile_dir(bundle_id: &str, profile: &str) -> String {
+pub fn resolve_profile_dir(
+    bundle_id: &str,
+    profile: &str,
+    diagnostics: &DiagnosticLog,
+) -> Option<String> {
+    if is_profile_directory(profile) {
+        return Some(profile.to_string());
+    }
     let mutex = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     // unwrap_or_else recovers from a poisoned mutex; the data inside the
     // HashMap is just plain strings, so reading it after a panic is safe.
     let mut cache = mutex.lock().unwrap_or_else(|e| e.into_inner());
     let map = cache
         .entry(bundle_id.to_string())
-        .or_insert_with(|| load_name_map(bundle_id));
-    resolve_in_map(profile, map)
+        .or_insert_with(|| load_name_map(bundle_id, diagnostics));
+    let directory = resolve_in_map(profile, map);
+    if directory.is_none() {
+        diagnostics.record_profile_error(
+            bundle_id,
+            local_state_path(bundle_id).as_deref(),
+            &format!(
+                "Cannot resolve profile {profile:?}; launch suppressed. Use the directory \
+                      from chrome://version (Default or Profile N), or restore profile data \
+                      access and Reload Config."
+            ),
+        );
+    }
+    directory
 }
 
 #[cfg(test)]
@@ -169,7 +218,7 @@ mod tests {
 
     #[test]
     fn parse_name_map_extracts_display_to_dir() {
-        let map = parse_name_map(SAMPLE_LOCAL_STATE);
+        let map = parse_name_map(SAMPLE_LOCAL_STATE).unwrap();
         assert_eq!(map.get("Personal").map(String::as_str), Some("Default"));
         assert_eq!(map.get("Work").map(String::as_str), Some("Profile 1"));
         assert_eq!(map.get("Convergint").map(String::as_str), Some("Profile 7"));
@@ -177,12 +226,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_name_map_returns_empty_on_garbage_json() {
-        assert!(parse_name_map("not json").is_empty());
-        assert!(parse_name_map("").is_empty());
-        assert!(parse_name_map("{}").is_empty());
+    fn parse_name_map_rejects_garbage_json() {
+        assert!(parse_name_map("not json").is_err());
+        assert!(parse_name_map("").is_err());
+        assert!(parse_name_map("{}").is_err());
         // Right shape, wrong types.
-        assert!(parse_name_map(r#"{"profile": {"info_cache": []}}"#).is_empty());
+        assert!(parse_name_map(r#"{"profile": {"info_cache": []}}"#).is_err());
     }
 
     #[test]
@@ -192,7 +241,8 @@ mod tests {
                 "Default": {"user_name": "no display"},
                 "Profile 1": {"name": "Work"}
             }}}"#,
-        );
+        )
+        .unwrap();
         assert_eq!(map.len(), 1);
         assert_eq!(map.get("Work").map(String::as_str), Some("Profile 1"));
     }
@@ -201,25 +251,50 @@ mod tests {
     fn resolve_in_map_passes_through_directory_keys() {
         // If the user already gave us a directory key (e.g. "Profile 1"),
         // we should return it unchanged even though no display name maps to it.
-        let map = parse_name_map(SAMPLE_LOCAL_STATE);
-        assert_eq!(resolve_in_map("Profile 1", &map), "Profile 1");
-        assert_eq!(resolve_in_map("Default", &map), "Default");
+        let map = parse_name_map(SAMPLE_LOCAL_STATE).unwrap();
+        assert_eq!(
+            resolve_in_map("Profile 1", &map).as_deref(),
+            Some("Profile 1")
+        );
+        assert_eq!(resolve_in_map("Default", &map).as_deref(), Some("Default"));
     }
 
     #[test]
     fn resolve_in_map_translates_display_names() {
-        let map = parse_name_map(SAMPLE_LOCAL_STATE);
-        assert_eq!(resolve_in_map("Work", &map), "Profile 1");
-        assert_eq!(resolve_in_map("Convergint", &map), "Profile 7");
+        let map = parse_name_map(SAMPLE_LOCAL_STATE).unwrap();
+        assert_eq!(resolve_in_map("Work", &map).as_deref(), Some("Profile 1"));
+        assert_eq!(
+            resolve_in_map("Convergint", &map).as_deref(),
+            Some("Profile 7")
+        );
     }
 
     #[test]
-    fn resolve_in_map_falls_through_unknown() {
-        // Unknown values pass through unchanged so Chrome creates a fresh
-        // profile with the requested name (Finicky-compatible behaviour).
-        let map = parse_name_map(SAMPLE_LOCAL_STATE);
-        assert_eq!(resolve_in_map("NotARealProfile", &map), "NotARealProfile");
-        assert_eq!(resolve_in_map("", &NameMap::new()), "");
+    fn resolve_in_map_rejects_unknown_names() {
+        let map = parse_name_map(SAMPLE_LOCAL_STATE).unwrap();
+        assert_eq!(resolve_in_map("NotARealProfile", &map), None);
+        assert_eq!(resolve_in_map("Work", &NameMap::new()), None);
+        assert_eq!(resolve_in_map("", &NameMap::new()), None);
+    }
+
+    #[test]
+    fn explicit_directories_need_no_profile_file() {
+        let diagnostics = DiagnosticLog::default();
+        for profile in ["Default", "Profile 0", "Profile 10"] {
+            assert_eq!(
+                resolve_profile_dir("unknown.browser", profile, &diagnostics).as_deref(),
+                Some(profile)
+            );
+        }
+        for profile in [
+            "Work",
+            "Profile ",
+            "Profile -1",
+            "Profile 1/../Work",
+            "Profile １",
+        ] {
+            assert!(!is_profile_directory(profile));
+        }
     }
 
     #[test]

@@ -125,8 +125,8 @@ make run</code></pre>
   <p><code>Grinch --list-rules</code> prints every rule with its index, label, and target — pair with the JSONL log to map a <code>matchedRule.index</code> back to the actual entry in your config.</p>
 <pre><code>0: zoom.us/j/* | *.zoom.us/j/* → us.zoom.xos
 1: [slack-to-chrome] from:com.tinyspeck.slackmacgap → com.google.Chrome
-2: github.com → com.google.Chrome --profile-directory=Work
-3: fn: (url, ctx) =&gt; ctx.modifiers.shift → com.google.Chrome --profile-directory=Work</code></pre>
+2: github.com → com.google.Chrome --profile-directory=Profile 1
+3: fn: (url, ctx) =&gt; ctx.modifiers.shift → com.google.Chrome --profile-directory=Profile 1</code></pre>
 
   <h3>Open the diagnostic log</h3>
   <p>Grinch records config-load and runtime JavaScript errors in one JSONL file per app
@@ -141,7 +141,7 @@ make run</code></pre>
   "final": "https://github.com/foo",
   "rewritten": false,
   "browser": "com.google.Chrome",
-  "args": ["--profile-directory=Work"],
+  "args": ["--profile-directory=Profile 1"],
   "strategy": "launch_new_instance",
   "opener": {
     "bundleId": "com.tinyspeck.slackmacgap",
@@ -162,6 +162,12 @@ make run</code></pre>
 </code></pre>
   <p><code>console.log/warn/error/info/debug</code> remain on stderr and are not copied
     into the diagnostic log.</p>
+  <p>Profile failures produce <code>profile_error</code> events with the browser,
+    file path, and message, even with request logging disabled. Unresolved Chromium
+    display names suppress the launch; explicit <code>Default</code> and
+    <code>Profile N</code> directory values need no file access. Firefox still receives
+    <code>-P &lt;name&gt;</code> when validation fails. Reload Config refreshes both
+    profile caches after file access or browser profiles change.</p>
   <p class="note">The opener is identified via the GURL Apple Event's <code>keySenderPIDAttr</code>, so it's the app that actually sent the URL — not whichever app happens to be frontmost when Grinch's callback fires.</p>
 
   <h3>Headless checks</h3>

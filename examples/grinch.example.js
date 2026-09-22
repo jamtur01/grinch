@@ -29,6 +29,9 @@ const browsers = {
   // Firefox-family expands to -P <name>. Recognised for Chrome, Brave, Edge,
   // Vivaldi, Arc, Opera, Chromium (Chromium family) and Firefox, Firefox
   // Developer Edition, Firefox Nightly, Waterfox, LibreWolf (Firefox family).
+  // Chromium display names must resolve in Local State; unresolved names suppress
+  // the launch and log an error. Use "Default" or "Profile 1" to avoid file lookup.
+  // Reload Config refreshes profile data after browser or permission changes.
   personal: { name: "Google Chrome", profile: "Personal" },
   work: { name: "Google Chrome", profile: "Work" },
   firefoxWork: { name: "org.mozilla.firefox", profile: "Work" },

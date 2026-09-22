@@ -50,24 +50,30 @@ fn expand_flag_for_family(bundle_id: &str, flag: FlagFamily) -> Option<&'static 
 ///     manager UI.
 ///   - Anything else   → `None` (caller logs a warning).
 ///
-/// Returns `Some(args)` on a recognised family, `None` otherwise. The
+/// Returns `Ok(Some(args))` on a recognised family, `Ok(None)` otherwise.
+/// An unresolved Chromium profile returns `Err(())`; callers must suppress
+/// the entire launch, including any other arguments on the browser spec. The
 /// caller is responsible for setting `creates_new_instance: true` when
 /// using the returned args — without that, an already-running browser
 /// instance would route the URL into its current window and ignore the
 /// profile flag.
-fn expand_profile_args(bundle_id: &str, profile: &str) -> Option<Vec<String>> {
+fn expand_profile_args(
+    bundle_id: &str,
+    profile: &str,
+    diagnostics: &DiagnosticLog,
+) -> Result<Option<Vec<String>>, ()> {
     if profile.is_empty() {
-        return None;
+        return Ok(None);
     }
     if crate::chromium::is_chromium(bundle_id) {
-        let dir = crate::chromium::resolve_profile_dir(bundle_id, profile);
-        return Some(vec![format!("--profile-directory={dir}")]);
+        let dir = crate::chromium::resolve_profile_dir(bundle_id, profile, diagnostics).ok_or(())?;
+        return Ok(Some(vec![format!("--profile-directory={dir}")]));
     }
     if crate::firefox::is_firefox(bundle_id) {
-        let name = crate::firefox::resolve_profile_name(bundle_id, profile);
-        return Some(vec!["-P".to_string(), name]);
+        let name = crate::firefox::resolve_profile_name(bundle_id, profile, diagnostics);
+        return Ok(Some(vec!["-P".to_string(), name]));
     }
-    None
+    Ok(None)
 }
 
 /// Heuristic: does this string look like an `.app` bundle path that
@@ -91,7 +97,7 @@ fn expand_tilde(s: &str) -> String {
     s.to_string()
 }
 
-pub(crate) fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
+pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> BrowserSpec {
     if unsafe { v.isString() } {
         let s = js_to_string(v).unwrap_or_default();
         // Path autodetect: bare-string browser specs that look like
@@ -118,7 +124,10 @@ pub(crate) fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
                 let (name, rest) = s.split_at(idx);
                 let profile = &rest[1..]; // skip the ':' itself
                 let bundle_id = resolve_browser_identifier(name);
-                if let Some(args) = expand_profile_args(&bundle_id, profile) {
+                let Ok(args) = expand_profile_args(&bundle_id, profile, diagnostics) else {
+                    return BrowserSpec::empty();
+                };
+                if let Some(args) = args {
                     return BrowserSpec {
                         bundle_id,
                         args,
@@ -184,7 +193,10 @@ pub(crate) fn parse_browser_jsval(v: &JSValue) -> BrowserSpec {
     // browser doesn't route the URL into its current window and ignore
     // the profile flag.
     if let Some(profile) = key(v, "profile").and_then(|p| js_to_string(&p)) {
-        if let Some(profile_args) = expand_profile_args(&bundle_id, &profile) {
+        let Ok(profile_args) = expand_profile_args(&bundle_id, &profile, diagnostics) else {
+            return BrowserSpec::empty();
+        };
+        if let Some(profile_args) = profile_args {
             args.extend(profile_args);
             creates_new_instance = true;
         } else if !profile.is_empty() {
@@ -261,6 +273,7 @@ pub(crate) fn resolve_browser(
     v: &JSValue,
     browsers: &std::collections::HashMap<String, Rc<BrowserSpec>>,
     apply_string_shorthand: bool,
+    diagnostics: &DiagnosticLog,
 ) -> Option<Rc<BrowserSpec>> {
     if unsafe { v.isString() } {
         let s = js_to_string(v)?;
@@ -274,14 +287,14 @@ pub(crate) fn resolve_browser(
         if apply_string_shorthand {
             // `parse_browser_jsval`'s string branch handles bare-name +
             // "Name:Profile" shorthand.
-            return Some(Rc::new(parse_browser_jsval(v)));
+            return Some(Rc::new(parse_browser_jsval(v, diagnostics)));
         }
         return Some(Rc::new(BrowserSpec::from_bundle_id(
             resolve_browser_identifier(&s),
         )));
     }
     if unsafe { v.isObject() } {
-        return Some(Rc::new(parse_browser_jsval(v)));
+        return Some(Rc::new(parse_browser_jsval(v, diagnostics)));
     }
     None
 }

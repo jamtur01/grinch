@@ -8,6 +8,7 @@ pub(crate) fn parse_rule_array(
     browsers: &std::collections::HashMap<String, Rc<BrowserSpec>>,
     regexp_ctor: &JSValue,
     function_ctor: &JSValue,
+    diagnostics: &DiagnosticLog,
 ) -> Vec<Rule> {
     if is_undef_or_null(arr) {
         return vec![];
@@ -35,7 +36,7 @@ pub(crate) fn parse_rule_array(
         let target = match open_val.as_ref() {
             Some(ov) if unsafe { ov.isNull() } => Target::Suppress,
             Some(ov) if is_function(ov, function_ctor) => Target::Fn(UserFn::new(ov.clone())),
-            Some(ov) => match resolve_browser(ov, browsers, true) {
+            Some(ov) => match resolve_browser(ov, browsers, true, diagnostics) {
                 // Empty bundle_id = explicit no-op browser (e.g. via
                 // `appType: "none"`). Normalise to Target::Suppress so the
                 // resolve path's URL handling matches `open: null` exactly,

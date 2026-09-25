@@ -50,9 +50,8 @@ pub struct BrowserSpec {
     pub args: Vec<String>,
     pub open_in_background: bool,
     /// Force LaunchServices to spawn a new application instance instead of
-    /// routing the URL into a running one. Set when a Chromium profile has
-    /// been chosen — without this, Chrome's existing window steals the URL
-    /// and ignores the `--profile-directory=` flag.
+    /// routing the URL into a running one. Set whenever launch arguments are
+    /// present — macOS otherwise ignores them, including the appended URL.
     pub creates_new_instance: bool,
 }
 

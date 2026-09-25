@@ -1940,6 +1940,49 @@ fn parse_browser_jsval_handles_args_and_openinbackground() {
 }
 
 #[test]
+fn raw_args_force_new_instances_for_static_and_dynamic_targets() {
+    for (args, expected) in [
+        ("[]", LaunchPlan::OpenUrls { activates: false }),
+        (
+            r#"["--profile-directory=Profile 2"]"#,
+            LaunchPlan::LaunchApplication {
+                args: vec![
+                    "--profile-directory=Profile 2".to_string(),
+                    "https://x/".to_string(),
+                ],
+                new_instance: true,
+                activates: false,
+            },
+        ),
+    ] {
+        let browser =
+            format!(r#"{{ id: "com.google.Chrome", args: {args}, openInBackground: true }}"#);
+        for source in [
+            format!("module.exports = {{ default: {browser} }};"),
+            format!("module.exports = {{ default: () => ({browser}) }};"),
+            format!(
+                r#"module.exports = {{ default: null,
+                    rules: [{{ match: "*", open: {browser} }}] }};"#
+            ),
+            format!(
+                r#"module.exports = {{ default: null,
+                    rules: [{{ match: "*", open: () => ({browser}) }}] }};"#
+            ),
+            format!(r#"module.exports = {{ browsers: {{ test: {browser} }}, default: "test" }};"#),
+        ] {
+            let engine = build_engine(&source);
+            let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+            assert_eq!(result.browser.bundle_id, "com.google.Chrome", "{source}");
+            assert_eq!(
+                LaunchPlan::from_spec(&result.browser, &result.url),
+                expected,
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
 fn browser_spec_string_with_profile_shorthand() {
     // Finicky-style "Name:Profile" shorthand. Splits on first `:`
     // when the prefix resolves to a Chromium-family browser.

@@ -185,7 +185,8 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
     let mut args = key(v, "args")
         .map(|a| js_array_to_strings(&a))
         .unwrap_or_default();
-    let mut creates_new_instance = false;
+    // macOS ignores launch arguments on running instances, including the URL we append.
+    let mut creates_new_instance = !args.is_empty();
 
     // `profile` field: expand to launch args appropriate for the browser
     // family — `--profile-directory=<dir>` for Chromium, `-P <name>` for

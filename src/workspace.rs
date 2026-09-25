@@ -288,16 +288,14 @@ pub fn is_app_running(id: &str) -> bool {
 /// the app that *sent* the URL, since `frontmostApplication()` is wrong
 /// once LaunchServices activates Grinch itself ahead of our open-URL
 /// callback. Returns `None` when no running app has that pid (process
-/// exited, or the event lacked the `keySenderPIDAttr` and we got 0).
+/// exited, or the event lacked the `keySenderPIDAttr` and we got 0), or
+/// when that app is Grinch itself.
 pub fn opener_from_pid(pid: i32) -> Option<Opener> {
     if pid <= 0 {
         return None;
     }
     let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
-    let bundle_id = app
-        .bundleIdentifier()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let bundle_id = opener_bundle_id(&app)?;
     let name = app
         .localizedName()
         .map(|s| s.to_string())
@@ -477,15 +475,38 @@ fn bundle_string(bundle: &NSBundle, key: &str) -> Option<String> {
     Some(s.to_string())
 }
 
+fn is_self_opener(pid: i32, bundle_id: &str, self_pid: i32, self_bundle_id: Option<&str>) -> bool {
+    pid == self_pid || (!bundle_id.is_empty() && Some(bundle_id) == self_bundle_id)
+}
+
+/// Reject Grinch before fetching opener metadata, including other running copies.
+fn opener_bundle_id(app: &NSRunningApplication) -> Option<String> {
+    let bundle_id = app
+        .bundleIdentifier()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let self_bundle_id = NSBundle::mainBundle()
+        .bundleIdentifier()
+        .map(|s| s.to_string());
+    if is_self_opener(
+        app.processIdentifier(),
+        &bundle_id,
+        NSProcessInfo::processInfo().processIdentifier(),
+        self_bundle_id.as_deref(),
+    ) {
+        return None;
+    }
+    Some(bundle_id)
+}
+
 pub fn frontmost_opener() -> Opener {
     let workspace = NSWorkspace::sharedWorkspace();
     let Some(app) = workspace.frontmostApplication() else {
         return Opener::default();
     };
-    let bundle_id = app
-        .bundleIdentifier()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let Some(bundle_id) = opener_bundle_id(&app) else {
+        return Opener::default();
+    };
     let name = app
         .localizedName()
         .map(|s| s.to_string())
@@ -514,10 +535,9 @@ pub fn frontmost_opener_id() -> Opener {
     let Some(app) = workspace.frontmostApplication() else {
         return Opener::default();
     };
-    let bundle_id = app
-        .bundleIdentifier()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let Some(bundle_id) = opener_bundle_id(&app) else {
+        return Opener::default();
+    };
     Opener {
         bundle_id,
         ..Opener::default()
@@ -927,6 +947,28 @@ fn launch_completion_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opener_identity_excludes_self_and_preserves_other_callers() {
+        let cases = [
+            (41, "com.grinch.browser", Some("com.grinch.browser"), true),
+            (42, "com.grinch.browser", Some("com.grinch.browser"), true),
+            (41, "", Some("com.grinch.browser"), true),
+            (41, "", None, true),
+            (42, "com.apple.Safari", Some("com.grinch.browser"), false),
+            (42, "", Some("com.grinch.browser"), false),
+            (42, "com.apple.Safari", None, false),
+            (42, "", None, false),
+            (42, "", Some(""), false),
+        ];
+        for (pid, bundle_id, self_bundle_id, expected) in cases {
+            assert_eq!(
+                is_self_opener(pid, bundle_id, 41, self_bundle_id),
+                expected,
+                "pid={pid}, bundle_id={bundle_id:?}, self_bundle_id={self_bundle_id:?}"
+            );
+        }
+    }
 
     #[test]
     fn flags_from_mask_zero_means_no_modifiers() {

@@ -1,5 +1,32 @@
 use super::*;
 
+#[test]
+fn wrapper_rewriters_ignore_fragment_queries() {
+    let observed = (
+        unwrap_safelink(
+            "https://safelinks.protection.outlook.com/#?url=https%3A%2F%2Ftarget.example%2F",
+        ),
+        unwrap_teams_launcher(
+            "https://teams.microsoft.com/dl/launcher/launcher.html#?url=%2Fl%2Fmeetup-join%2F1",
+        ),
+    );
+    assert_eq!(observed, (None, None));
+    assert_eq!(
+        unwrap_safelink(concat!(
+            "https://safelinks.protection.outlook.com/",
+            "?url=https%3A%2F%2Ftarget.example%2F#?url=other",
+        )),
+        Some("https://target.example/".to_string()),
+    );
+    assert_eq!(
+        unwrap_teams_launcher(concat!(
+            "https://teams.microsoft.com/dl/launcher/launcher.html",
+            "?url=%2Fl%2Fmeetup-join%2F1#?url=other",
+        )),
+        Some("msteams:/l/meetup-join/1".to_string()),
+    );
+}
+
 // -------- quick_host --------
 
 #[test]

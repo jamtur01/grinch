@@ -50,7 +50,10 @@ pub(crate) fn unwrap_teams_launcher(url: &str) -> Option<String> {
     if host.as_ref() != "teams.microsoft.com" {
         return None;
     }
-    let query_start = url.find('?')?;
+    let query_start = url.find(['?', '#'])?;
+    if url.as_bytes()[query_start] != b'?' {
+        return None;
+    }
     let scheme_end = url.find("://").map(|i| i + 3).unwrap_or(0);
     let path_start = url
         .get(scheme_end..query_start)?
@@ -99,7 +102,10 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
         return unwrap_proofpoint_v3(url);
     }
 
-    let query_start = url.find('?')?;
+    let query_start = url.find(['?', '#'])?;
+    if url.as_bytes()[query_start] != b'?' {
+        return None;
+    }
     // Path = everything between the authority and the `?`. `quick_host`
     // strips userinfo (`user@…`) and port (`:443`) from the host, so
     // `scheme_end + host.len()` would land mid-authority on URLs that

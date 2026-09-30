@@ -534,6 +534,9 @@ handlers match the URL against pending sessions via the framework's
 session-API completion handler fire normally and dismissing the
 auth dialog cleanly.
 
+On macOS 13 through 14.3, callback matching uses the legacy custom
+scheme API. HTTPS host/path callbacks require macOS 14.4 or later.
+
 The handler installs in `applicationWillFinishLaunching:`, before the
 runloop accepts events, so a request delivered during launch itself
 (third-party app calls into AuthenticationServices while Grinch is

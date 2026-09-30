@@ -23,21 +23,16 @@
 // `application:continueUserActivity:` entrypoints; before each of
 // those routes the URL through `engine.resolve` it calls
 // `try_complete_callback` here. That walks the pending-request map,
-// finds the session whose `callbackURLScheme` matches the incoming
-// URL's scheme, and calls `completeWithCallbackURL:` — letting the
-// originating app's session-API completion handler fire normally and
+// finds a session whose callback matches the incoming URL, and calls
+// `completeWithCallbackURL:` — letting the originating app's
+// session-API completion handler fire normally and
 // dismissing the auth dialog cleanly. The callback URL is *not*
 // routed onward as a click in that case.
 //
-// **The one limitation that remains.** A session that strictly
-// requires the session-API completion path AND uses `http`/`https`
-// as its `callbackURLScheme` (Apple's recommended modern shape via
-// `ASWebAuthenticationSessionCallback.https(host:path:)`) won't be
-// auto-completed, because we can't distinguish "user finished
-// authenticating, this is the callback" from "user clicked an
-// ordinary https:// link". Those flows still work but the originating
-// app's session dialog may sit waiting until timeout. Custom-scheme
-// callbacks (the common case) complete normally.
+// On macOS 14.4 and later, the framework matches custom-scheme and
+// HTTPS host/path callbacks. Older systems support custom schemes
+// only. Completion requires the callback URL to reach Grinch: we
+// cannot observe navigation inside the browser that opens the URL.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -45,7 +40,7 @@ use std::sync::OnceLock;
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
+use objc2::{MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_authentication_services::{
     ASWebAuthenticationSessionRequest, ASWebAuthenticationSessionWebBrowserSessionHandling,
     ASWebAuthenticationSessionWebBrowserSessionManager,
@@ -189,9 +184,8 @@ define_class!(
 /// session claims this URL (caller should route it normally via the
 /// engine).
 ///
-/// Uses the modern `callback` API (`matchesURL:`) instead of the
-/// deprecated `callbackURLScheme` so the match covers both shapes
-/// uniformly:
+/// Uses `callback` (`matchesURL:`) on macOS 14.4 and later, covering
+/// both shapes:
 ///
 /// - Custom-scheme callbacks (`slack://oauth-callback?…`) — declared
 ///   via `callbackWithCustomScheme:`. The most common form.
@@ -204,6 +198,7 @@ define_class!(
 /// `http`/`https` URLs that don't match a registered host+path, so
 /// passing every URL through this function is safe: a user's regular
 /// web click won't be eaten as an auth callback.
+/// Earlier systems use `callbackURLScheme` for custom schemes only.
 pub fn try_complete_callback(url_str: &str) -> bool {
     let Some(url_ns) = NSURL::URLWithString(&NSString::from_str(url_str)) else {
         return false;
@@ -218,10 +213,7 @@ pub fn try_complete_callback(url_str: &str) -> bool {
                 Some(r) => r.clone(),
                 None => continue,
             };
-            let Some(callback) = (unsafe { request.callback() }) else {
-                continue;
-            };
-            if !unsafe { callback.matchesURL(&url_ns) } {
+            if !request_matches_callback(&request, &url_ns) {
                 continue;
             }
             unsafe { request.completeWithCallbackURL(&url_ns) };
@@ -230,6 +222,30 @@ pub fn try_complete_callback(url_str: &str) -> bool {
         }
         false
     })
+}
+
+fn request_matches_callback(request: &ASWebAuthenticationSessionRequest, url: &NSURL) -> bool {
+    if request.respondsToSelector(sel!(callback)) {
+        return unsafe { request.callback() }
+            .is_some_and(|callback| unsafe { callback.matchesURL(url) });
+    }
+    #[expect(
+        deprecated,
+        reason = "callbackURLScheme is the API available before macOS 14.4"
+    )]
+    let scheme = unsafe { request.callbackURLScheme() };
+    legacy_callback_matches(scheme.as_deref(), url)
+}
+
+fn legacy_callback_matches(scheme: Option<&NSString>, url: &NSURL) -> bool {
+    let (Some(expected), Some(actual)) = (scheme, url.scheme()) else {
+        return false;
+    };
+    let expected = expected.to_string();
+    // A legacy scheme cannot distinguish an HTTPS callback from an ordinary web click.
+    !expected.eq_ignore_ascii_case("http")
+        && !expected.eq_ignore_ascii_case("https")
+        && actual.to_string().eq_ignore_ascii_case(&expected)
 }
 
 impl Handler {
@@ -242,10 +258,14 @@ impl Handler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objc2::runtime::AnyClass;
     use objc2_authentication_services::ASWebAuthenticationSessionCallback;
 
     #[test]
     fn callback_matchesurl_recognises_custom_scheme_match() {
+        if AnyClass::get(c"ASWebAuthenticationSessionCallback").is_none() {
+            return; // The callback class is unavailable before macOS 14.4.
+        }
         // The framework's matchesURL: is what `try_complete_callback`
         // delegates to. Verify it behaves as the docs claim for a
         // custom-scheme callback registered via `callbackWithCustom
@@ -256,13 +276,59 @@ mod tests {
             ))
         };
         let url = NSURL::URLWithString(&NSString::from_str("slack://oauth?token=x")).unwrap();
+        let upper = NSURL::URLWithString(&NSString::from_str("SLACK://oauth?token=x")).unwrap();
         let bad = NSURL::URLWithString(&NSString::from_str("claude://oauth?token=x")).unwrap();
         let web = NSURL::URLWithString(&NSString::from_str("https://slack.com/oauth")).unwrap();
         assert!(unsafe { cb.matchesURL(&url) });
+        assert!(unsafe { cb.matchesURL(&upper) });
         assert!(!unsafe { cb.matchesURL(&bad) });
         // Most importantly: a regular https URL with the same hostname
         // as the scheme isn't a match. The framework knows the rules.
         assert!(!unsafe { cb.matchesURL(&web) });
+    }
+
+    #[test]
+    fn callback_matchesurl_requires_registered_host_and_path() {
+        if AnyClass::get(c"ASWebAuthenticationSessionCallback").is_none() {
+            return; // The callback class is unavailable before macOS 14.4.
+        }
+        let callback = unsafe {
+            ASWebAuthenticationSessionCallback::callbackWithHTTPSHost_path(
+                &NSString::from_str("auth.example.com"),
+                &NSString::from_str("/callback"),
+            )
+        };
+        for (href, expected) in [
+            ("https://auth.example.com/callback?code=x", true),
+            ("https://auth.example.com/other", false),
+            ("https://other.example.com/callback", false),
+        ] {
+            let url = NSURL::URLWithString(&NSString::from_str(href)).unwrap();
+            assert_eq!(unsafe { callback.matchesURL(&url) }, expected, "{href}");
+        }
+    }
+
+    #[test]
+    fn legacy_callback_matches_only_the_custom_scheme() {
+        for (scheme, href, expected) in [
+            (Some("slack"), "slack://oauth?code=x", true),
+            (Some("SLACK"), "slack://oauth?code=x", true),
+            (Some("slack"), "SLACK://oauth?code=x", true),
+            (Some("slack"), "claude://oauth?code=x", false),
+            (Some("slack"), "https://slack/oauth", false),
+            (Some("slack"), "relative/path", false),
+            (None, "slack://oauth?code=x", false),
+            (Some("HTTPS"), "https://example.com/", false),
+            (Some("http"), "http://example.com/", false),
+        ] {
+            let scheme = scheme.map(NSString::from_str);
+            let url = NSURL::URLWithString(&NSString::from_str(href)).unwrap();
+            assert_eq!(
+                legacy_callback_matches(scheme.as_deref(), &url),
+                expected,
+                "{href}"
+            );
+        }
     }
 
     #[test]

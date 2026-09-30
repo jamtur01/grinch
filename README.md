@@ -524,8 +524,7 @@ Apps that use `ASWebAuthenticationSession` for sign-in send their URLs through
 AuthenticationServices rather than ordinary URL delivery. Grinch routes these
 requests using the same browser rules as other links.
 
-Grinch declares the capability and registers a session handler that
-forwards the auth URL through the same `engine.resolve()` machinery
+Grinch's session handler forwards the auth URL through the same `engine.resolve()` machinery
 that handles regular clicks. The user's chosen browser opens the URL
 as a normal tab. When the browser eventually navigates to the
 callback URL (a custom scheme like `slack://oauth-callback?token=…`,

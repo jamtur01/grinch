@@ -1021,6 +1021,23 @@ fn rewriter_literal_string_replaces_url() {
 }
 
 #[test]
+fn rewriter_regex_matches_preserve_flags_and_array_alternatives() {
+    let engine = build_engine(
+        r#"module.exports = {
+        default: 'com.apple.Safari',
+        rewrite: [{match: [/old\.example/i, /legacy\.example/], url: 'https://new.example/'}]
+    };"#,
+    );
+    for url in ["https://OLD.example/", "https://legacy.example/"] {
+        assert_eq!(resolve(&engine, url).1, "https://new.example/");
+    }
+    assert_eq!(
+        resolve(&engine, "https://other.example/").1,
+        "https://other.example/"
+    );
+}
+
+#[test]
 fn rewriter_fn_returning_string() {
     let e = build_engine(
         r#"module.exports = {

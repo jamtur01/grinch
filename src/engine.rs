@@ -670,7 +670,7 @@ impl Engine {
 
         // rewrites
         let rewrites = key(&exports, "rewrite")
-            .map(|arr| parse_rewrite_array(&arr, &function_ctor))
+            .map(|arr| parse_rewrite_array(&arr, &regexp_ctor, &function_ctor))
             .unwrap_or_default();
 
         // rules — accept Finicky's `handlers` as well as Grinch's `rules`

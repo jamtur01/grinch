@@ -160,7 +160,11 @@ fn truncate_label(s: &str, max_chars: usize) -> String {
     format!("{prefix}…")
 }
 
-pub(crate) fn parse_rewrite_array(arr: &JSValue, function_ctor: &JSValue) -> Vec<RewriteRule> {
+pub(crate) fn parse_rewrite_array(
+    arr: &JSValue,
+    regexp_ctor: &JSValue,
+    function_ctor: &JSValue,
+) -> Vec<RewriteRule> {
     if is_undef_or_null(arr) {
         return vec![];
     }
@@ -206,10 +210,7 @@ pub(crate) fn parse_rewrite_array(arr: &JSValue, function_ctor: &JSValue) -> Vec
 
         let match_val = key(&item, "match");
         let url_val = key(&item, "url");
-        // RegExp matchers don't appear in rewrite arrays under any common
-        // pattern, but pass the ctor through compile_matchers anyway so
-        // /literal/ regex is accepted.
-        let matchers = compile_matchers(match_val.as_deref(), function_ctor, function_ctor);
+        let matchers = compile_matchers(match_val.as_deref(), regexp_ctor, function_ctor);
         let Some(uv) = url_val else { continue };
         let Some(rewriter) = compile_rewriter(&uv, function_ctor) else {
             continue;

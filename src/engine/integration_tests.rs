@@ -35,7 +35,26 @@ fn build_engine_with_diagnostics(user_src: &str, diagnostics: Rc<DiagnosticLog>)
 /// EngineError variants (e.g. PreludeBroken when a hostile config
 /// trashes a prelude global).
 fn try_build_engine(user_src: &str) -> Result<Engine, EngineError> {
-    try_build_engine_with_diagnostics(user_src, Rc::new(DiagnosticLog::default()))
+    try_build_engine_with_diagnostics(user_src, Rc::new(isolated_diagnostics()))
+}
+
+pub(crate) fn isolated_diagnostics() -> DiagnosticLog {
+    TEST_LOGS.with(|logs| DiagnosticLog::at_path(logs.0.join("diagnostic.log")))
+}
+
+thread_local! {
+    static TEST_LOGS: TestLogs = TestLogs(unique_tmp("engine-test-logs"));
+}
+
+/// Each test thread owns its logs and removes them when it exits.
+struct TestLogs(PathBuf);
+
+impl Drop for TestLogs {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.0) {
+            assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
+        }
+    }
 }
 
 fn try_build_engine_with_diagnostics(
@@ -103,6 +122,38 @@ fn resolve_with(
 }
 
 // ---------- Engine end-to-end ----------
+
+#[test]
+fn default_engine_fixture_isolates_runtime_error_logs() {
+    let home = unique_tmp("fixture-log-home");
+    with_home(&home, || {
+        let engine = build_engine(
+            r#"module.exports = { default: 'com.apple.Safari', rules: [
+                { match: () => { throw new Error('isolated boom'); }, open: null }
+            ] };"#,
+        );
+        let path = engine.diagnostics.ensure_file().unwrap();
+        assert!(
+            !path.starts_with(&home),
+            "fixture must not select the user log path"
+        );
+        assert!(path.starts_with(std::env::temp_dir()));
+        assert_eq!(
+            resolve(&engine, "https://example.com/").0,
+            "com.apple.Safari"
+        );
+        let events = read_log_events(&path);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["event"], "runtime_js_error");
+        assert!(
+            events[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("isolated boom")
+        );
+    });
+    assert!(!home.join("Library/Logs/Grinch").exists());
+}
 
 #[test]
 fn wrapper_rewrites_ignore_embedded_urls_in_opaque_inputs() {
@@ -263,12 +314,13 @@ fn matched_rule_in_log_uses_user_name_when_present() {
     let tmp = unique_tmp("log-name");
     let _ = std::fs::remove_dir_all(&tmp);
     with_home(&tmp, || {
-        let e = build_engine(
+        let e = build_engine_with_diagnostics(
             r#"module.exports = {
                     default: "com.apple.Safari",
                     options: { logRequests: true },
                     rules: [{ match: "github.com", open: "com.google.Chrome", name: "code-hosts" }],
                 };"#,
+            Rc::new(DiagnosticLog::default()),
         );
         assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
     });
@@ -284,10 +336,8 @@ fn matched_rule_in_log_uses_user_name_when_present() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// HOME is process-global. The log tests serialise via this mutex so
-/// none sees another's HOME mid-engine-init. Other
-/// integration tests don't read HOME from inside Engine::new (no
-/// log_requests) so they don't need the lock.
+/// HOME is process-global. Tests of default log paths and profile paths
+/// serialise their overrides. Ordinary engine fixtures use explicit log paths.
 static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Run `f` with HOME pointed at `home` for its duration, holding the
@@ -449,7 +499,7 @@ fn options_log_requests_writes_jsonl_per_resolve() {
     let _ = std::fs::remove_dir_all(&tmp);
 
     with_home(&tmp, || {
-        let e = build_engine(
+        let e = build_engine_with_diagnostics(
             r#"module.exports = {
                     default: "com.apple.Safari",
                     options: { logRequests: true },
@@ -458,6 +508,7 @@ fn options_log_requests_writes_jsonl_per_resolve() {
                         open: { name: "com.google.Chrome", profile: "Profile 1" },
                     }],
                 };"#,
+            Rc::new(DiagnosticLog::default()),
         );
         assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
         assert_eq!(resolve(&e, "https://example.com/").0, "com.apple.Safari");
@@ -588,11 +639,12 @@ fn log_rotates_on_size_threshold() {
     let tmp = unique_tmp("log-rotate");
     let _ = std::fs::remove_dir_all(&tmp);
     with_home(&tmp, || {
-        let e = build_engine(
+        let e = build_engine_with_diagnostics(
             r#"module.exports = {
                     default: "com.apple.Safari",
                     options: { logRequests: true, logRotateBytes: 200 },
                 };"#,
+            Rc::new(DiagnosticLog::default()),
         );
         // Each log line is ~250 bytes; the first write opens the
         // file (size 0, 0 + ~250 > 200 — wait, the should_rotate
@@ -636,7 +688,10 @@ fn options_log_requests_off_writes_nothing() {
     let _ = std::fs::remove_dir_all(&tmp);
 
     with_home(&tmp, || {
-        let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
+        let e = build_engine_with_diagnostics(
+            r#"module.exports = { default: "com.apple.Safari" };"#,
+            Rc::new(DiagnosticLog::default()),
+        );
         let _ = resolve(&e, "https://x/");
     });
 

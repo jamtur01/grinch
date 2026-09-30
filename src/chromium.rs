@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn explicit_directories_need_no_profile_file() {
-        let diagnostics = DiagnosticLog::default();
+        let diagnostics = crate::engine::integration_tests::isolated_diagnostics();
         for profile in ["Default", "Profile 0", "Profile 10"] {
             assert_eq!(
                 resolve_profile_dir("unknown.browser", profile, &diagnostics).as_deref(),

@@ -3,6 +3,22 @@
 // modules' items that `engine` re-exports via `pub(crate) use`.
 use super::*;
 
+/// Return the part after an absolute URI's RFC 3986 scheme.
+/// Relative inputs must never become browser command-line switches.
+pub(crate) fn url_after_scheme(url: &str) -> Option<&str> {
+    let (scheme, rest) = url.split_once(':')?;
+    let (first, tail) = scheme.as_bytes().split_first()?;
+    if !first.is_ascii_alphabetic() {
+        return None;
+    }
+    for byte in tail {
+        if !byte.is_ascii_alphanumeric() && ![b'+', b'-', b'.'].contains(byte) {
+            return None;
+        }
+    }
+    Some(rest)
+}
+
 /// Extract hostname from a URL string without a full URL parser. Returns
 /// lowercased hostname or None. Handles fully-qualified URLs (`http(s)://`,
 /// `scheme://host`); protocol-relative `//host` forms aren't supported

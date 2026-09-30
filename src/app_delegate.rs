@@ -967,8 +967,8 @@ fn forward_auth_session_url(url: &str) {
 ///     The payload is `btoa(url)` — standard base64 — but the decoder
 ///     also accepts the URL-safe alphabet (`-`/`_`) and missing padding.
 ///
-/// Empty `grinch:` payloads route as `""`, which falls through to the
-/// default browser — same as any other no-op URL would. A `grinch://open/…`
+/// Empty or relative payloads are rejected by the shared launch boundary.
+/// A `grinch://open/…`
 /// shape whose payload doesn't decode to valid base64 is passed through
 /// unchanged so the engine sees the malformed input rather than silently
 /// dropping it.

@@ -809,6 +809,9 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     // resolve events record which strategy actually fired.
     let plan = LaunchPlan::from_spec(spec, url);
     if let LaunchPlan::Suppress = plan {
+        if !spec.bundle_id.is_empty() {
+            eprintln!("grinch: invalid URL {url:?}; expected an absolute URL with a scheme");
+        }
         return;
     }
     let workspace = NSWorkspace::sharedWorkspace();

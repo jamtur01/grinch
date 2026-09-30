@@ -106,7 +106,7 @@ impl LaunchPlan {
     /// Decide the launch plan for `spec` opening `url`. Pure — no IO, no
     /// AppKit — so it can be asserted directly in tests.
     pub fn from_spec(spec: &BrowserSpec, url: &str) -> LaunchPlan {
-        if spec.bundle_id.is_empty() {
+        if spec.bundle_id.is_empty() || url_after_scheme(url).is_none() {
             return LaunchPlan::Suppress;
         }
         let activates = !spec.open_in_background;
@@ -159,6 +159,33 @@ mod launch_plan_tests {
         let p = LaunchPlan::from_spec(&spec("", &[], false, false), "https://x/");
         assert_eq!(p, LaunchPlan::Suppress);
         assert_eq!(p.strategy(), "suppress");
+    }
+
+    #[test]
+    fn relative_urls_never_become_browser_arguments() {
+        for args in [vec![], vec!["--profile-directory=Default"]] {
+            let browser = spec("com.google.Chrome", &args, false, true);
+            for url in [
+                "",
+                "--incognito",
+                " --incognito",
+                "-flag:value",
+                "//host/path",
+                "a/b:c",
+            ] {
+                assert_eq!(LaunchPlan::from_spec(&browser, url), LaunchPlan::Suppress);
+            }
+            for url in [
+                "https://example.com/",
+                "file:///tmp/example.html",
+                "mailto:x@example.com",
+                "tel:+15551234567",
+                "msteams:/l/meetup-join/1",
+                "custom+app.v2:payload",
+            ] {
+                assert_ne!(LaunchPlan::from_spec(&browser, url), LaunchPlan::Suppress);
+            }
+        }
     }
 
     #[test]

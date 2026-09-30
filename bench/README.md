@@ -46,3 +46,16 @@ bench/run.sh slow      # just the fn-based set (~60s)
 The script rebuilds `target/release/Grinch` if it's missing or older
 than any source file, then stages each config under a private
 `HOME=$(mktemp -d)` so it doesn't disturb your real `~/.grinch.js`.
+
+The ignored ingress benchmark includes sender lookup through
+`NSRunningApplication`, modifier capture, and resolution. Run it alone on a
+logged-in Mac with Finder running; it never launches a browser:
+
+```sh
+cargo test --release --bin Grinch benchmark_ingress -- --ignored --nocapture --test-threads=1
+```
+
+It reports the median of ten 2,000-operation samples after warmup, using
+`17-dynamic-default` and `20-from`. The regular `--bench` workloads use a
+synthetic opener, so they do not measure savings from avoiding native lookups.
+`18-rewrite-chain` covers mutable URL callbacks followed by a function matcher.

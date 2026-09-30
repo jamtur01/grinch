@@ -1503,4 +1503,4 @@ fn call_fn_matcher_dispatcher(
 mod tests;
 
 #[cfg(test)]
-mod integration_tests;
+pub(crate) mod integration_tests;

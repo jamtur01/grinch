@@ -23,7 +23,7 @@ use std::rc::Rc;
 /// `JSContext` (and its own JavaScriptCore VM) so two parallel tests
 /// can't see each other's globals. Panics on any JSC error — caller's
 /// job to keep the synthetic config valid.
-fn build_engine(user_src: &str) -> Engine {
+pub(crate) fn build_engine(user_src: &str) -> Engine {
     try_build_engine(user_src).expect("engine init failed")
 }
 

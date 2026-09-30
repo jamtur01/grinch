@@ -1261,6 +1261,61 @@ fn sm_open_login_items_settings() {
 mod tests {
     use super::*;
 
+    /// Includes the real sender lookup and modifier capture omitted by --bench.
+    /// Run alone in release mode on a logged-in Mac with Finder running.
+    #[test]
+    #[ignore = "manual performance measurement; requires Finder"]
+    fn benchmark_ingress() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        use objc2_app_kit::NSRunningApplication;
+
+        let apps = NSRunningApplication::runningApplicationsWithBundleIdentifier(
+            &NSString::from_str("com.apple.finder"),
+        );
+        assert!(apps.count() > 0, "Finder must be running for sender lookup");
+        let pid = apps.objectAtIndex(0).processIdentifier();
+        assert_eq!(opener_from_pid(pid).unwrap().bundle_id, "com.apple.finder");
+        for (label, source) in [
+            (
+                "dynamic-default",
+                include_str!("../bench/configs/17-dynamic-default.grinch.js"),
+            ),
+            ("from", include_str!("../bench/configs/20-from.grinch.js")),
+        ] {
+            let engine = crate::engine::integration_tests::build_engine(source);
+            let resolve = || {
+                let opener = resolve_opener(&engine, black_box(Some(pid)));
+                let modifiers = if engine.needs_modifiers() {
+                    current_modifier_flags()
+                } else {
+                    ModifierFlags::default()
+                };
+                black_box(engine.resolve(
+                    black_box("https://example.com/no/match"),
+                    &opener,
+                    modifiers,
+                ));
+            };
+            let mut samples = Vec::new();
+            for sample in 0..11 {
+                let elapsed = objc2::rc::autoreleasepool(|_| {
+                    let start = Instant::now();
+                    for _ in 0..2000 {
+                        resolve();
+                    }
+                    start.elapsed()
+                });
+                if sample > 0 {
+                    samples.push(elapsed.as_nanos() as f64 / 2000.0);
+                }
+            }
+            samples.sort_by(f64::total_cmp);
+            println!("ingress {label}: {:.1} ns/op (median of 10)", samples[4]);
+        }
+    }
+
     #[test]
     fn unwrap_grinch_scheme_strips_opaque_prefix() {
         assert_eq!(

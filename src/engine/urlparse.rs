@@ -12,7 +12,7 @@ pub(crate) fn url_after_scheme(url: &str) -> Option<&str> {
         return None;
     }
     for byte in tail {
-        if !byte.is_ascii_alphanumeric() && ![b'+', b'-', b'.'].contains(byte) {
+        if !byte.is_ascii_alphanumeric() && !b"+-.".contains(byte) {
             return None;
         }
     }

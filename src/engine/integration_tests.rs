@@ -1289,6 +1289,12 @@ fn dispatcher_preserves_callback_arity_and_receiver() {
         "(url, ctx = {}) => Object.keys(ctx).length === 0",
         "function(url, ctx) { return arguments.length === 2 && ctx.originalUrl === url.href; }",
         "function(url) { 'use strict'; return this === globalThis; }",
+        "Object.assign(function(url) { 'use strict';
+            return this === globalThis && arguments.length === 1;
+        }, {call: () => false})",
+        "Object.assign(function(url, ctx) { 'use strict';
+            return this === globalThis && arguments.length === 2 && ctx.originalUrl === url.href;
+        }, {call: () => false})",
     ] {
         for neighbor in ["", ", {match: (url, ctx) => false, open: null}"] {
             let e = build_engine(&format!(
@@ -1300,7 +1306,7 @@ fn dispatcher_preserves_callback_arity_and_receiver() {
             results.push(resolve(&e, "https://example.com/").0);
         }
     }
-    assert_eq!(results, vec!["com.google.Chrome"; 10]);
+    assert_eq!(results, vec!["com.google.Chrome"; 14]);
 }
 
 #[test]

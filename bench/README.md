@@ -125,8 +125,8 @@ New engine-only fixtures measured 2.251 µs for dynamic-default,
 
 ## Launch diagnostic logging measurements (2026-09-30)
 
-The same Mac and OS were used with Rust/Cargo 1.98.0 for both release
-builds. The baseline was `783ee6c`, before sharing the diagnostic writer
+The same Mac and OS were used with Rust 1.96.0 and Cargo 1.98.0 for both
+release builds. The baseline was `783ee6c`, before sharing the diagnostic writer
 with native launch callbacks. Ten alternating before/after pairs used
 private HOME directories and the fixture iteration counts. Each reported
 median is the fifth ordered sample, matching `run.sh`.

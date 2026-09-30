@@ -136,8 +136,9 @@ The `options` block accepts Finicky v4's keys (plus Grinch's own
 
   Pair with **`logRotateBytes: <n>`** and/or **`logRotateDays: <n>`** to
   cap the diagnostic log's growth. Rotation renames the current file to
-  `<original-name>.log.<iso-timestamp>` and starts a fresh empty file;
-  both triggers can be combined (whichever fires first wins). Default:
+  `<original-name>.log.<iso-timestamp>` and starts a fresh empty file.
+  Same-second collisions append `.1`, `.2`, etc., preserving earlier archives.
+  Both triggers can be combined (whichever fires first wins). Default:
   no rotation, file grows until you delete it.
 
 Grinch keeps one diagnostic log per app launch at
@@ -725,6 +726,9 @@ what the engine is doing on its own.
 Apple Silicon, macOS 26, release build, median of 10 runs at 100k–200k
 iterations per workload. Configs and URLs in `bench/configs/`.
 
+For the macOS 27 comparison, including native opener lookup costs, see the
+[dated benchmark results](bench/README.md#macos-27-review-measurements-2026-09-30).
+
 ### Hot path (declarative-only configs)
 
 Workloads that hit the rules-array — domain matchers, regex, wildcards.
@@ -747,12 +751,13 @@ when it's already lowercase ASCII.
 ### Slow path (configs with `(url, ctx) => …` fn matchers)
 
 User-written predicates and rewrites cross into JavaScriptCore. URL-only
-predicates (`(url) => …`) skip the `__grinchMakeCtx` build and skip the
-LaunchServices IPC for `frontmost_opener()` upstream — only fns declaring
+callbacks (`(url) => …`), including dynamic defaults, skip the `__grinchMakeCtx`
+build and the upstream LaunchServices opener lookup — only fns declaring
 a second formal arg pay for ctx. The first JS-bridge call in a resolve
 costs ~2.5 µs (URL polyfill + cached opener-field JSValues); subsequent
-fn calls within the same resolve reuse the cached args. Ctx build itself
-reuses pre-built `true`/`false` JSValues for modifier flags.
+matcher calls within the same resolve reuse the cached args. Rewrite callbacks
+invalidate their mutable URL arguments so later callbacks see the current URL.
+Ctx build itself reuses pre-built `true`/`false` JSValues for modifier flags.
 
 A few smaller wins compound on this path: `apply_rewrite` short-circuits
 in Rust for the common fn-return shapes (string, null, undefined, URL

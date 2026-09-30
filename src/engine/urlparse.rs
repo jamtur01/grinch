@@ -81,7 +81,10 @@ pub(crate) fn strip_params(
     exact: &HashSet<String>,
     prefixes: &[String],
 ) -> Option<String> {
-    let q = url.find('?')?;
+    let q = url.find(['?', '#'])?;
+    if url.as_bytes()[q] != b'?' {
+        return None;
+    }
     let base = &url[..q];
     let rest = &url[q + 1..];
     let (qs, frag) = if let Some(h) = rest.find('#') {

@@ -151,6 +151,16 @@ fn strip_params_preserves_fragment() {
 }
 
 #[test]
+fn strip_params_does_not_edit_fragment_queries() {
+    let exact = strset(["ref"]);
+    assert!(strip_params("https://x/#/route?ref=important", &exact, &[]).is_none());
+    assert_eq!(
+        strip_params("https://x/?ref=tracking#/route?ref=important", &exact, &[]),
+        Some("https://x/#/route?ref=important".to_string())
+    );
+}
+
+#[test]
 fn strip_params_when_only_param_is_stripped() {
     let r = strip_params("https://x/?utm=1#frag", &strset(["utm"]), &[]);
     assert_eq!(r.as_deref(), Some("https://x/#frag"));

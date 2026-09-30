@@ -473,20 +473,20 @@ pub(crate) fn build_fn_matcher_runs(ctx: &JSContext, rules: &[Rule]) -> Vec<FnMa
     // per-matcher path (which would skip the batching benefit).
     let factory_src = r#"
         (function() {
-            var invoke = Function.prototype.call.bind(Function.prototype.call);
             return function() {
                 var ms = arguments;
                 var count = ms.length / 2;
+                // Match JSC's receiver without consulting a callback's own .call or .bind.
+                for (var i = 0; i < count; i++) {
+                    ms[i * 2] = Function.prototype.bind.call(ms[i * 2], this);
+                }
                 return function(url, ctx, startOffset) {
                     var start = (startOffset | 0);
                     if (start < 0) start = 0;
                     for (var i = start; i < count; i++) {
                         try {
                             var matcher = ms[i * 2];
-                            // Preserve JSC's receiver and bypass a matcher's own .call.
-                            if (ms[i * 2 + 1]
-                                ? invoke(matcher, this, url, ctx)
-                                : invoke(matcher, this, url)) return i;
+                            if (ms[i * 2 + 1] ? matcher(url, ctx) : matcher(url)) return i;
                         } catch (e) {
                             // Matcher threw — treat as no-match, same as the
                             // Rust loop's `result.map(...).unwrap_or(false)`.

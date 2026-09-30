@@ -1291,10 +1291,10 @@ fn dispatcher_preserves_callback_arity_and_receiver() {
         "function(url) { 'use strict'; return this === globalThis; }",
         "Object.assign(function(url) { 'use strict';
             return this === globalThis && arguments.length === 1;
-        }, {call: () => false})",
+        }, {call: () => false, bind: () => false})",
         "Object.assign(function(url, ctx) { 'use strict';
             return this === globalThis && arguments.length === 2 && ctx.originalUrl === url.href;
-        }, {call: () => false})",
+        }, {call: () => false, bind: () => false})",
     ] {
         for neighbor in ["", ", {match: (url, ctx) => false, open: null}"] {
             let e = build_engine(&format!(

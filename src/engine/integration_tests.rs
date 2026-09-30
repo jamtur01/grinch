@@ -683,15 +683,17 @@ fn dynamic_default_browser_fn_returning_string() {
                     url.hostname === "internal.corp" ? "com.apple.Safari" : "com.google.Chrome",
             };"#,
     );
+    assert!(!e.needs_opener());
+    assert!(!e.needs_opener_full());
+    assert!(!e.needs_modifiers());
+    assert!(!e.needs_host);
     assert_eq!(resolve(&e, "https://internal.corp/x").0, "com.apple.Safari");
     assert_eq!(resolve(&e, "https://github.com/x").0, "com.google.Chrome");
 }
 
 #[test]
 fn dynamic_default_browser_fn_with_ctx() {
-    // Default fn can read ctx (opener / modifiers). Dynamic-default
-    // configs always have needs_opener / needs_modifiers / needs_host
-    // forced on so the IPC happens upstream.
+    // A default that declares ctx still requests the native metadata.
     let e = build_engine(
         r#"module.exports = {
                 default: (url, ctx) =>
@@ -700,6 +702,8 @@ fn dynamic_default_browser_fn_with_ctx() {
     );
     assert!(e.needs_opener());
     assert!(e.needs_modifiers());
+    assert!(e.needs_opener_full());
+    assert!(e.needs_host);
     assert_eq!(
         resolve_with(
             &e,
@@ -718,6 +722,37 @@ fn dynamic_default_browser_fn_with_ctx() {
         resolve_with(&e, "https://x/", &Opener::default(), with_shift).0,
         "com.google.Chrome",
     );
+}
+
+#[test]
+fn dynamic_default_url_only_preserves_rule_context_needs() {
+    for (matcher, needs_full) in [
+        ("from('com.apple.finder')", false),
+        ("(url, ctx) => ctx.modifiers.shift", true),
+    ] {
+        let e = build_engine(&format!(
+            "module.exports = {{ default: url => 'com.apple.Safari',
+                rules: [{{ match: {matcher}, open: 'com.google.Chrome' }}] }};"
+        ));
+        assert!(e.needs_opener());
+        assert_eq!(e.needs_opener_full(), needs_full);
+        assert_eq!(e.needs_modifiers(), needs_full);
+        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+        let shift = ModifierFlags {
+            shift: true,
+            ..ModifierFlags::default()
+        };
+        assert_eq!(
+            resolve_with(
+                &e,
+                "https://x/",
+                &opener("com.apple.finder", "Finder"),
+                shift
+            )
+            .0,
+            "com.google.Chrome"
+        );
+    }
 }
 
 #[test]

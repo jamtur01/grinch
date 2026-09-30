@@ -708,9 +708,11 @@ impl Engine {
         }
 
         let mut needs = analyse_runtime_needs(&rewrites, &rules);
-        // A dynamic default (fn) is always reachable when no rule matches,
-        // and it could read any of url/opener/modifiers. Force them all on.
-        if matches!(&default_browser, DefaultBrowser::Fn(_)) {
+        // Dynamic defaults follow the same load-time arity contract as
+        // rule callbacks. URL-only defaults do not need native context.
+        if let DefaultBrowser::Fn(callback) = &default_browser
+            && callback.needs_ctx
+        {
             needs.opener = true;
             needs.modifiers = true;
             needs.host = true;

@@ -313,6 +313,18 @@ pub fn opener_from_pid(pid: i32) -> Option<Opener> {
     })
 }
 
+/// Sender lookup for declarative from() rules; skip unused name and path metadata.
+pub fn opener_id_from_pid(pid: i32) -> Option<Opener> {
+    if pid <= 0 {
+        return None;
+    }
+    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+    Some(Opener {
+        bundle_id: opener_bundle_id(&app)?,
+        ..Opener::default()
+    })
+}
+
 /// Terminate any other running instances of Grinch with the same bundle
 /// identifier so we're the only one left when the menu bar item gets
 /// installed. Macos `Launch Services` is *supposed* to route GetURL events
@@ -952,6 +964,15 @@ fn launch_completion_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sender_lookups_reject_invalid_missing_and_self_pids() {
+        let self_pid = NSProcessInfo::processInfo().processIdentifier();
+        for pid in [-1, 0, i32::MAX, self_pid] {
+            assert!(opener_from_pid(pid).is_none(), "full lookup for {pid}");
+            assert!(opener_id_from_pid(pid).is_none(), "ID lookup for {pid}");
+        }
+    }
 
     #[test]
     fn opener_identity_excludes_self_and_preserves_other_callers() {

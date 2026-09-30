@@ -31,7 +31,7 @@ use crate::engine::{DiagnosticLog, Engine, ModifierFlags};
 use crate::loader::{find_config_path, load_config};
 use crate::workspace::{
     Opener, current_modifier_flags, ensure_accessibility_permission, frontmost_opener,
-    frontmost_opener_id, list_http_browsers, open_url, opener_from_pid,
+    frontmost_opener_id, list_http_browsers, open_url, opener_from_pid, opener_id_from_pid,
 };
 
 // SMAppService lives in ServiceManagement.framework; not transitively pulled
@@ -1028,11 +1028,8 @@ fn resolve_opener(engine: &Engine, sender_pid: Option<i32>) -> Opener {
         }
         return frontmost_opener();
     }
-    if let Some(opener) = sender_pid.and_then(opener_from_pid) {
-        return Opener {
-            bundle_id: opener.bundle_id,
-            ..Opener::default()
-        };
+    if let Some(opener) = sender_pid.and_then(opener_id_from_pid) {
+        return opener;
     }
     frontmost_opener_id()
 }

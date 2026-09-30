@@ -39,6 +39,10 @@
       <a class="cta" href="https://github.com/jamtur01/grinch">View on GitHub</a>
     </div>
     <p class="meta">macOS 13+ &middot; Universal binary</p>
+    <p class="meta">
+      <a href="https://github.com/jamtur01/grinch/releases/tag/v0.8.7">v0.8.7 release notes</a>
+      &middot; <a href="#support">Latest release only supported</a>
+    </p>
   </div>
 </header>
 
@@ -46,19 +50,25 @@
 
 <section id="features">
   <h2>What it is</h2>
+  <p>v0.8.7 adds launch-failure diagnostics and fixes URL validation, rewrites,
+    browser-path selection, and auth callbacks on older macOS versions. Native
+    opener lookups also do less work; see the <a href="#performance">measured results</a>.</p>
   <ul class="features">
     <li><strong>Finicky v4 config compatibility.</strong> Most v4 configs work unchanged: <code>finicky.matchHostnames</code>, <code>ctx.opener.*</code>, the <code>options</code> block, profile shorthand. A few v4 surfaces (<code>finicky.notify</code>, <code>finicky.getPowerInfo</code>, <code>finicky.getBattery</code>) ship as stubs that log a one-time warning so misroutes don't go silent.</li>
     <li><strong>Browser-spec shortcuts</strong> for the things users were writing one-liners for: <code>incognito: true</code> (Chromium/Firefox private mode), <code>openInNewWindow: true</code> (force a new top-level window), <code>profile: "Work"</code> (resolves through the browser's <code>Local State</code> / <code>profiles.ini</code>). Each one expands to the right CLI flag per family — Safari logs a warning since it has no CLI equivalent.</li>
     <li><strong><code>finicky.getRunningBrowsers()</code></strong> — list currently-running browsers from the known-family tables in stable order, for the "first running of preference" routing idiom. Closes <a href="https://github.com/johnste/finicky/issues/145">johnste/finicky#145</a>.</li>
     <li><strong>Pure Rust core</strong> + a small embedded JS prelude.</li>
-    <li><strong>~16 MB resident memory, ~1.5 MB universal binary.</strong></li>
     <li><strong>Native JavaScriptCore</strong> for config eval — no Electron, no bundler, no transpiler.</li>
     <li><strong>Single DMG.</strong> Universal binary (Apple Silicon + Intel).</li>
     <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar. Parse errors surface as <code>⚠️</code> with the failing line inline.</li>
-    <li><strong>Hot-path resolve in nanoseconds</strong>, full click-to-browser pipeline in single-digit milliseconds.</li>
+    <li><strong>Declarative routing in nanoseconds</strong>,
+      JavaScript callbacks in microseconds.</li>
     <li><strong>Debuggable.</strong> Every resolve can be logged as JSONL with the matched rule, opener, and modifier state. <code>--list-rules</code> prints the loaded rule table for cross-reference.</li>
     <li><strong>SSO / OAuth popups route through your rules.</strong> Apps that use <code>ASWebAuthenticationSession</code> (Slack login, Claude Desktop, corporate auth) normally fall back to Safari when the default browser isn't a recognised browser. Grinch declares the right Info.plist capability and forwards auth URLs through the same resolve pipeline as regular clicks.</li>
   </ul>
+  <p>Authentication callbacks must return to Grinch to complete the pending session.
+    Custom-scheme callbacks work on macOS 13 and later; HTTPS host/path callbacks
+    require macOS 14.4 or later.</p>
 </section>
 
 <section id="install">
@@ -129,7 +139,8 @@ make run</code></pre>
 3: fn: (url, ctx) =&gt; ctx.modifiers.shift → com.google.Chrome --profile-directory=Profile 1</code></pre>
 
   <h3>Open the diagnostic log</h3>
-  <p>Grinch records config-load and runtime JavaScript errors in one JSONL file per app
+  <p>Grinch records config-load, runtime JavaScript, profile, and browser launch errors
+    in one JSONL file per app
     launch at <code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code>. Set
     <code>options: { logRequests: true }</code> to add one <code>resolve</code> event per
     routed URL. Use <em>Open Diagnostic Log</em> in the menu bar to open the active file:
@@ -160,6 +171,15 @@ make run</code></pre>
 {"event":"config_error","ts":1.0,"path":"~/.grinch.js","message":"SyntaxError"}
 {"event":"runtime_js_error","ts":2.0,"path":"~/.grinch.js","message":"TypeError"}
 </code></pre>
+  <p><code>launch_error</code> records invalid URLs, missing browsers, and native launch
+    failures even when request logging is disabled. It includes <code>url</code>,
+    <code>browser</code>, <code>strategy</code>, and <code>message</code>; native errors
+    also include <code>errorDomain</code> and <code>errorCode</code>. These events share
+    the same log and rotation settings across config reloads. A <code>resolve</code>
+    event records the routing decision; it does not confirm launch success.</p>
+  <p class="note">Logs can contain complete URLs, including authentication tokens and
+    personal data. Redact them before sharing. Report vulnerabilities privately using
+    the <a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">security policy</a>.</p>
   <p><code>console.log/warn/error/info/debug</code> remain on stderr and are not copied
     into the diagnostic log.</p>
   <p>Profile failures produce <code>profile_error</code> events with the browser,
@@ -207,20 +227,28 @@ open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</
 
   <p>A few benchmark data points from <code>bench/run.sh</code>. Worth knowing that real-world click-to-browser latency is dominated by macOS plumbing (Apple Event dispatch + <code>NSWorkspace.openApplicationAtURL</code>, both in the few-millisecond range), so engine-only numbers don't translate 1:1 into a faster-feeling click — but they're a useful window into what the engine is doing on its own.</p>
 
-  <p>Apple Silicon, macOS 26, release build, median of 10 runs at 100k–200k iterations per workload. Configs and URLs in <code>bench/configs/</code>.</p>
+  <p>The September 30, 2026 review used an Apple M4 Max, macOS 27.0, Rust 1.96.0,
+    and release builds. Values below are medians of ten runs. Measurements exclude
+    browser launches, Apple Event delivery, and cold starts. See the
+    <a href="https://github.com/jamtur01/grinch/blob/main/bench/README.md">benchmark report</a>
+    for configs, iteration counts, comparisons, and limitations.</p>
+  <p>Native ingress for a URL-only dynamic default fell from 91.60 to 1.62 µs per URL
+    by skipping unused opener and modifier lookups. A declarative <code>from()</code>
+    rule fell from 85.14 to 60.07 µs by fetching only the sender's bundle ID.
+    These are ingress measurements, not end-to-end browser launch times.</p>
 
   <h3>Hot path (declarative-only configs)</h3>
   <table>
     <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
     <tbody>
-      <tr><td>Floor: empty rules, no rewrite</td><td>6</td></tr>
-      <tr><td>Default fallback, no query</td><td>69</td></tr>
-      <tr><td>Default fallback, strip removes a param</td><td>194</td></tr>
-      <tr><td>Bare-hostname match (<code>"github.com"</code>)</td><td>44</td></tr>
-      <tr><td><code>domain()</code> match</td><td>50</td></tr>
-      <tr><td>Regex match</td><td>24</td></tr>
-      <tr><td>Wildcard match (<code>"zoom.us/j/*"</code>)</td><td>32</td></tr>
-      <tr><td>50 bare-hostname rules, last one wins</td><td>302</td></tr>
+      <tr><td>Floor: empty rules, no rewrite</td><td>6.6</td></tr>
+      <tr><td>Default fallback, no query</td><td>64.2</td></tr>
+      <tr><td>Default fallback, strip removes a param</td><td>179.5</td></tr>
+      <tr><td>Bare-hostname match (<code>"github.com"</code>)</td><td>39.6</td></tr>
+      <tr><td><code>domain()</code> match</td><td>46.1</td></tr>
+      <tr><td>Regex match</td><td>23.1</td></tr>
+      <tr><td>Wildcard match (<code>"zoom.us/j/*"</code>)</td><td>31.6</td></tr>
+      <tr><td>50 bare-hostname rules, last one wins</td><td>268.1</td></tr>
     </tbody>
   </table>
 
@@ -228,16 +256,23 @@ open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</
   <table>
     <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
     <tbody>
-      <tr><td>Native rule wins early (no fn fires)</td><td>44</td></tr>
-      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,400</td></tr>
-      <tr><td>HTTP→HTTPS via URL mutation</td><td>3,725</td></tr>
-      <tr><td><code>?browser=</code> dynamic open fn</td><td>4,640</td></tr>
-      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>4,745</td></tr>
-      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>5,750</td></tr>
+      <tr><td>Native rule wins early (no fn fires)</td><td>40.1</td></tr>
+      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,422.9</td></tr>
+      <tr><td>HTTP→HTTPS via URL mutation</td><td>3,955.6</td></tr>
+      <tr><td><code>?browser=</code> dynamic open fn</td><td>4,539.8</td></tr>
+      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>5,454</td></tr>
+      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>5,839.3</td></tr>
     </tbody>
   </table>
 
+  <p>The four-function batch increased from 5.277 to 5.454 µs while fixing callback
+    arity and receiver handling. A separate logging comparison measured 8.32 → 8.28 µs
+    per resolve with JSONL writes enabled; no slowdown was detected from sharing
+    the writer with launch callbacks. Both comparisons are in the benchmark report.</p>
+
   <h3>Footprint</h3>
+  <p>These are historical measurements, not a comparison of the latest releases.
+    Memory use varies with configuration and workload.</p>
   <table>
     <thead><tr><th></th><th>Grinch</th><th>Finch</th><th>Finicky</th></tr></thead>
     <tbody>
@@ -249,6 +284,20 @@ open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</
   </table>
 </section>
 
+<section id="support">
+  <h2>Support and security</h2>
+  <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest published
+    release</a> is supported for issues and security fixes. Upgrade and reproduce the
+    problem before filing a bug. Older releases do not receive backported fixes.</p>
+  <p>For bug reports and feature requests, follow the
+    <a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">contributor guide</a>.
+    Report suspected vulnerabilities through
+    <a href="https://github.com/jamtur01/grinch/security/advisories/new">private reporting</a>,
+    not a public issue. See the
+    <a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">security policy</a>
+    for what to include and how to redact diagnostics.</p>
+</section>
+
 <section id="links">
   <h2>More</h2>
   <ul>
@@ -257,6 +306,7 @@ open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</
     <li><a href="https://github.com/jamtur01/grinch/releases">Releases &amp; changelog</a></li>
     <li><a href="https://github.com/jamtur01/grinch/issues">Issues</a></li>
     <li><a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">Contributing</a></li>
+    <li><a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">Security policy</a></li>
   </ul>
 </section>
 

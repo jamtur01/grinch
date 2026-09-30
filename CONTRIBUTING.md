@@ -8,14 +8,24 @@ By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Reporting bugs and asking for features
 
+Only the [latest published release](https://github.com/jamtur01/grinch/releases/latest)
+is supported for issues and security fixes. Upgrade and reproduce the problem
+before filing a bug. Older releases do not receive backported fixes.
+
+Report suspected vulnerabilities privately using [SECURITY.md](SECURITY.md),
+not a public issue or pull request. Redact credentials, sign-in links, personal
+data, and local paths from configs and diagnostic logs before sharing them.
+
 Use the issue templates under [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE):
 
 - [Bug report](.github/ISSUE_TEMPLATE/bug_report.md) — for things that
-  don't work the way they're documented. Please include the URL Grinch
-  was given, the rule you expected to fire, and the output of `Grinch
-  --test "<that-url>"` so we can see how the engine actually resolved
-  it. If routing depends on opener / modifiers, also run with
-  `GRINCH_DEBUG=1` and paste the resolve trace.
+  don't work the way they're documented. Include your Grinch and macOS
+  versions, browser/version, a minimal config, a sanitized example URL,
+  and the rule you expected to fire. Attach relevant events from **Open
+  Diagnostic Log**; enable `options.logRequests` to include routing decisions.
+  `launch_error` records launch failures even when request logging is off.
+  `Grinch --test "<example-url>"` helps check routing without launching a browser;
+  include the originating app and modifier keys when they affect the result.
 - [Feature request](.github/ISSUE_TEMPLATE/feature_request.md) — for
   new behaviours. Please describe the routing problem you're trying to
   solve before sketching the API; sometimes there's already a way.
@@ -29,8 +39,21 @@ first — every supported syntax form has at least one example there.
 
 - macOS (Apple Silicon or Intel; CI builds a universal binary)
 - Xcode command-line tools (`xcode-select --install`)
-- Rust stable via `rustup` (Cargo's `rust-toolchain` defaults will pick
-  this up)
+- Rust stable via `rustup`, with the `clippy` and `rustfmt` components
+
+Use rustup's tools consistently, including Cargo subcommands:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+rustup update stable
+rustup component add clippy rustfmt --toolchain stable
+rustc +stable --version
+cargo +stable clippy --version
+```
+
+Keep that PATH order for builds and checks. A Homebrew `rustc` or
+`cargo-clippy` earlier on PATH can run a different version even when Cargo
+was selected with `rustup run`. CI uses stable Rust with rustup first on PATH.
 
 The release toolchain (signing, notarisation, DMG packaging) is only
 needed if you're cutting an actual release — day-to-day development
@@ -60,8 +83,7 @@ make build                      # same plus assembles Grinch.app
 make build UNIVERSAL=1          # universal arm64+x86_64, for releases
 ```
 
-There are two CLI modes that bypass the menu-bar app, useful while
-iterating:
+CLI modes bypass the menu-bar app and are useful while iterating:
 
 ```sh
 ./target/release/Grinch --test "https://github.com/jamtur01/grinch"
@@ -95,6 +117,11 @@ New tests should target real bugs or real behaviour, not implementation
 details. The bar is "would removing this test let a real bug ship?".
 Look at `src/engine.rs::tests` and `src/chromium.rs::tests` for the
 existing style.
+
+Use `isolated_diagnostics()` for test diagnostics. Tests of default log paths
+must use a private temporary HOME; no test should write to a real user's
+`~/Library/Logs/Grinch`. Background launch-error tests must share the same
+writer and rotation state as the main-thread diagnostics.
 
 ### Supply-chain policy
 
@@ -189,13 +216,12 @@ worth knowing:
    about — see `warn_if_fn_might_read_ctx` in `src/engine.rs`. If you
    change this contract, update the docstring on `UserFn` and the
    warning message together.
-2. **Three runtime-needs flags compute at config load**: `needs_opener`,
-   `needs_modifiers`, `needs_host`. They drive whether AppDelegate runs
-   `frontmost_opener()` / `current_modifier_flags()` per click and
-   whether `resolve()` calls `quick_host`. If you add a matcher kind
-   that reads any of these, update `analyse_runtime_needs` accordingly
-   — getting it wrong is the kind of bug that's silent (a `from()`
-   matcher that always fails because the opener is `Opener::default()`).
+2. **Runtime needs are computed at config load**: `needs_opener`,
+   `needs_opener_full`, `needs_modifiers`, and `needs_host`. URL-only callbacks,
+   including dynamic defaults, skip unused native context. Declarative `from()`
+   matchers need only the sender's bundle ID; callbacks with `ctx` need full
+   opener data. If you add a matcher that reads context, update
+   `analyse_runtime_needs` and the ingress tests so required lookups aren't skipped.
 
 ## Releasing (maintainer notes)
 
@@ -203,11 +229,21 @@ These are the steps to cut a release; they don't affect contributors
 but they live here for the maintainer's reference.
 
 1. Bump `version` in `Cargo.toml`. Run `cargo build --release` so the
-   lockfile picks it up.
-2. Commit + push to `main`. Wait for CI to go green.
+   lockfile picks it up. Update release references and behavior summaries in
+   `README.md` and `docs/index.html`; keep support wording linked to the latest
+   release rather than maintaining a list of old supported versions.
+2. Commit + push to `main`. Wait for CI and CodeQL to go green for that commit.
 3. `git tag -s -a vX.Y.Z -m "vX.Y.Z"` and `git push origin vX.Y.Z`.
 4. The release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml))
    builds a universal `Grinch.app`, verifies its bundle version matches the
    tag, signs and notarises it, packages the DMG, generates release notes from
    `git log` between this tag and the previous `v*` tag, and uploads everything
    to the GitHub release.
+5. Confirm the workflow succeeded, download the published DMG and `.sha256`,
+   and check the checksum and notarization ticket:
+
+   ```sh
+   shasum -a 256 -c Grinch-vX.Y.Z.dmg.sha256
+   xcrun stapler validate Grinch-vX.Y.Z.dmg
+   spctl --assess --type install --verbose Grinch-vX.Y.Z.dmg
+   ```

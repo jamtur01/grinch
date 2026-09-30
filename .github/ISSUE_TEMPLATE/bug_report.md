@@ -1,38 +1,42 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Report a problem with the latest Grinch release
 title: ''
 labels: ''
 assignees: ''
 
 ---
 
+Only the [latest published release](https://github.com/jamtur01/grinch/releases/latest)
+is supported. Upgrade and reproduce the problem before filing; older releases
+do not receive backported fixes.
+
+For suspected vulnerabilities, use
+[private reporting](https://github.com/jamtur01/grinch/security/advisories/new)
+instead. See the [security policy](https://github.com/jamtur01/grinch/blob/main/SECURITY.md).
+
+- [ ] I reproduced this with the latest published Grinch release.
+
+**Environment**
+
+- Grinch version (menu bar or `Grinch --version`):
+- macOS version and Apple Silicon/Intel:
+- Destination browser and version:
+- Originating app, if relevant:
+
 **Describe the bug**
-A clear and concise description of what the bug is.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+What happened, and what did you expect?
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+**Reproduction**
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+Include steps, a minimal config, and a sanitized example URL. Mention profile
+selection or modifier keys if they affect routing.
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+**Diagnostics**
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+Include relevant events from **Open Diagnostic Log** and, where useful,
+`Grinch --test "<example-url>"` output. Enable `options.logRequests` for routing
+decisions; launch failures are logged even when that option is off.
 
-**Additional context**
-Add any other context about the problem here.
+Remove credentials, sign-in links, personal data, and local paths before posting.

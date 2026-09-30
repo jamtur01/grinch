@@ -17,11 +17,15 @@ for the rest.) Inspired by both [Finicky](https://github.com/johnste/finicky)
 and [Finch](https://github.com/expelledboy/finch).
 
 - Pure Rust core + a small embedded JS prelude
-- **~16 MB** resident memory, **~1.5 MB** universal binary
 - Native `JavaScriptCore` for config eval — no Electron, no bundler, no transpiler
 - Single DMG, universal binary (Apple Silicon + Intel)
 - Config is real JavaScript — simple cases look like data, full power available
-- Hot-path resolve in nanoseconds; full click-to-browser pipeline in single-digit milliseconds
+- Declarative routing in nanoseconds; JavaScript callbacks in microseconds
+
+[v0.8.7](https://github.com/jamtur01/grinch/releases/tag/v0.8.7) adds launch-failure
+diagnostics and fixes URL validation, rewrites, browser-path selection, and auth
+callbacks on older macOS versions. It also reduces native opener lookup work;
+see the [measured results](#performance).
 
 ## Install
 
@@ -66,7 +70,8 @@ The cask is maintained outside the Grinch project.
 
 ### From source
 
-Requires a recent Rust toolchain.
+Requires Rust stable via rustup. Put `~/.cargo/bin` first on `PATH`; see
+[the contributor prerequisites](CONTRIBUTING.md#prerequisites) to verify the tools.
 
 ```sh
 git clone https://github.com/jamtur01/grinch
@@ -201,6 +206,10 @@ macOS after a launch request. It includes `url`, `browser`, `strategy`, and
 `message`; native errors also include `errorDomain` and `errorCode`. These
 events share the app's log and rotation settings, including after config reloads.
 A `resolve` event records the routing decision; it does not confirm launch success.
+
+Logs can contain complete URLs, including authentication tokens and personal data.
+Redact them before sharing; report suspected vulnerabilities through the
+[security policy](SECURITY.md).
 
 `console.log/warn/error/info/debug` remain on stderr with their existing
 `grinch [level]:` prefix; they are not copied into the diagnostic log.
@@ -729,11 +738,16 @@ the few-millisecond range), so engine-only numbers don't translate
 1:1 into a faster-feeling click — but they're a useful window into
 what the engine is doing on its own.
 
-Apple Silicon, macOS 26, release build, median of 10 runs at 100k–200k
-iterations per workload. Configs and URLs in `bench/configs/`.
+The September 30, 2026 review used an Apple M4 Max, macOS 27.0, Rust 1.96.0,
+and release builds. Values below are medians of ten runs; configs, iteration
+counts, comparisons, and limitations are in the
+[benchmark report](bench/README.md#macos-27-review-measurements-2026-09-30).
+These measurements exclude browser launches, Apple Event delivery, and cold starts.
 
-For the macOS 27 comparison, including native opener lookup costs, see the
-[dated benchmark results](bench/README.md#macos-27-review-measurements-2026-09-30).
+Measured native ingress for a URL-only dynamic default fell from 91.60 to
+1.62 µs per URL by skipping unused opener and modifier lookups. A declarative
+`from()` rule fell from 85.14 to 60.07 µs by fetching only the sender's bundle ID.
+These are ingress measurements, not end-to-end browser launch times.
 
 ### Hot path (declarative-only configs)
 
@@ -745,14 +759,14 @@ when it's already lowercase ASCII.
 
 | Workload | ns/op |
 |---|---:|
-| Floor: empty rules, no rewrite | 6 |
-| Default fallback, no query | 69 |
-| Default fallback, strip removes a param | 194 |
-| Bare-hostname match (`"github.com"`) | 44 |
-| `domain()` match | 50 |
-| Regex match | 24 |
-| Wildcard match (`"zoom.us/j/*"`) | 32 |
-| 50 bare-hostname rules, last one wins | 302 |
+| Floor: empty rules, no rewrite | 6.6 |
+| Default fallback, no query | 64.2 |
+| Default fallback, strip removes a param | 179.5 |
+| Bare-hostname match (`"github.com"`) | 39.6 |
+| `domain()` match | 46.1 |
+| Regex match | 23.1 |
+| Wildcard match (`"zoom.us/j/*"`) | 31.6 |
+| 50 bare-hostname rules, last one wins | 268.1 |
 
 ### Slow path (configs with `(url, ctx) => …` fn matchers)
 
@@ -779,14 +793,23 @@ exercises that path.
 
 | Workload | ns/op |
 |---|---:|
-| Native rule wins early (no fn fires) | 44 |
-| Drop URL via `() => null` (url-only) | 2,400 |
-| HTTP→HTTPS via URL mutation (url-only) | 3,725 |
-| `?browser=` dynamic open fn (url-only matcher) | 4,640 |
-| 4 fn matchers reading `ctx.opener` | 4,745 |
-| Full Slack-web → `slack://` rewrite | 5,750 |
+| Native rule wins early (no fn fires) | 40.1 |
+| Drop URL via `() => null` (url-only) | 2,422.9 |
+| HTTP→HTTPS via URL mutation (url-only) | 3,955.6 |
+| `?browser=` dynamic open fn (url-only matcher) | 4,539.8 |
+| 4 fn matchers reading `ctx.opener` | 5,454 |
+| Full Slack-web → `slack://` rewrite | 5,839.3 |
+
+The four-function batch increased from 5.277 to 5.454 µs while fixing callback
+arity and receiver handling. A separate
+[logging comparison](bench/README.md#launch-diagnostic-logging-measurements-2026-09-30)
+measured 8.32 → 8.28 µs per resolve with JSONL writes enabled; no slowdown was
+detected from sharing the writer with launch callbacks.
 
 ### Footprint
+
+These are historical measurements, not a comparison of the latest releases.
+Memory use varies with configuration and workload.
 
 | | Grinch | Finch | Finicky |
 |---|---:|---:|---:|
@@ -887,6 +910,15 @@ to adjust:
 Everything else — `domain`, `from`, `running`, `strip`, the `URL` polyfill,
 arrays of matchers, `null` open, combined `{match, url, browser}` entries,
 the `LegacyURLObject` rewrite return shape — is supported.
+
+## Support and security
+
+Only the [latest published release](https://github.com/jamtur01/grinch/releases/latest)
+is supported for issues and security fixes. Upgrade and reproduce the problem
+before filing a bug; older releases do not receive backported fixes.
+
+For bug reports and feature requests, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Report vulnerabilities privately using [SECURITY.md](SECURITY.md), not a public issue.
 
 ## License
 

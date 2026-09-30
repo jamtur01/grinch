@@ -49,6 +49,22 @@ reloads, GURL and `application:openURLs:` delivery, menu state, opener capture,
 and dispatch into the workspace layer. Failed reloads leave the previous engine
 active.
 
+### Diagnostic logging
+
+Read the diagnostic-log section of `README.md`, `src/engine/logging.rs`, and
+the launch completion handler in `src/workspace.rs`. Error events are enabled
+independently of `logRequests`; `resolve` records a decision, not launch success.
+Background callbacks share the app's rotating writer without carrying UI state.
+Tests must use isolated temporary diagnostics, never the user's real log directory.
+
+### Support, security, or public documentation
+
+Read `CONTRIBUTING.md` and `SECURITY.md`. Only the latest published release is
+supported for issues and security fixes; do not promise backports. Direct
+vulnerabilities to private GitHub reports and redact sensitive logs and URLs.
+Keep `README.md` and `docs/index.html` aligned with released behavior and link
+performance claims to the dated measurements in `bench/README.md`.
+
 ### SSO, OAuth, or bundle registration
 
 Read `README.md` section **SSO / OAuth popups**, `src/session_handler.rs`, and
@@ -70,6 +86,7 @@ Read `CONTRIBUTING.md` section **Releasing**, `Makefile`,
 the version source of truth. The release workflow rejects tag or built-bundle
 version mismatches before it signs, notarizes, packages, and publishes the
 universal app.
+Check release references in `README.md` and `docs/index.html` when publishing.
 
 ## Source map
 
@@ -91,6 +108,7 @@ universal app.
 - `docs/`: static project site.
 - `brand/`: app, menu-bar, README, and social identity sources.
 - `deny.toml`: dependency advisory, license, ban, and source policy.
+- `SECURITY.md`: supported versions and private vulnerability reporting.
 
 ## External state
 
@@ -107,6 +125,10 @@ verification that must not change registration precedence, override
 `LSREGISTER=/usr/bin/true`.
 
 ## Verification
+
+Put `~/.cargo/bin` first on `PATH` and verify `rustc --version` and
+`cargo clippy --version` match the intended rustup toolchain. A Homebrew
+`cargo-clippy` earlier on `PATH` can bypass the selected toolchain.
 
 Run the checks relevant to the change, with this as the standard Rust path:
 

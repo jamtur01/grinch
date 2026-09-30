@@ -67,6 +67,7 @@ performance claims to the workloads and results in `bench/README.md`. Document
 behavior and reproducible measurements, not review narratives or session history.
 Documentation must stand on its own for readers outside the project. Include a
 reference only when it helps them understand, verify, or reproduce the claim.
+Keep release history in release notes; public documentation describes current behavior.
 
 ### SSO, OAuth, or bundle registration
 

@@ -229,9 +229,9 @@ These are the steps to cut a release; they don't affect contributors
 but they live here for the maintainer's reference.
 
 1. Bump `version` in `Cargo.toml`. Run `cargo build --release` so the
-   lockfile picks it up. Update release references and behavior summaries in
-   `README.md` and `docs/index.html`; keep support wording linked to the latest
-   release rather than maintaining a list of old supported versions.
+   lockfile picks it up. Update `README.md` and `docs/index.html` to describe
+   shipped behavior. Keep change summaries in release notes and support wording
+   linked to the latest release.
 2. Commit + push to `main`. Wait for CI and CodeQL to go green for that commit.
 3. `git tag -s -a vX.Y.Z -m "vX.Y.Z"` and `git push origin vX.Y.Z`.
 4. The release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml))

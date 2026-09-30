@@ -22,11 +22,6 @@ and [Finch](https://github.com/expelledboy/finch).
 - Config is real JavaScript — simple cases look like data, full power available
 - Declarative routing in nanoseconds; JavaScript callbacks in microseconds
 
-[v0.8.7](https://github.com/jamtur01/grinch/releases/tag/v0.8.7) adds launch-failure
-diagnostics and fixes URL validation, rewrites, browser-path selection, and auth
-callbacks on older macOS versions. It also reduces native opener lookup work;
-see the [measured results](#performance).
-
 ## Install
 
 Requires macOS 13 or later. The release build is a universal binary
@@ -512,11 +507,8 @@ Click the Grinch eyes in the menu bar:
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
 | **Quit Grinch** (⌘Q) | Exit. |
 
-At launch Grinch terminates any other running instances with the same
-bundle identifier before installing its menu bar item, so stale
-LaunchServices registrations (after an app move, dev build vs installed
-build with the same ID, or enterprise-auth agents spawning a helper)
-can't pile up 16 menu bar icons over time. Mirrors Finicky #515.
+At launch, Grinch terminates other running instances with the same bundle
+identifier before installing its menu bar item, preventing duplicate instances.
 
 If a reload fails (syntax error, unreadable file, missing `default`),
 the menu bar icon flips to **⚠️** and a non-clickable "Config error:
@@ -528,15 +520,9 @@ diagnostic log.
 
 ## SSO / OAuth popups
 
-Apps that use `ASWebAuthenticationSession` for sign-in (Slack login,
-Claude Desktop login, many corporate OAuth flows, password-manager
-extensions) don't go through the regular `http://` default-browser
-handoff. macOS routes them to a separate "trusted browser" via
-`ASWebAuthenticationSessionWebBrowserSessionManager` and falls back
-to Safari for any app that doesn't declare
-`ASWebAuthenticationSessionWebBrowserSupportCapabilities` in its
-Info.plist — which is what was happening before Grinch v0.5
-[(Finicky has the same bug)](https://github.com/johnste/finicky/issues/405).
+Apps that use `ASWebAuthenticationSession` for sign-in send their URLs through
+AuthenticationServices rather than ordinary URL delivery. Grinch routes these
+requests using the same browser rules as other links.
 
 Grinch declares the capability and registers a session handler that
 forwards the auth URL through the same `engine.resolve()` machinery
@@ -862,7 +848,7 @@ to adjust:
    - `finicky.getModifierKeys()` — real values from CG event flags
      (shift/option/command/control/capsLock/fn/function).
    - `finicky.isAppRunning(id)` — matches against bundle ID OR localized name.
-   - `finicky.getRunningBrowsers()` — Grinch addition (closes Finicky issue #145).
+   - `finicky.getRunningBrowsers()` — Grinch-specific helper.
      Returns an array of currently-running known-browser bundle IDs in family-
      table order. Use with `Array.prototype.find` for first-running-of-preference
      routing: `prefs.find(b => running.includes(b)) || "com.apple.Safari"`.

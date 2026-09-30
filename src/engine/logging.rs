@@ -19,7 +19,8 @@ pub struct OptionsConfig {
     pub log_requests: bool,
     /// Rotate the diagnostic log when it grows past this many bytes.
     /// `None` (the default) disables size-based rotation. Rotation
-    /// renames the current file to `<path>.<iso-timestamp>` and starts
+    /// renames the current file to `<path>.<iso-timestamp>` (with a numeric
+    /// suffix if that name already exists) and starts
     /// a fresh empty file, so older entries are preserved on disk for
     /// post-mortem until the user prunes them.
     pub log_rotate_bytes: Option<u64>,
@@ -151,7 +152,8 @@ impl DiagnosticLog {
 ///
 /// Rotation: when either `rotate_bytes` or `rotate_days` is set and the
 /// corresponding threshold is exceeded, the current file is renamed to
-/// `<path>.<iso-timestamp>` and a fresh file is opened on the next write.
+/// `<path>.<iso-timestamp>` (with a numeric suffix for collisions), and a
+/// fresh file is opened on the next write.
 /// `bytes_written` is tracked in-process (initialised from the existing
 /// file's size on open) so rotation decisions don't stat() per write.
 pub(crate) struct LogWriter {
@@ -266,19 +268,16 @@ impl LogWriter {
         // Drop the file handle so the rename can complete on platforms
         // that hold it locked (not macOS, but cheap to do everywhere).
         self.file = None;
-        let stamp = iso_timestamp_for_filename();
-        let rotated = self.path.with_extension(format!("log.{stamp}"));
-        if let Err(e) = std::fs::rename(&self.path, &rotated) {
+        if let Err(e) = rename_rotated_log(&self.path, &iso_timestamp_for_filename()) {
             // Rename can fail under very-unusual conditions (the source
             // disappeared because someone deleted it externally, or
-            // permissions changed). Log once and carry on — the next
+            // permissions changed). Report it and carry on — the next
             // write will lazily re-open the path; in the worst case we
             // keep appending to a file that has grown past the cap,
             // which is still better than dropping log lines.
             eprintln!(
-                "grinch: log rotation rename {} → {} failed: {e}",
-                self.path.display(),
-                rotated.display()
+                "grinch: log rotation rename {} failed: {e}",
+                self.path.display()
             );
         }
         self.bytes_written = 0;
@@ -295,6 +294,34 @@ impl LogWriter {
             .open(path)?;
         let size = f.metadata().map(|m| m.len()).unwrap_or(0);
         Ok((f, size))
+    }
+}
+
+fn rename_rotated_log(path: &std::path::Path, stamp: &str) -> std::io::Result<()> {
+    use std::ffi::CString;
+
+    let source = CString::new(path.as_os_str().as_encoded_bytes())?;
+    // ponytail: scan same-second collisions; retain a sequence if rapid rotation becomes common.
+    let mut suffix = 0_u64;
+    loop {
+        let extension = if suffix == 0 {
+            format!("log.{stamp}")
+        } else {
+            format!("log.{stamp}.{suffix}")
+        };
+        let destination = path.with_extension(extension);
+        let destination = CString::new(destination.as_os_str().as_encoded_bytes())?;
+        // RENAME_EXCL refuses existing destinations atomically, including across restarts.
+        if unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) }
+            == 0
+        {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(error);
+        }
+        suffix += 1;
     }
 }
 
@@ -466,4 +493,50 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::logging::rename_rotated_log;
+
+    #[test]
+    fn rotation_preserves_existing_logs_and_reports_errors() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("grinch-log-collisions-{nanos}"));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("active.log");
+        let stamp = "2026-09-30T12-00-00";
+        let previous = path.with_extension(format!("log.{stamp}"));
+        let link = path.with_extension(format!("log.{stamp}.1"));
+        std::fs::write(&previous, "previous session\n").unwrap();
+        std::os::unix::fs::symlink(&previous, &link).unwrap();
+
+        for number in 2..22 {
+            let line = format!("record-{number}\n");
+            std::fs::write(&path, &line).unwrap();
+            rename_rotated_log(&path, stamp).unwrap();
+            let rotated = path.with_extension(format!("log.{stamp}.{number}"));
+            assert_eq!(std::fs::read_to_string(rotated).unwrap(), line);
+            assert!(!path.exists());
+        }
+        assert_eq!(
+            std::fs::read_to_string(&previous).unwrap(),
+            "previous session\n"
+        );
+        assert_eq!(std::fs::read_link(&link).unwrap(), previous);
+        assert_eq!(
+            rename_rotated_log(&path, stamp).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            rename_rotated_log(std::path::Path::new("bad\0path"), stamp)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

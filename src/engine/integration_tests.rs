@@ -622,6 +622,11 @@ fn log_rotates_on_size_threshold() {
         has_rotated,
         "expected a .log.<timestamp> rotated file in: {entries:?}"
     );
+    let mut lines = 0;
+    for path in entries {
+        lines += std::fs::read_to_string(path).unwrap().lines().count();
+    }
+    assert_eq!(lines, 5, "rotation must preserve every resolve event");
     let _ = std::fs::remove_dir_all(&tmp);
 }
 

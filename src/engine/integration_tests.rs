@@ -2499,6 +2499,71 @@ fn parse_browser_jsval_apptype_none_suppresses() {
 }
 
 #[test]
+fn browser_spec_paths_keep_the_selected_bundle_copy() {
+    let tmp = unique_tmp("browser-path");
+    for name in ["First copy #%.app", "Second copy.app"] {
+        let path = tmp.join(name);
+        std::fs::create_dir_all(path.join("Contents/MacOS")).unwrap();
+        std::fs::copy("/usr/bin/true", path.join("Contents/MacOS/Browser")).unwrap();
+        std::fs::write(
+            path.join("Contents/Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
+                <key>CFBundleIdentifier</key><string>com.google.Chrome</string>
+                <key>CFBundleExecutable</key><string>Browser</string>
+                <key>CFBundlePackageType</key><string>APPL</string>
+                </dict></plist>"#,
+        )
+        .unwrap();
+        let quoted = serde_json::to_string(path.to_str().unwrap()).unwrap();
+        for expression in [
+            quoted.clone(),
+            format!("{{ name: {quoted}, appType: 'path' }}"),
+            format!("{{ name: {quoted} }}"),
+            format!("() => {quoted}"),
+            format!("() => ({{ name: {quoted}, appType: 'path' }})"),
+            format!("{{ name: {quoted}, appType: 'path', profile: 'Default', incognito: true }}"),
+        ] {
+            let e = build_engine(&format!("module.exports = {{ default: {expression} }};"));
+            let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+            assert_eq!(
+                result.browser.bundle_id, "com.google.Chrome",
+                "{expression}"
+            );
+            let app_url = crate::workspace::browser_app_url(&result.browser)
+                .expect("explicit app path must not require LaunchServices registration");
+            assert_eq!(
+                app_url.path().unwrap().to_string(),
+                path.to_str().unwrap(),
+                "{expression}"
+            );
+            if expression.contains("incognito") {
+                assert!(result.browser.args.iter().any(|a| a == "--incognito"));
+                assert!(
+                    result
+                        .browser
+                        .args
+                        .iter()
+                        .any(|a| a == "--profile-directory=Default")
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(tmp).unwrap();
+}
+
+#[test]
+fn browser_spec_missing_path_suppresses_launch() {
+    let path = unique_tmp("missing-browser").join("Missing.app");
+    let quoted = serde_json::to_string(path.to_str().unwrap()).unwrap();
+    let e = build_engine(&format!("module.exports = {{ default: {quoted} }};"));
+    let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+    assert_eq!(
+        LaunchPlan::from_spec(&result.browser, &result.url),
+        LaunchPlan::Suppress
+    );
+}
+
+#[test]
 fn browser_spec_string_path_autodetects_via_nsbundle() {
     // Finicky-compat: a bare-string browser spec that looks like an
     // .app path (ends with .app + contains /) goes through NSBundle
@@ -2516,8 +2581,19 @@ fn browser_spec_string_path_with_tilde_expands_home() {
     // then refer to ~/Safari.app — should resolve to the same bundle
     // ID as /Applications/Safari.app does in the test above.
     with_home(std::path::Path::new("/Applications"), || {
-        let e = build_engine(r#"module.exports = { default: "~/Safari.app" };"#);
-        assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+        for expression in [
+            "'~/Safari.app'",
+            "{ name: '~/Safari.app', appType: 'path' }",
+            "() => '~/Safari.app'",
+        ] {
+            let e = build_engine(&format!("module.exports = {{ default: {expression} }};"));
+            let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+            assert_eq!(result.browser.bundle_id, "com.apple.Safari");
+            assert_eq!(
+                result.browser.app_path.as_deref(),
+                Some("/Applications/Safari.app")
+            );
+        }
     });
 }
 

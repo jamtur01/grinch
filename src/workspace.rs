@@ -744,13 +744,6 @@ fn resolve_browser_identifier_uncached(name: &str) -> String {
     name.to_string()
 }
 
-/// Resolve a filesystem path to an `.app` bundle ID. Used by browser specs
-/// that declare `appType: "path"` (e.g. `name: "/Applications/MyBrowser.app"`)
-/// — useful for browsers that aren't installed in `/Applications` or aren't
-/// registered with LaunchServices yet. Returns the input unchanged if the
-/// bundle can't be opened or has no `CFBundleIdentifier`, so the eventual
-/// open call gets something to work with (probably failing visibly rather
-/// than silently).
 /// Read NSHost's user-friendly + canonical machine identity.
 /// Returns `(localized_name, name)` — equivalent to
 /// `[[NSHost currentHost] localizedName]` and `[currentHost name]`.
@@ -783,16 +776,25 @@ pub fn host_info() -> (String, String) {
     }
 }
 
-pub fn resolve_browser_path(path: &str) -> String {
+/// Read an explicit app bundle's ID for browser-family metadata. Keep the
+/// path in BrowserSpec so launching does not substitute another installed copy.
+pub fn resolve_browser_path(path: &str) -> Option<String> {
     let path_ns = NSString::from_str(path);
     let url = NSURL::fileURLWithPath(&path_ns);
     if let Some(bundle) = NSBundle::bundleWithURL(&url)
         && let Some(id) = bundle.bundleIdentifier()
     {
-        return id.to_string();
+        return Some(id.to_string());
     }
     eprintln!("grinch: couldn't load bundle at path {path}");
-    path.to_string()
+    None
+}
+
+pub(crate) fn browser_app_url(spec: &BrowserSpec) -> Option<Retained<NSURL>> {
+    if let Some(path) = &spec.app_path {
+        return Some(NSURL::fileURLWithPath(&NSString::from_str(path)));
+    }
+    resolved_app_url(&spec.bundle_id)
 }
 
 /// Open `url` in the given browser app. If the bundle ID is empty (suppress),
@@ -820,7 +822,7 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
         return;
     };
 
-    let Some(app_url) = resolved_app_url(&spec.bundle_id) else {
+    let Some(app_url) = browser_app_url(spec) else {
         // Suppress instead of falling back to NSWorkspace.openURL with no
         // app: when Grinch is the system default browser (the expected
         // setup), that call dispatches the URL right back to Grinch via

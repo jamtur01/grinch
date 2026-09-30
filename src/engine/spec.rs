@@ -109,8 +109,7 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
         // behaviour. Checked before the Name:Profile shorthand because
         // a path can't reasonably carry a profile suffix.
         if looks_like_app_path(&s) {
-            let bundle_id = crate::workspace::resolve_browser_path(&expand_tilde(&s));
-            return BrowserSpec::from_bundle_id(bundle_id);
+            return BrowserSpec::from_app_path(expand_tilde(&s));
         }
         // Finicky's "Name:Profile" shorthand: a colon separates the app
         // name (or bundle ID) from a profile name. Bundle IDs use `.` not
@@ -130,6 +129,7 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
                 if let Some(args) = args {
                     return BrowserSpec {
                         bundle_id,
+                        app_path: None,
                         args,
                         open_in_background: false,
                         creates_new_instance: true,
@@ -172,15 +172,17 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
         .and_then(|x| js_to_string(&x))
         .unwrap_or_default();
     let app_type = key(v, "appType").and_then(|x| js_to_string(&x));
-    let bundle_id = match app_type.as_deref() {
-        Some("path") => crate::workspace::resolve_browser_path(&raw_id),
-        Some("bundleId") => raw_id.clone(),
+    let spec = match app_type.as_deref() {
+        Some("path") => BrowserSpec::from_app_path(expand_tilde(&raw_id)),
+        None if looks_like_app_path(&raw_id) => BrowserSpec::from_app_path(expand_tilde(&raw_id)),
+        Some("bundleId") => BrowserSpec::from_bundle_id(raw_id.clone()),
         // "appName" goes through the same code path as autodetect — both end
         // up at fullPathForApplication. The explicit appType lets the user
         // skip the bundle-ID fast path when the name happens to look like
         // one (rare but possible).
-        _ => resolve_browser_identifier(&raw_id),
+        _ => BrowserSpec::from_bundle_id(resolve_browser_identifier(&raw_id)),
     };
+    let bundle_id = &spec.bundle_id;
 
     let mut args = key(v, "args")
         .map(|a| js_array_to_strings(&a))
@@ -194,7 +196,7 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
     // browser doesn't route the URL into its current window and ignore
     // the profile flag.
     if let Some(profile) = key(v, "profile").and_then(|p| js_to_string(&p)) {
-        let Ok(profile_args) = expand_profile_args(&bundle_id, &profile, diagnostics) else {
+        let Ok(profile_args) = expand_profile_args(bundle_id, &profile, diagnostics) else {
             return BrowserSpec::empty();
         };
         if let Some(profile_args) = profile_args {
@@ -215,7 +217,7 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
     if let Some(incognito) = key(v, "incognito").map(|b| unsafe { b.toBool() })
         && incognito
     {
-        if let Some(flag) = expand_flag_for_family(&bundle_id, FlagFamily::Incognito) {
+        if let Some(flag) = expand_flag_for_family(bundle_id, FlagFamily::Incognito) {
             args.push(flag.to_string());
             creates_new_instance = true;
         } else {
@@ -238,7 +240,7 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
     if let Some(new_window) = key(v, "openInNewWindow").map(|b| unsafe { b.toBool() })
         && new_window
     {
-        if let Some(flag) = expand_flag_for_family(&bundle_id, FlagFamily::NewWindow) {
+        if let Some(flag) = expand_flag_for_family(bundle_id, FlagFamily::NewWindow) {
             args.push(flag.to_string());
             creates_new_instance = true;
         } else {
@@ -255,10 +257,10 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
         .unwrap_or(false);
 
     BrowserSpec {
-        bundle_id,
         args,
         open_in_background,
         creates_new_instance,
+        ..spec
     }
 }
 
@@ -285,7 +287,7 @@ pub(crate) fn resolve_browser(
         if let Some(named) = browsers.get(&s) {
             return Some(Rc::clone(named));
         }
-        if apply_string_shorthand {
+        if apply_string_shorthand || looks_like_app_path(&s) {
             // `parse_browser_jsval`'s string branch handles bare-name +
             // "Name:Profile" shorthand.
             return Some(Rc::new(parse_browser_jsval(v, diagnostics)));

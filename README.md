@@ -230,7 +230,7 @@ A browser is one of:
 | `{ name: "...", incognito: true }` | Family-aware private-mode shorthand — `--incognito` (Chromium) or `--private-window` (Firefox). Forces a new instance so the flag is honoured. Safari is not supported (no CLI flag exists) and logs a warning |
 | `{ name: "...", openInNewWindow: true }` | Open as a new top-level window instead of a tab. Chromium and Firefox both honour `--new-window`. Safari has no equivalent CLI flag and logs a warning |
 | `{ name: "...", openInBackground: true }` | Don't activate (keep focus where it is) |
-| `{ name: "/Applications/Foo.app", appType: "path" }` | Path to an `.app` bundle — Grinch reads `CFBundleIdentifier` directly. Useful for browsers outside `/Applications` or not registered with LaunchServices |
+| `{ name: "/Applications/Foo.app", appType: "path" }` | Path to an `.app` bundle — Grinch opens that exact copy, even when another app has the same bundle ID. Supports `~/` and unregistered bundles |
 | `{ name: "...", appType: "bundleId" }` | Trust the value as a bundle ID, skip the LaunchServices display-name fallback |
 | `{ appType: "none" }` | Explicit no-op browser. Same effect as `open: null` |
 | `(url, ctx) => "..."` | Dynamic — return any of the above. Works for `defaultBrowser` too (Finicky-compatible): a fn default is invoked at resolve time when no rule matched |

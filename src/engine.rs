@@ -47,6 +47,8 @@ static CURRENT_OPENER_PID: AtomicI32 = AtomicI32::new(0);
 #[derive(Clone, Debug)]
 pub struct BrowserSpec {
     pub bundle_id: String,
+    /// An explicit bundle path takes precedence over LaunchServices ID lookup.
+    pub app_path: Option<String>,
     pub args: Vec<String>,
     pub open_in_background: bool,
     /// Force LaunchServices to spawn a new application instance instead of
@@ -66,9 +68,20 @@ impl BrowserSpec {
     fn from_bundle_id(bundle_id: String) -> Self {
         Self {
             bundle_id,
+            app_path: None,
             args: vec![],
             open_in_background: false,
             creates_new_instance: false,
+        }
+    }
+
+    fn from_app_path(path: String) -> Self {
+        let Some(bundle_id) = crate::workspace::resolve_browser_path(&path) else {
+            return Self::empty();
+        };
+        Self {
+            app_path: Some(path),
+            ..Self::from_bundle_id(bundle_id)
         }
     }
 }
@@ -148,6 +161,7 @@ mod launch_plan_tests {
     fn spec(bundle: &str, args: &[&str], background: bool, new_instance: bool) -> BrowserSpec {
         BrowserSpec {
             bundle_id: bundle.to_string(),
+            app_path: None,
             args: args.iter().map(|s| s.to_string()).collect(),
             open_in_background: background,
             creates_new_instance: new_instance,

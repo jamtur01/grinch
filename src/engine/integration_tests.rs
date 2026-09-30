@@ -1066,6 +1066,74 @@ fn rewriter_fn_returning_url_instance_via_mutation() {
 }
 
 #[test]
+fn rewriter_mutation_does_not_survive_a_return_to_the_original_url() {
+    for args in ["url", "url, ctx"] {
+        for later_args in ["url", "url, ctx"] {
+            let e = build_engine(&format!(
+                r#"module.exports = {{
+                    default: "com.apple.Safari",
+                    rewrite: [
+                        {{ match: (url, ctx) => true,
+                           url: ({args}) => {{ url.hostname = "changed.example"; return url; }} }},
+                        {{ match: "changed.example", url: "https://original.example/path" }},
+                        {{ match: (url) => true, url: ({later_args}) => url }},
+                    ],
+                }};"#,
+            ));
+            assert_eq!(
+                resolve(&e, "https://original.example/path").1,
+                "https://original.example/path",
+                "rewriter args: {args}; later args: {later_args}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rewriter_mutation_does_not_leak_after_passthrough_or_exception() {
+    let path = unique_tmp("rewrite-mutation-errors");
+    let diagnostics = Rc::new(DiagnosticLog::at_path(path.clone()));
+    let mut results = Vec::new();
+    for args in ["url", "url, ctx"] {
+        for outcome in [
+            "return undefined;",
+            "return 'https://original.example/path';",
+            "throw new Error('rewrite failed');",
+        ] {
+            let e = build_engine_with_diagnostics(
+                &format!(
+                    r#"module.exports = {{
+                        default: "com.apple.Safari",
+                        rewrite: [{{
+                            match: (url, ctx) => true,
+                            url: ({args}) => {{ url.hostname = "changed.example"; {outcome} }},
+                        }}],
+                        rules: [{{
+                            match: (url) => url.hostname === "original.example",
+                            open: (url, ctx) => url.hostname === "original.example"
+                                ? "com.google.Chrome" : "com.brave.Browser",
+                        }}],
+                    }};"#,
+                ),
+                Rc::clone(&diagnostics),
+            );
+            results.push(resolve(&e, "https://original.example/path"));
+        }
+    }
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        results,
+        vec![
+            (
+                "com.google.Chrome".to_string(),
+                "https://original.example/path".to_string()
+            );
+            6
+        ]
+    );
+}
+
+#[test]
 fn rewriter_fn_returning_legacy_object_concatenates_fields() {
     let e = build_engine(
         r#"module.exports = {

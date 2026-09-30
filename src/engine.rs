@@ -1190,12 +1190,12 @@ struct ResolveCtx<'a> {
     /// ctx object — built lazily on first fn call, then reused. Opener and
     /// modifiers are constant for a resolve, so this never needs invalidating.
     cached_ctx: RefCell<Option<Retained<JSValue>>>,
-    /// Cached URL polyfill instance. Built once per URL string seen during
-    /// the resolve and reused by both fn-args cache slots, so a url-only
-    /// fn matcher and a url+ctx fn matcher share one `new URL()` cost.
+    /// Cached URL polyfill instance, shared by both fn-args cache slots.
+    /// Invalidated before rewrite callbacks, which may mutate the instance
+    /// even when returning undefined or throwing an exception.
     cached_url_instance: RefCell<Option<(Box<str>, Retained<JSValue>)>>,
     /// fn args NSArray for the current URL string when the fn declares
-    /// `(url, ctx) => …`. Invalidated when the URL changes between rewrites;
+    /// `(url, ctx) => …`. Invalidated before rewrite callbacks;
     /// cached_ctx is preserved across that. `Box<str>` (not `String`)
     /// halves the per-cache allocation footprint — capacity is dead weight.
     fn_args_cache_full: RefCell<Option<(Box<str>, Retained<NSArray>)>>,
@@ -1270,8 +1270,8 @@ impl<'a> ResolveCtx<'a> {
     }
 
     /// Cached URL polyfill instance for `url`. Both fn-args paths share it,
-    /// so a config that mixes url-only and url+ctx fns pays for `new URL()`
-    /// once per URL string per resolve, not once per fn call.
+    /// so url-only and url+ctx matchers share one `new URL()` until a
+    /// rewrite callback runs or the current URL changes.
     ///
     /// Returns None when JSC can't allocate even a fallback stub — callers
     /// propagate None up to the resolve path, which skips the affected fn
@@ -1392,6 +1392,11 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
             let Some(args) = rc.fn_args(url, uf.needs_ctx) else {
                 return RewriteOutcome::Unchanged;
             };
+            // Keep this call's args alive, but never reuse its mutable URL
+            // after the callback, including pass-through and exception paths.
+            rc.cached_url_instance.borrow_mut().take();
+            rc.fn_args_cache_full.borrow_mut().take();
+            rc.fn_args_cache_url_only.borrow_mut().take();
             let Some(raw) = (unsafe { uf.f.callWithArguments(Some(&args)) }) else {
                 return RewriteOutcome::Unchanged;
             };

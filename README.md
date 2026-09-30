@@ -644,10 +644,11 @@ browser opens normally and you don't pay any extra latency.
 
 The companion script
 [`examples/expand-shortener.sh`](examples/expand-shortener.sh) follows
-the redirect chain with `curl --location --head` (capped at 5 s) and
-then re-opens the final URL through `open(1)`. Grinch sees the
-expanded form and routes it through your normal rules — the shortener
-host never reaches your `match:` logic.
+redirects from bit.ly, t.co, goo.gl, lnkd.in, ow.ly, buff.ly, and tinyurl.com
+(including their `www.` forms), with at most ten requests in five seconds.
+It opens the first destination outside those hosts through `open(1)`, leaving
+login redirects and cookies to your browser. Grinch routes that destination
+normally. Unknown hosts pass through; expansion failures retain the original URL.
 
 ```sh
 chmod +x examples/expand-shortener.sh

@@ -151,7 +151,7 @@ define_class!(
                 if result.browser.bundle_id.is_empty() {
                     continue;
                 }
-                open_url(&result.url, &result.browser, self.mtm());
+                open_url(&result.url, &result.browser, engine.diagnostics(), self.mtm());
             }
         }
 
@@ -391,7 +391,7 @@ define_class!(
             if result.browser.bundle_id.is_empty() {
                 return; // suppressed (open: null)
             }
-            open_url(&result.url, &result.browser, self.mtm());
+            open_url(&result.url, &result.browser, engine.diagnostics(), self.mtm());
         }
 
         // Menu bar action: Reload Config.

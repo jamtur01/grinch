@@ -2,6 +2,7 @@
 // `use super::*;` pulls in the shared types, std imports, and the sibling
 // modules' items that `engine` re-exports via `pub(crate) use`.
 use super::*;
+use std::sync::Mutex;
 
 /// Outcome of parsing the user config's `options` block. Only fields
 /// Grinch acts on appear here. Known inert options are still accepted at
@@ -36,7 +37,8 @@ pub struct OptionsConfig {
 /// events from `options.logRequests`. The file is opened lazily on the first
 /// event or when the menu action explicitly opens it.
 pub(crate) struct DiagnosticLog {
-    writer: RefCell<LogWriter>,
+    // Only the writer is shared with background launch completions; UI state stays local.
+    writer: Arc<Mutex<LogWriter>>,
     profile_error: RefCell<Option<String>>,
     profile_error_handler: RefCell<Option<Box<dyn Fn()>>>,
 }
@@ -50,7 +52,7 @@ impl Default for DiagnosticLog {
 impl DiagnosticLog {
     fn new(path: std::path::PathBuf) -> Self {
         Self {
-            writer: RefCell::new(LogWriter::new(path, None, None)),
+            writer: Arc::new(Mutex::new(LogWriter::new(path, None, None))),
             profile_error: RefCell::new(None),
             profile_error_handler: RefCell::new(None),
         }
@@ -62,11 +64,17 @@ impl DiagnosticLog {
     }
 
     pub(crate) fn configure_rotation(&self, bytes: Option<u64>, days: Option<u32>) {
-        self.writer.borrow_mut().configure_rotation(bytes, days);
+        self.writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .configure_rotation(bytes, days);
     }
 
     pub(crate) fn ensure_file(&self) -> std::io::Result<std::path::PathBuf> {
-        self.writer.borrow_mut().ensure_file()
+        self.writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .ensure_file()
     }
 
     /// Return the first launch-suppressing profile failure since the last config load.
@@ -143,8 +151,40 @@ impl DiagnosticLog {
     }
 
     pub(crate) fn write_event(&self, event: serde_json::Value) {
-        self.writer.borrow_mut().write(&event.to_string());
+        self.writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .write(&event.to_string());
     }
+
+    /// Retain the same rotating writer for callbacks that can outlive an engine
+    /// and run on arbitrary queues. No UI state crosses the thread boundary.
+    pub(crate) fn event_sink(&self) -> impl Fn(serde_json::Value) + Send + Sync + use<> {
+        let writer = Arc::clone(&self.writer);
+        move |event| {
+            writer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .write(&event.to_string());
+        }
+    }
+}
+
+/// Build the shared failure schema for preflight drops and native completions.
+pub(crate) fn launch_error_event(
+    url: &str,
+    browser: &str,
+    strategy: &str,
+    message: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "event": "launch_error",
+        "ts": now_unix_f64(),
+        "url": url,
+        "browser": browser,
+        "strategy": strategy,
+        "message": message,
+    })
 }
 
 /// Append-only writer behind [`DiagnosticLog`]. After a write failure it
@@ -498,6 +538,42 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
 #[cfg(test)]
 mod tests {
     use crate::engine::logging::rename_rotated_log;
+
+    #[test]
+    fn background_events_share_rotation_and_survive_the_log_owner() {
+        let diagnostics = crate::engine::integration_tests::isolated_diagnostics();
+        let path = diagnostics.ensure_file().unwrap();
+        diagnostics.configure_rotation(Some(1), None);
+        let record = diagnostics.event_sink();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let worker_barrier = std::sync::Arc::clone(&barrier);
+        let worker = std::thread::spawn(move || {
+            worker_barrier.wait();
+            for id in 0..10 {
+                record(serde_json::json!({"id": id}));
+            }
+        });
+        barrier.wait();
+        for id in 10..20 {
+            diagnostics.write_event(serde_json::json!({"id": id}));
+        }
+        worker.join().unwrap();
+        let record = diagnostics.event_sink();
+        drop(diagnostics);
+        record(serde_json::json!({"id": 20}));
+        let mut ids = Vec::new();
+        for entry in std::fs::read_dir(path.parent().unwrap()).unwrap() {
+            for line in std::fs::read_to_string(entry.unwrap().path())
+                .unwrap()
+                .lines()
+            {
+                let row: serde_json::Value = serde_json::from_str(line).unwrap();
+                ids.push(row["id"].as_u64().unwrap());
+            }
+        }
+        ids.sort_unstable();
+        assert_eq!(ids, (0..21).collect::<Vec<_>>());
+    }
 
     #[test]
     fn rotation_preserves_existing_logs_and_reports_errors() {

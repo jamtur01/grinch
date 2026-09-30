@@ -111,7 +111,7 @@ pub fn forward_through_engine(url: &str, engine: &Engine, mtm: MainThreadMarker)
     if result.browser.bundle_id.is_empty() {
         return; // suppressed (rule explicitly dropped)
     }
-    open_url(&result.url, &result.browser, mtm);
+    open_url(&result.url, &result.browser, engine.diagnostics(), mtm);
 }
 
 define_class!(

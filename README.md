@@ -143,7 +143,7 @@ The `options` block accepts Finicky v4's keys (plus Grinch's own
 
 Grinch keeps one diagnostic log per app launch at
 `~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Config-load errors,
-runtime JavaScript exceptions, and profile errors are recorded even when
+runtime JavaScript exceptions, profile errors, and launch failures are recorded even when
 `logRequests` is false; that option controls only the higher-volume `resolve`
 events. The file opens
 lazily on the first event or when you click **Open Diagnostic Log**. Rotation
@@ -176,7 +176,7 @@ settings take effect after a config loads successfully.
 
 Field notes:
 
-- `event` — `resolve`, `config_error`, `runtime_js_error`, or `profile_error`.
+- `event` — `resolve`, `config_error`, `runtime_js_error`, `profile_error`, or `launch_error`.
 - `rewritten` — true iff `final != url` (a rewrite fired).
 - `opener` — the app that *sent* the URL, identified via the GURL Apple
   Event's sender PID. Empty `bundleId` means neither the sender PID
@@ -188,13 +188,19 @@ Field notes:
   for fn matchers). Pair with `Grinch --list-rules` to map indices
   to their full source.
 
-Error events include the config path, when one was found, and the captured
+Config and JavaScript error events include the config path, when one was found, and the captured
 JavaScript message:
 
 ```json
 {"event":"config_error","ts":1.0,"path":"~/.grinch.js","message":"SyntaxError (line 4)"}
 {"event":"runtime_js_error","ts":2.0,"path":"~/.grinch.js","message":"TypeError (line 18)"}
 ```
+
+`launch_error` records invalid URLs, missing browsers, and failures reported by
+macOS after a launch request. It includes `url`, `browser`, `strategy`, and
+`message`; native errors also include `errorDomain` and `errorCode`. These
+events share the app's log and rotation settings, including after config reloads.
+A `resolve` event records the routing decision; it does not confirm launch success.
 
 `console.log/warn/error/info/debug` remain on stderr with their existing
 `grinch [level]:` prefix; they are not copied into the diagnostic log.

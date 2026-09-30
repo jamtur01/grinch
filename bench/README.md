@@ -122,3 +122,20 @@ crossing per batch while preserving each callback's argument count.
 
 New engine-only fixtures measured 2.251 µs for dynamic-default,
 14.615 µs for rewrite-chain, and 8.5 ns for from.
+
+## Launch diagnostic logging measurements (2026-09-30)
+
+The same Mac and OS were used with Rust/Cargo 1.98.0 for both release
+builds. The baseline was `783ee6c`, before sharing the diagnostic writer
+with native launch callbacks. Ten alternating before/after pairs used
+private HOME directories and the fixture iteration counts. Each reported
+median is the fifth ordered sample, matching `run.sh`.
+
+| Routing workload | Before, ns/op | After, ns/op |
+|---|---:|---:|
+| floor, request logging off | 6.6 | 6.5 |
+| logged, JSONL serialization and file writes | 8316.3 | 8275.4 |
+
+No slowdown was detected in these workloads. `21-logged` exercises the
+shared writer on every resolve; browser launches and their callbacks are
+excluded from these measurements.

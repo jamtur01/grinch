@@ -53,7 +53,7 @@ unsafe extern "C" {
 /// LaunchServices lookup each time.
 const CACHE_SOFT_CAP: usize = 1024;
 
-use crate::engine::{BrowserSpec, LaunchPlan, ModifierFlags};
+use crate::engine::{BrowserSpec, DiagnosticLog, LaunchPlan, ModifierFlags, launch_error_event};
 
 #[derive(Clone, Debug, Default)]
 pub struct Opener {
@@ -809,29 +809,37 @@ pub(crate) fn browser_app_url(spec: &BrowserSpec) -> Option<Retained<NSURL>> {
     resolved_app_url(&spec.bundle_id)
 }
 
-/// Open `url` in the given browser app. If the bundle ID is empty (suppress),
-/// do nothing. If the bundle ID is non-empty but no installed app matches it,
-/// the URL is dropped with a one-time warning — NOT routed to the system
-/// default browser. Falling back to `NSWorkspace.openURL` with no app would
-/// bounce the URL straight back to Grinch (the usual default browser) and
-/// loop forever; see the `resolved_app_url` miss branch below.
-pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
-    let _ = mtm;
-    // Decide the launch strategy first (pure, testable — see `LaunchPlan`),
-    // then perform the NSWorkspace side effects. Keeping the decision out of
-    // this function is what lets the tests assert the plan and lets diagnostic
-    // resolve events record which strategy actually fired.
+/// Resolve launch inputs without opening anything, recording unexpected drops.
+fn prepare_launch(
+    url: &str,
+    spec: &BrowserSpec,
+    diagnostics: &DiagnosticLog,
+) -> Option<(LaunchPlan, Retained<NSURL>, Retained<NSURL>)> {
+    // Decide the launch strategy before native validation. The pure `LaunchPlan`
+    // boundary also lets routing diagnostics report the chosen strategy.
     let plan = LaunchPlan::from_spec(spec, url);
     if let LaunchPlan::Suppress = plan {
         if !spec.bundle_id.is_empty() {
-            eprintln!("grinch: invalid URL {url:?}; expected an absolute URL with a scheme");
+            let message = "Invalid URL; expected an absolute URL with a scheme";
+            eprintln!("grinch: {message}: {url:?}");
+            diagnostics.write_event(launch_error_event(
+                url,
+                &spec.bundle_id,
+                plan.strategy(),
+                message,
+            ));
         }
-        return;
+        return None;
     }
-    let workspace = NSWorkspace::sharedWorkspace();
     let Some(url_ns) = NSURL::URLWithString(&NSString::from_str(url)) else {
         eprintln!("grinch: invalid URL: {url}");
-        return;
+        diagnostics.write_event(launch_error_event(
+            url,
+            &spec.bundle_id,
+            plan.strategy(),
+            "Invalid URL",
+        ));
+        return None;
     };
 
     let Some(app_url) = browser_app_url(spec) else {
@@ -843,9 +851,29 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
         // error + dropped URL is strictly safer than a runaway loop —
         // the user can fix their config and click again.
         warn_browser_not_found(&spec.bundle_id);
+        diagnostics.write_event(launch_error_event(
+            url,
+            &spec.bundle_id,
+            plan.strategy(),
+            "Browser not found; update your config to reference an installed browser",
+        ));
+        return None;
+    };
+    Some((plan, url_ns, app_url))
+}
+
+/// Open `url` in the given browser app. If the bundle ID is empty (suppress),
+/// do nothing. If the bundle ID is non-empty but no installed app matches it,
+/// the URL is dropped with a one-time warning — NOT routed to the system
+/// default browser. Falling back to `NSWorkspace.openURL` with no app would
+/// bounce the URL straight back to Grinch (the usual default browser) and
+/// loop forever; `prepare_launch` records the failure instead.
+pub fn open_url(url: &str, spec: &BrowserSpec, diagnostics: &DiagnosticLog, mtm: MainThreadMarker) {
+    let _ = mtm;
+    let Some((plan, url_ns, app_url)) = prepare_launch(url, spec, diagnostics) else {
         return;
     };
-
+    let workspace = NSWorkspace::sharedWorkspace();
     let cfg = NSWorkspaceOpenConfiguration::configuration();
     // macOS Recent Items defaults to *adding* every URL Grinch routes,
     // which clogs the system menu with one entry per routed click.
@@ -858,7 +886,12 @@ pub fn open_url(url: &str, spec: &BrowserSpec, mtm: MainThreadMarker) {
     // resolves. Logs failures always (successes only under GRINCH_DEBUG),
     // tagged with the strategy — the async outcome the JSONL resolve event
     // (which records the strategy at resolve time) can't capture.
-    let handler = launch_completion_handler(plan.strategy(), spec.bundle_id.clone());
+    let handler = launch_completion_handler(
+        plan.strategy(),
+        spec.bundle_id.clone(),
+        url.to_string(),
+        diagnostics.event_sink(),
+    );
 
     match plan {
         // Handled by the early return above; kept exhaustive so adding a
@@ -936,13 +969,15 @@ fn launch_debug() -> bool {
 }
 
 /// Build the completion handler handed to NSWorkspace's launch APIs. On
-/// failure (non-null `NSError`) it logs a one-line diagnostic tagged with the
-/// launch strategy and bundle id; on success it stays silent unless
-/// GRINCH_DEBUG is set. Returned as an `RcBlock` — NSWorkspace copies the
+/// failure (non-null `NSError`) it records JSONL and stderr diagnostics with
+/// the URL, launch strategy, bundle ID, and native error. Success stays silent
+/// unless GRINCH_DEBUG is set. Returned as an `RcBlock` — NSWorkspace copies the
 /// block, so the caller may drop its handle once the launch call returns.
 fn launch_completion_handler(
     strategy: &'static str,
     bundle: String,
+    url: String,
+    record_event: impl Fn(serde_json::Value) + Send + Sync + 'static,
 ) -> RcBlock<dyn Fn(*mut NSRunningApplication, *mut NSError)> {
     RcBlock::new(
         move |_app: *mut NSRunningApplication, error: *mut NSError| {
@@ -952,10 +987,15 @@ fn launch_completion_handler(
                 }
             } else {
                 let err = unsafe { &*error };
+                let message = err.localizedDescription().to_string();
                 eprintln!(
                     "grinch: launch failed (strategy={strategy}, bundle={bundle}): {}",
-                    *err.localizedDescription()
+                    message
                 );
+                let mut event = launch_error_event(&url, &bundle, strategy, &message);
+                event["errorDomain"] = serde_json::json!(err.domain().to_string());
+                event["errorCode"] = serde_json::json!(err.code());
+                record_event(event);
             }
         },
     )
@@ -964,6 +1004,92 @@ fn launch_completion_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_completion_errors_are_durable() {
+        let diagnostics = crate::engine::integration_tests::isolated_diagnostics();
+        let path = diagnostics.ensure_file().unwrap();
+        for strategy in ["open_urls", "launch_new_instance"] {
+            let record_event = diagnostics.event_sink();
+            std::thread::spawn(move || {
+                let handler = launch_completion_handler(
+                    strategy,
+                    "missing.browser".to_string(),
+                    "https://example.com/".to_string(),
+                    record_event,
+                );
+                let error = unsafe {
+                    NSError::errorWithDomain_code_userInfo(
+                        &NSString::from_str("GrinchTestLaunchError"),
+                        42,
+                        None,
+                    )
+                };
+                handler.call((std::ptr::null_mut(), Retained::as_ptr(&error).cast_mut()));
+                handler.call((std::ptr::null_mut(), std::ptr::null_mut()));
+            })
+            .join()
+            .unwrap();
+        }
+        let rows: Vec<serde_json::Value> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            rows.len(),
+            2,
+            "both failures must be logged; successes stay quiet"
+        );
+        for (row, strategy) in rows.iter().zip(["open_urls", "launch_new_instance"]) {
+            assert_eq!(row["event"], "launch_error");
+            assert_eq!(row["browser"], "missing.browser");
+            assert_eq!(row["url"], "https://example.com/");
+            assert_eq!(row["strategy"], strategy);
+            assert_eq!(row["errorDomain"], "GrinchTestLaunchError");
+            assert_eq!(row["errorCode"], 42);
+            assert!(!row["message"].as_str().unwrap().is_empty());
+            assert!(row["ts"].is_number());
+        }
+    }
+
+    #[test]
+    fn launch_preflight_logs_drops_but_not_deliberate_suppression() {
+        let engine = crate::engine::integration_tests::build_engine(
+            "module.exports = { default: 'com.grinch.test.missing-browser' };",
+        );
+        let diagnostics = engine.diagnostics();
+        let path = diagnostics.ensure_file().unwrap();
+        let result = engine.resolve(
+            "https://example.com/",
+            &Opener::default(),
+            ModifierFlags::default(),
+        );
+        assert!(prepare_launch("--incognito", &result.browser, diagnostics).is_none());
+        assert!(prepare_launch("https://[invalid", &result.browser, diagnostics).is_none());
+        assert!(prepare_launch("https://example.com/", &result.browser, diagnostics).is_none());
+        let mut suppressed = (*result.browser).clone();
+        suppressed.bundle_id.clear();
+        assert!(prepare_launch("https://example.com/", &suppressed, diagnostics).is_none());
+        let rows: Vec<serde_json::Value> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|row| row["event"] == "launch_error"));
+        assert_eq!(rows[0]["strategy"], "suppress");
+        assert_eq!(rows[0]["url"], "--incognito");
+        assert_eq!(rows[1]["message"], "Invalid URL");
+        assert_eq!(rows[2]["strategy"], "open_urls");
+        assert_eq!(rows[2]["browser"], "com.grinch.test.missing-browser");
+        assert!(
+            rows[2]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Browser not found")
+        );
+    }
 
     #[test]
     fn sender_lookups_reject_invalid_missing_and_self_pids() {

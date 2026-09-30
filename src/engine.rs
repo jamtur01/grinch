@@ -757,6 +757,11 @@ impl Engine {
         })
     }
 
+    /// App-owned diagnostics shared with native launches and authentication flows.
+    pub(crate) fn diagnostics(&self) -> &DiagnosticLog {
+        &self.diagnostics
+    }
+
     /// True if AppDelegate should populate the opener (frontmost app +
     /// bundle ID/name/path/pid) before calling resolve(). False for
     /// declarative-only configs that never reference opener — saves

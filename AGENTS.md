@@ -63,7 +63,10 @@ Read `CONTRIBUTING.md` and `SECURITY.md`. Only the latest published release is
 supported for issues and security fixes; do not promise backports. Direct
 vulnerabilities to private GitHub reports and redact sensitive logs and URLs.
 Keep `README.md` and `docs/index.html` aligned with released behavior and link
-performance claims to the dated measurements in `bench/README.md`.
+performance claims to the workloads and results in `bench/README.md`. Document
+behavior and reproducible measurements, not review narratives or session history.
+Documentation must stand on its own for readers outside the project. Include a
+reference only when it helps them understand, verify, or reproduce the claim.
 
 ### SSO, OAuth, or bundle registration
 

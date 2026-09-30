@@ -1246,6 +1246,49 @@ fn dispatcher_resumes_after_target_fn_returns_null_in_run() {
 }
 
 #[test]
+fn dispatcher_preserves_callback_arity_and_receiver() {
+    let mut results = Vec::new();
+    for matcher in [
+        "function(url) { return arguments.length === 1; }",
+        "function() { return arguments.length === 1; }",
+        "(url, ctx = {}) => Object.keys(ctx).length === 0",
+        "function(url, ctx) { return arguments.length === 2 && ctx.originalUrl === url.href; }",
+        "function(url) { 'use strict'; return this === globalThis; }",
+    ] {
+        for neighbor in ["", ", {match: (url, ctx) => false, open: null}"] {
+            let e = build_engine(&format!(
+                r#"module.exports = {{
+                    default: "com.apple.Safari",
+                    rules: [{{match: {matcher}, open: "com.google.Chrome"}}{neighbor}],
+                }};"#,
+            ));
+            results.push(resolve(&e, "https://example.com/").0);
+        }
+    }
+    assert_eq!(results, vec!["com.google.Chrome"; 10]);
+}
+
+#[test]
+fn dispatcher_uses_arity_captured_before_callback_execution() {
+    let e = build_engine(
+        r#"const matcher = function(url, ctx) {
+                return arguments.length === 2 && ctx.originalUrl === url.href;
+            };
+            module.exports = {
+                default: "com.apple.Safari",
+                rules: [
+                    {match: url => {
+                        Object.defineProperty(matcher, "length", {value: 0});
+                        return false;
+                    }, open: null},
+                    {match: matcher, open: "com.google.Chrome"},
+                ],
+            };"#,
+    );
+    assert_eq!(resolve(&e, "https://example.com/").0, "com.google.Chrome");
+}
+
+#[test]
 fn invalid_regex_matcher_drops_and_warns_but_engine_still_loads() {
     // The Rust regex crate doesn't support JS lookbehind `(?<=…)`.
     // Pre-fix, compile_matcher silently dropped the matcher and the

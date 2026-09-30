@@ -475,12 +475,17 @@ pub(crate) fn build_fn_matcher_runs(ctx: &JSContext, rules: &[Rule]) -> Vec<FnMa
         (function() {
             return function() {
                 var ms = arguments;
+                var count = ms.length / 2;
                 return function(url, ctx, startOffset) {
                     var start = (startOffset | 0);
                     if (start < 0) start = 0;
-                    for (var i = start; i < ms.length; i++) {
+                    for (var i = start; i < count; i++) {
                         try {
-                            if (ms[i](url, ctx)) return i;
+                            var matcher = ms[i * 2];
+                            // Forward JSC's receiver, not the arguments object.
+                            if (ms[i * 2 + 1]
+                                ? matcher.call(this, url, ctx)
+                                : matcher.call(this, url)) return i;
                         } catch (e) {
                             // Matcher threw — treat as no-match, same as the
                             // Rust loop's `result.map(...).unwrap_or(false)`.
@@ -524,9 +529,9 @@ pub(crate) fn build_fn_matcher_runs(ctx: &JSContext, rules: &[Rule]) -> Vec<FnMa
         if end - start < 2 {
             continue;
         }
-        // Collect the matcher fns + their needs_ctx flag.
+        // Interleave matcher functions with their load-time ctx requirements.
         let mut needs_ctx = false;
-        let mut matcher_objs: Vec<Retained<AnyObject>> = Vec::with_capacity(end - start);
+        let mut matcher_objs: Vec<Retained<AnyObject>> = Vec::with_capacity((end - start) * 2);
         for r in &rules[start..end] {
             let Matcher::Fn(uf) = &r.matchers[0] else {
                 unreachable!("is_fn_only_rule guarantees Matcher::Fn");
@@ -535,6 +540,10 @@ pub(crate) fn build_fn_matcher_runs(ctx: &JSContext, rules: &[Rule]) -> Vec<FnMa
                 needs_ctx = true;
             }
             matcher_objs.push(unsafe { Retained::cast_unchecked(uf.f.clone()) });
+            let Some(flag) = js_bool(ctx, uf.needs_ctx) else {
+                return Vec::new();
+            };
+            matcher_objs.push(unsafe { Retained::cast_unchecked(flag) });
         }
         let args = NSArray::from_retained_slice(&matcher_objs);
         let Some(dispatcher) = (unsafe { factory.callWithArguments(Some(&args)) }) else {

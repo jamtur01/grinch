@@ -731,23 +731,11 @@ accepted, with optional `=` padding.
 
 ## Performance
 
-A few benchmark data points from `bench/run.sh`. Worth knowing that
-real-world click-to-browser latency is dominated by macOS plumbing
-(Apple Event dispatch + `NSWorkspace.openApplicationAtURL`, both in
-the few-millisecond range), so engine-only numbers don't translate
-1:1 into a faster-feeling click — but they're a useful window into
-what the engine is doing on its own.
+Release builds on Apple Silicon, median of ten runs. These benchmarks measure
+URL routing, excluding browser launch and page loading.
 
-The September 30, 2026 review used an Apple M4 Max, macOS 27.0, Rust 1.96.0,
-and release builds. Values below are medians of ten runs; configs, iteration
-counts, comparisons, and limitations are in the
-[benchmark report](bench/README.md#macos-27-review-measurements-2026-09-30).
-These measurements exclude browser launches, Apple Event delivery, and cold starts.
-
-Measured native ingress for a URL-only dynamic default fell from 91.60 to
-1.62 µs per URL by skipping unused opener and modifier lookups. A declarative
-`from()` rule fell from 85.14 to 60.07 µs by fetching only the sender's bundle ID.
-These are ingress measurements, not end-to-end browser launch times.
+Run `bench/run.sh` to reproduce. Workloads are in `bench/configs/`; setup and
+full results are in the [benchmark notes](bench/README.md).
 
 ### Hot path (declarative-only configs)
 
@@ -799,12 +787,6 @@ exercises that path.
 | `?browser=` dynamic open fn (url-only matcher) | 4,539.8 |
 | 4 fn matchers reading `ctx.opener` | 5,454 |
 | Full Slack-web → `slack://` rewrite | 5,839.3 |
-
-The four-function batch increased from 5.277 to 5.454 µs while fixing callback
-arity and receiver handling. A separate
-[logging comparison](bench/README.md#launch-diagnostic-logging-measurements-2026-09-30)
-measured 8.32 → 8.28 µs per resolve with JSONL writes enabled; no slowdown was
-detected from sharing the writer with launch callbacks.
 
 ### Footprint
 

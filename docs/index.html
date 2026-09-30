@@ -225,17 +225,11 @@ open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</
 <section id="performance">
   <h2>Performance</h2>
 
-  <p>A few benchmark data points from <code>bench/run.sh</code>. Worth knowing that real-world click-to-browser latency is dominated by macOS plumbing (Apple Event dispatch + <code>NSWorkspace.openApplicationAtURL</code>, both in the few-millisecond range), so engine-only numbers don't translate 1:1 into a faster-feeling click — but they're a useful window into what the engine is doing on its own.</p>
-
-  <p>The September 30, 2026 review used an Apple M4 Max, macOS 27.0, Rust 1.96.0,
-    and release builds. Values below are medians of ten runs. Measurements exclude
-    browser launches, Apple Event delivery, and cold starts. See the
-    <a href="https://github.com/jamtur01/grinch/blob/main/bench/README.md">benchmark report</a>
-    for configs, iteration counts, comparisons, and limitations.</p>
-  <p>Native ingress for a URL-only dynamic default fell from 91.60 to 1.62 µs per URL
-    by skipping unused opener and modifier lookups. A declarative <code>from()</code>
-    rule fell from 85.14 to 60.07 µs by fetching only the sender's bundle ID.
-    These are ingress measurements, not end-to-end browser launch times.</p>
+  <p>Release builds on Apple Silicon, median of ten runs. These benchmarks measure
+    URL routing, excluding browser launch and page loading.</p>
+  <p>Run <code>bench/run.sh</code> to reproduce. Workloads are in
+    <code>bench/configs/</code>; setup and full results are in the
+    <a href="https://github.com/jamtur01/grinch/blob/main/bench/README.md">benchmark notes</a>.</p>
 
   <h3>Hot path (declarative-only configs)</h3>
   <table>
@@ -264,11 +258,6 @@ open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</
       <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>5,839.3</td></tr>
     </tbody>
   </table>
-
-  <p>The four-function batch increased from 5.277 to 5.454 µs while fixing callback
-    arity and receiver handling. A separate logging comparison measured 8.32 → 8.28 µs
-    per resolve with JSONL writes enabled; no slowdown was detected from sharing
-    the writer with launch callbacks. Both comparisons are in the benchmark report.</p>
 
   <h3>Footprint</h3>
   <p>These are historical measurements, not a comparison of the latest releases.

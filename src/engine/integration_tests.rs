@@ -105,6 +105,24 @@ fn resolve_with(
 // ---------- Engine end-to-end ----------
 
 #[test]
+fn wrapper_rewrites_ignore_embedded_urls_in_opaque_inputs() {
+    for helper in ["safelinks()", "teams_launcher()"] {
+        let engine = build_engine(&format!(
+            "module.exports = {{default: 'com.apple.Safari', rewrite: [{helper}]}};"
+        ));
+        for url in [
+            "mailto:user@example.com?body=https://safelinks.protection.outlook.com/?url=x",
+            "mailto:user@example.com?body=https://teams.microsoft.com/dl/launcher/launcher.html",
+            "data:text/plain,https://safelinks.protection.outlook.com/?url=x",
+            "?body=https://teams.microsoft.com/dl/launcher/launcher.html",
+        ] {
+            assert_eq!(resolve(&engine, url).1, url, "{helper}: {url}");
+            assert_eq!(quick_host(url), None);
+        }
+    }
+}
+
+#[test]
 fn default_browser_fires_when_no_rules() {
     let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
     let (browser, url) = resolve(&e, "https://example.com/");

@@ -52,7 +52,8 @@ pub(crate) fn unwrap_teams_launcher(url: &str) -> Option<String> {
     }
     let query_start = url.find('?')?;
     let scheme_end = url.find("://").map(|i| i + 3).unwrap_or(0);
-    let path_start = url[scheme_end..query_start]
+    let path_start = url
+        .get(scheme_end..query_start)?
         .find('/')
         .map(|rel| scheme_end + rel)
         .unwrap_or(query_start);
@@ -107,7 +108,8 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
     // path-prefix checks. Locate the path by scanning forward from the
     // scheme for the first `/` that isn't part of `//`.
     let scheme_end = url.find("://").map(|i| i + 3).unwrap_or(0);
-    let path_start = url[scheme_end..query_start]
+    let path_start = url
+        .get(scheme_end..query_start)?
         .find('/')
         .map(|rel| scheme_end + rel)
         .unwrap_or(query_start);

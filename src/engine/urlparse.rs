@@ -29,16 +29,9 @@ pub(crate) fn url_after_scheme(url: &str) -> Option<&str> {
 /// faster than the Unicode-aware `to_lowercase` and good enough.
 #[inline]
 pub(crate) fn quick_host(url: &str) -> Option<Cow<'_, str>> {
-    // Opaque-scheme URIs like `mailto:user@example.com`, `tel:+1...`,
-    // `about:blank`, `javascript:…` have no authority component — no
-    // `//` after the scheme. Trying to derive a hostname out of them
-    // produced wrong results: `about:blank` previously yielded `"about"`
-    // (rfind(':') sliced off `:blank`), so a `domain("about")` matcher
-    // would have unexpectedly matched it. Return None for any input
-    // without `://`; callers that want to match by scheme should use
-    // a wildcard / regex matcher.
-    let scheme_end = url.find("://")?;
-    let mut s = &url[scheme_end + 3..];
+    // Opaque URIs can contain nested URLs; only this URI's own scheme
+    // can introduce an authority. A later `://` belongs to its payload.
+    let mut s = url_after_scheme(url)?.strip_prefix("//")?;
     if let Some(idx) = s.find(['/', '?', '#']) {
         s = &s[..idx];
     }

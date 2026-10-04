@@ -168,9 +168,53 @@ fn take_events() -> Vec<String> {
     events.into_iter().map(|(event, _)| event).collect()
 }
 
+fn verify_startup_queue(mtm: MainThreadMarker) {
+    deliver_from_worker("https://example.invalid/queued-first", false);
+    deliver_from_worker("https://example.invalid/queued-second", false);
+    deliver_from_worker("https://example.invalid/queued-canceled", true);
+    wait_for_events(1);
+    assert_eq!(
+        take_events(),
+        [format!(
+            "cancel:{}:{}",
+            unsafe { ASWebAuthenticationSessionErrorDomain },
+            ASWebAuthenticationSessionErrorCode::CanceledLogin.0
+        )]
+    );
+    session_handler::finish_startup(mtm);
+    assert_eq!(
+        take_events(),
+        [
+            "forward:https://example.invalid/queued-first",
+            "forward:https://example.invalid/queued-second",
+        ]
+    );
+    session_handler::finish_startup(mtm);
+    assert!(
+        take_events().is_empty(),
+        "startup requests must only drain once"
+    );
+    for _ in 0..2 {
+        assert!(session_handler::try_complete_callback(
+            "grinch-auth-test://done"
+        ));
+    }
+    assert!(!session_handler::try_complete_callback(
+        "grinch-auth-test://done"
+    ));
+    assert_eq!(
+        take_events(),
+        [
+            "complete:grinch-auth-test://done",
+            "complete:grinch-auth-test://done"
+        ]
+    );
+}
+
 fn main() {
     let mtm = MainThreadMarker::new().expect("harness must own the main thread");
     session_handler::install(mtm, forwarded);
+    verify_startup_queue(mtm);
 
     deliver_from_worker("https://example.invalid/auth", false);
     assert!(

@@ -60,6 +60,9 @@ use crate::workspace::{Opener, open_url};
 thread_local! {
     static PENDING: RefCell<HashMap<String, Retained<ASWebAuthenticationSessionRequest>>> =
         RefCell::new(HashMap::new());
+    // None means startup has finished. Queue UUIDs so canceled requests can
+    // be skipped without keeping a second retain of the native request.
+    static STARTUP_QUEUE: RefCell<Option<Vec<String>>> = const { RefCell::new(Some(Vec::new())) };
 }
 
 /// Installed lazily by `install` and called from the handler's protocol
@@ -94,6 +97,27 @@ pub fn install(_mtm: MainThreadMarker, forwarder: Forwarder) {
     // Leak the Rust handle — the manager holds its own retain via the
     // setter, and we never want to remove the handler.
     std::mem::forget(handler);
+}
+
+/// Drain early authentication requests after the app's initial config load attempt.
+pub fn finish_startup(mtm: MainThreadMarker) {
+    let queued = STARTUP_QUEUE.with(|queue| queue.borrow_mut().take());
+    if let Some(queued) = queued {
+        for uuid in queued {
+            forward_pending_request(&uuid, mtm);
+        }
+    }
+}
+
+fn forward_pending_request(uuid: &str, mtm: MainThreadMarker) {
+    let request = PENDING.with(|pending| pending.borrow().get(uuid).cloned());
+    let Some(request) = request else { return };
+    if let Some(forwarder) = FORWARDER.get() {
+        let href = unsafe { request.URL() }
+            .absoluteString()
+            .unwrap_or_default();
+        forwarder(&href.to_string(), mtm);
+    }
 }
 
 /// The most common URL-route shape: a synthetic opener (no real
@@ -161,10 +185,18 @@ define_class!(
             // try_complete_callback / cancel_handling.
             let uuid = unsafe { request.UUID() }.UUIDString().to_string();
             PENDING.with(|p| {
-                p.borrow_mut().insert(uuid, request.retain());
+                p.borrow_mut().insert(uuid.clone(), request.retain());
             });
-            if let Some(cb) = FORWARDER.get() {
-                cb(&href, mtm);
+            let queued = STARTUP_QUEUE.with(|queue| {
+                let mut queue = queue.borrow_mut();
+                let Some(queue) = queue.as_mut() else {
+                    return false;
+                };
+                queue.push(uuid.clone());
+                true
+            });
+            if !queued {
+                forward_pending_request(&uuid, mtm);
             }
         }
 

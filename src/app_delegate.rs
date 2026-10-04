@@ -228,11 +228,9 @@ define_class!(
         //    silently misroutes. Matches Finicky PR #524's move of
         //    `InstallAuthenticationSessionHandler()` into pre-runloop init.
         //
-        // The engine isn't loaded yet (that happens in
-        // `did_finish_launching`), so an inbound request during this brief
-        // sliver gets dropped silently by `forward_auth_session_url` — same
-        // trade-off Finicky accepts. The alternative (load the engine here)
-        // would push the menu-bar setup window even further back.
+        // The engine loads in `did_finish_launching`. The session handler
+        // queues early requests until that load attempt finishes, and skips
+        // any requests canceled while startup was in progress.
         #[unsafe(method(applicationWillFinishLaunching:))]
         fn will_finish_launching(&self, _notification: &NSNotification) {
             let manager = NSAppleEventManager::sharedAppleEventManager();
@@ -327,6 +325,7 @@ define_class!(
             // earliest possible point in the launch sequence.
             crate::workspace::terminate_duplicate_instances();
             self.reload_engine();
+            crate::session_handler::finish_startup(self.mtm());
             self.setup_menu_bar();
             install_sighup_handler(self);
             crate::workspace::install_running_apps_observer();

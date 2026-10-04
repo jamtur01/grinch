@@ -21,20 +21,24 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
-use objc2::{AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send};
+use objc2::runtime::ProtocolObject;
+use objc2::{AnyThread, DefinedClass, MainThreadMarker, Message, define_class, msg_send};
 use objc2_authentication_services::{
     ASWebAuthenticationSessionCallback, ASWebAuthenticationSessionErrorCode,
     ASWebAuthenticationSessionErrorDomain, ASWebAuthenticationSessionRequest,
-    ASWebAuthenticationSessionWebBrowserSessionHandling,
+    ASWebAuthenticationSessionRequestDelegate, ASWebAuthenticationSessionWebBrowserSessionHandling,
     ASWebAuthenticationSessionWebBrowserSessionManager,
 };
-use objc2_foundation::{NSDate, NSError, NSObjectProtocol, NSRunLoop, NSString, NSURL, NSUUID};
+use objc2_foundation::{
+    NSDate, NSError, NSObject, NSObjectProtocol, NSRunLoop, NSString, NSURL, NSUUID,
+};
 
 static EVENTS: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
 
 struct RequestIvars {
     url: Retained<NSURL>,
     uuid: Retained<NSUUID>,
+    observer: Option<Retained<Observer>>,
 }
 
 define_class!(
@@ -64,26 +68,51 @@ define_class!(
                 )
             }
         }
+    }
+);
 
-        #[unsafe(method(completeWithCallbackURL:))]
-        fn complete(&self, url: &NSURL) {
+define_class!(
+    #[unsafe(super = NSObject)]
+    #[name = "GrinchTestAuthObserver"]
+    #[ivars = ()]
+    struct Observer;
+
+    unsafe impl NSObjectProtocol for Observer {}
+
+    unsafe impl ASWebAuthenticationSessionRequestDelegate for Observer {
+        #[unsafe(method(authenticationSessionRequest:didCompleteWithCallbackURL:))]
+        fn complete(&self, _request: &ASWebAuthenticationSessionRequest, url: &NSURL) {
             record(format!("complete:{}", url.absoluteString().unwrap()));
         }
 
-        #[unsafe(method(cancelWithError:))]
-        fn cancel(&self, error: &NSError) {
+        #[unsafe(method(authenticationSessionRequest:didCancelWithError:))]
+        fn cancel(&self, _request: &ASWebAuthenticationSessionRequest, error: &NSError) {
             record(format!("cancel:{}:{}", error.domain(), error.code()));
         }
     }
 );
 
 impl Request {
-    fn new(href: &str) -> Retained<Self> {
+    fn new(href: &str, canceling_uuid: Option<&NSUUID>) -> Retained<Self> {
+        // Only the original request has the framework's completion delegate.
+        // Cancellation delivers a separate request object with the same UUID.
+        let observer = canceling_uuid.is_none().then(|| {
+            let this = Observer::alloc().set_ivars(());
+            unsafe { msg_send![super(this), init] }
+        });
         let this = Self::alloc().set_ivars(RequestIvars {
             url: NSURL::URLWithString(&NSString::from_str(href)).unwrap(),
-            uuid: NSUUID::new(),
+            uuid: canceling_uuid.map_or_else(NSUUID::new, |uuid| uuid.retain()),
+            observer,
         });
-        unsafe { msg_send![super(this), init] }
+        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+        let delegate = this
+            .ivars()
+            .observer
+            .as_deref()
+            .map(ProtocolObject::from_ref);
+        unsafe { this.setDelegate(delegate) };
+        this
     }
 }
 
@@ -101,14 +130,15 @@ fn forwarded(url: &str, _mtm: MainThreadMarker) {
 fn deliver_from_worker(url: &'static str, cancel: bool) {
     std::thread::spawn(move || {
         assert!(MainThreadMarker::new().is_none());
-        let request = Request::new(url);
+        let request = Request::new(url, None);
         let manager =
             unsafe { ASWebAuthenticationSessionWebBrowserSessionManager::sharedManager() };
         let handler = unsafe { manager.sessionHandler() };
         unsafe {
             handler.beginHandlingWebAuthenticationSessionRequest(Some(&request));
             if cancel {
-                handler.cancelWebAuthenticationSessionRequest(Some(&request));
+                let notification = Request::new(url, Some(&request.ivars().uuid));
+                handler.cancelWebAuthenticationSessionRequest(Some(&notification));
             }
         }
         // Both local retains go away before main handles the request.
@@ -186,12 +216,14 @@ fn main() {
         "grinch-auth-test://done"
     ));
 
-    // Nil framework requests must be harmless and leave no pending session.
+    // Missing and already-removed requests must not produce another completion.
     let manager = unsafe { ASWebAuthenticationSessionWebBrowserSessionManager::sharedManager() };
     let handler = unsafe { manager.sessionHandler() };
+    let unknown = Request::new("https://example.invalid/unknown", None);
     unsafe {
         handler.beginHandlingWebAuthenticationSessionRequest(None);
         handler.cancelWebAuthenticationSessionRequest(None);
+        handler.cancelWebAuthenticationSessionRequest(Some(&unknown));
     }
     assert!(take_events().is_empty());
     println!(

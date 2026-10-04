@@ -186,9 +186,11 @@ define_class!(
                 return;
             };
             let uuid = unsafe { request.UUID() }.UUIDString().to_string();
-            PENDING.with(|p| {
-                p.borrow_mut().remove(&uuid);
-            });
+            // The cancellation notification is a separate object without
+            // the original request's completion delegate.
+            let Some(request) = PENDING.with(|p| p.borrow_mut().remove(&uuid)) else {
+                return;
+            };
             // AuthenticationServices waits for this acknowledgement before
             // dispatching the next request, even when the caller canceled.
             let error = unsafe {

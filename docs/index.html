@@ -69,8 +69,13 @@
       routing rules as other links.</li>
   </ul>
   <p>Authentication callbacks must return to Grinch to complete the pending session.
+    Grinch forwards the initial URL as a normal browser tab and cannot observe later
+    navigation. Apps that rely solely on the authentication-session callback can
+    remain waiting after sign-in.
     Custom-scheme callbacks work on macOS 13 and later; HTTPS host/path callbacks
     require macOS 14.4 or later.</p>
+  <p>Grinch does not advertise ephemeral-session support. macOS may handle those
+    requests in Safari instead, bypassing Grinch's routing rules.</p>
 </section>
 
 <section id="install">

@@ -53,8 +53,7 @@
          URL to the user's regular browser tab which inherits whatever
          cookies and profile are already in scope. Advertising the
          capability would mislead apps requesting `shouldUseEphemeral
-         Session`; better to let them detect the missing key and fall
-         back to a non-ephemeral flow themselves. -->
+         Session`. macOS may route those requests to Safari instead. -->
     <key>ASWebAuthenticationSessionWebBrowserSupportCapabilities</key>
     <dict>
         <key>IsSupported</key>

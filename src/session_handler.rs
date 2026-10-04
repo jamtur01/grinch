@@ -18,11 +18,11 @@
 // regular clicks. The user's chosen browser opens the URL as a normal
 // tab; the auth flow proceeds in that browser. (2) Eventually the
 // browser navigates to the callback URL (a custom scheme like
-// `slack://oauth-callback?token=…`); macOS routes the scheme to
+// `slack://oauth-callback?token=…`). If that URL is delivered back to
 // Grinch's regular `handle_url` / `application:openURLs:` /
-// `application:continueUserActivity:` entrypoints; before each of
-// those routes the URL through `engine.resolve` it calls
-// `try_complete_callback` here. That walks the pending-request map,
+// `application:continueUserActivity:` entrypoints, the handler calls
+// `try_complete_callback` before routing the URL through `engine.resolve`.
+// That walks the pending-request map,
 // finds a session whose callback matches the incoming URL, and calls
 // `completeWithCallbackURL:` — letting the originating app's
 // session-API completion handler fire normally and

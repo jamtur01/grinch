@@ -524,16 +524,16 @@ Apps that use `ASWebAuthenticationSession` for sign-in send their URLs through
 AuthenticationServices rather than ordinary URL delivery. Grinch routes these
 requests using the same browser rules as other links.
 
-Grinch's session handler forwards the auth URL through the same `engine.resolve()` machinery
-that handles regular clicks. The user's chosen browser opens the URL
-as a normal tab. When the browser eventually navigates to the
-callback URL (a custom scheme like `slack://oauth-callback?token=…`,
-or an HTTPS Universal-Links callback), Grinch's URL / activity
-handlers match the URL against pending sessions via the framework's
-`ASWebAuthenticationSessionCallback.matchesURL:` and call
-`completeWithCallbackURL:` — letting the originating app's
-session-API completion handler fire normally and dismissing the
-auth dialog cleanly.
+Grinch opens the initial authentication URL in the browser selected by your
+rules as a normal tab. It does not transfer the authentication session to that
+browser or observe its subsequent navigation.
+
+**Callback completion is best effort.** A callback must be delivered back to
+Grinch for it to complete the pending session. Grinch matches incoming callback
+URLs against pending requests and returns matching URLs to the originating app.
+Registering a callback with `ASWebAuthenticationSession` does not make Chrome
+send it to Grinch. Apps that rely solely on the session callback can remain
+waiting after sign-in, even though the authentication page opened successfully.
 
 On macOS 13 through 14.3, callback matching uses the legacy custom
 scheme API. HTTPS host/path callbacks require macOS 14.4 or later.
@@ -551,9 +551,8 @@ and skip browsers that don't advertise it.
 browser tab, which inherits their existing cookies and profile
 state, so the isolation Apple promises for
 `shouldUseEphemeralSession`-flagged requests isn't actually
-delivered. Apps that need ephemeral sessions see the missing key
-and fall back to a non-ephemeral flow. Apps that don't request
-ephemeral (the vast majority) are unaffected.
+delivered. macOS may handle requests for ephemeral sessions in Safari instead;
+those requests bypass Grinch's routing rules.
 
 ## Known Chrome behaviour: a link opens in a new window
 

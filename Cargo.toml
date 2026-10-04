@@ -10,6 +10,11 @@ repository = "https://github.com/jamtur01/grinch"
 name = "Grinch"
 path = "src/main.rs"
 
+[[test]]
+name = "session_dispatch"
+path = "src/session_dispatch_test.rs"
+harness = false
+
 [dependencies]
 objc2 = "0.6.4"
 block2 = "0.6.2"
@@ -47,6 +52,7 @@ features = [
     "NSOperation",
     "NSProcessInfo",
     "NSString",
+    "NSThread",
     "NSURL",
     "NSValue",
     "NSEnumerator",

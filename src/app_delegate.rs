@@ -931,13 +931,7 @@ fn terminate(mtm: MainThreadMarker) {
 /// forwarding. Looks up the delegate via the same DELEGATE_PTR the
 /// SIGHUP reload path uses; reads the engine through it and dispatches
 /// via session_handler::forward_through_engine.
-fn forward_auth_session_url(url: &str) {
-    // SAFETY: only called on the main thread (the auth-session manager
-    // dispatches its handler methods on the main run loop). MainThreadMarker
-    // is therefore valid; the unwrap can't fire in practice.
-    let Some(mtm) = MainThreadMarker::new() else {
-        return;
-    };
+fn forward_auth_session_url(url: &str, mtm: MainThreadMarker) {
     let p = DELEGATE_PTR.load(Ordering::Relaxed);
     if p.is_null() {
         return;

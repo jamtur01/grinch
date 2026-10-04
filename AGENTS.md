@@ -107,6 +107,7 @@ Check release references in `README.md` and `docs/index.html` when publishing.
 - `src/workspace.rs`: LaunchServices, app discovery, opener data, launches.
 - `src/chromium.rs`, `src/firefox.rs`: browser-family profiles and metadata.
 - `src/session_handler.rs`: AuthenticationServices requests and callbacks.
+- `src/session_dispatch_test.rs`: native main-loop authentication delivery regression check.
 - `bench/`: reproducible routing benchmarks.
 - `scripts/`: release and browser-window diagnostic tooling.
 - `docs/`: static project site.
@@ -139,7 +140,7 @@ Run the checks relevant to the change, with this as the standard Rust path:
 ```sh
 cargo fmt --all -- --check
 cargo clippy --release --all-targets -- -D warnings
-cargo test --release --bin Grinch
+cargo test --release --bin Grinch --test session_dispatch
 cargo deny check
 ```
 

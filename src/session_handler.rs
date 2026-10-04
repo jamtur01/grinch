@@ -40,23 +40,23 @@ use std::sync::OnceLock;
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::{AnyThread, MainThreadMarker, Message, define_class, msg_send, sel};
 use objc2_authentication_services::{
+    ASWebAuthenticationSessionErrorCode, ASWebAuthenticationSessionErrorDomain,
     ASWebAuthenticationSessionRequest, ASWebAuthenticationSessionWebBrowserSessionHandling,
     ASWebAuthenticationSessionWebBrowserSessionManager,
 };
 // ASWebAuthenticationSessionCallback isn't used by name, but its
 // feature flag in Cargo.toml is what unlocks `request.callback()`.
-use objc2_foundation::{NSError, NSString, NSURL};
+use objc2_foundation::{NSError, NSObjectNSThreadPerformAdditions, NSString, NSURL};
 
 use crate::engine::{Engine, ModifierFlags};
 use crate::workspace::{Opener, open_url};
 
 // Pending session requests, keyed by UUID string. Lives on the main
-// thread (the auth-services manager only dispatches on main, and the
-// URL handlers that try-complete are also main-thread-only), so a
-// `thread_local!` `RefCell` is sufficient — no `Mutex` ceremony, no
-// `Send`/`Sync` worries for the held `Retained<…Request>`.
+// thread. AuthenticationServices invokes handlers on worker threads;
+// both protocol methods enqueue their work on main before touching
+// this map or forwarding URLs to the app delegate.
 thread_local! {
     static PENDING: RefCell<HashMap<String, Retained<ASWebAuthenticationSessionRequest>>> =
         RefCell::new(HashMap::new());
@@ -69,7 +69,7 @@ thread_local! {
 /// avoids the handler holding a strong reference to the delegate
 /// (and the engine inside it), which would otherwise create a retain
 /// cycle (manager → handler → delegate → manager).
-type Forwarder = fn(&str);
+type Forwarder = fn(&str, MainThreadMarker);
 
 /// One-shot store for the URL-forwarding callback. `OnceLock` because the
 /// handler installs at startup and never replaces the forwarder, and
@@ -84,9 +84,9 @@ static FORWARDER: OnceLock<Forwarder> = OnceLock::new();
 /// call wins; subsequent calls swap the manager's handler (cheap) but
 /// don't replace the forwarder (OnceLock semantics) — fine because
 /// AppDelegate only installs once per process.
-pub fn install(mtm: MainThreadMarker, forwarder: Forwarder) {
+pub fn install(_mtm: MainThreadMarker, forwarder: Forwarder) {
     let _ = FORWARDER.set(forwarder);
-    let handler = Handler::new(mtm);
+    let handler = Handler::new();
     let manager = unsafe { ASWebAuthenticationSessionWebBrowserSessionManager::sharedManager() };
     let proto: &ProtocolObject<dyn ASWebAuthenticationSessionWebBrowserSessionHandling> =
         ProtocolObject::from_ref(&*handler);
@@ -116,7 +116,7 @@ pub fn forward_through_engine(url: &str, engine: &Engine, mtm: MainThreadMarker)
 
 define_class!(
     #[unsafe(super = NSObject)]
-    #[thread_kind = MainThreadOnly]
+    #[thread_kind = AnyThread]
     #[name = "GrinchAuthSessionHandler"]
     #[ivars = ()]
     pub struct Handler;
@@ -124,17 +124,22 @@ define_class!(
     unsafe impl NSObjectProtocol for Handler {}
 
     unsafe impl ASWebAuthenticationSessionWebBrowserSessionHandling for Handler {
-        // Apple calls this on the main thread when an app starts a new
-        // ASWebAuthenticationSession and Grinch is the registered
-        // session handler. The request's `URL` is the auth provider's
-        // start URL (e.g. `https://slack.com/oauth/v2/authorize?...`).
-        // Stash the request in the pending map so the eventual
-        // callback can complete it, then forward the start URL through
-        // engine.resolve so the user's preferred browser opens the
-        // auth flow.
         #[unsafe(method(beginHandlingWebAuthenticationSessionRequest:))]
         fn begin_handling(&self, request: Option<&ASWebAuthenticationSessionRequest>) {
             let Some(request) = request else { return };
+            let Some(mtm) = MainThreadMarker::new() else {
+                // Foundation retains the receiver and request until main
+                // invokes this selector. No request state crosses threads
+                // through Rust references or a Send implementation.
+                unsafe {
+                    self.performSelectorOnMainThread_withObject_waitUntilDone(
+                        sel!(beginHandlingWebAuthenticationSessionRequest:),
+                        Some(request),
+                        false,
+                    );
+                }
+                return;
+            };
             let url = unsafe { request.URL() };
             let href = url
                 .absoluteString()
@@ -159,7 +164,7 @@ define_class!(
                 p.borrow_mut().insert(uuid, request.retain());
             });
             if let Some(cb) = FORWARDER.get() {
-                cb(&href);
+                cb(&href, mtm);
             }
         }
 
@@ -169,10 +174,31 @@ define_class!(
         #[unsafe(method(cancelWebAuthenticationSessionRequest:))]
         fn cancel_handling(&self, request: Option<&ASWebAuthenticationSessionRequest>) {
             let Some(request) = request else { return };
+            let Some(_mtm) = MainThreadMarker::new() else {
+                // Keep cancellation ordered with request delivery on main.
+                unsafe {
+                    self.performSelectorOnMainThread_withObject_waitUntilDone(
+                        sel!(cancelWebAuthenticationSessionRequest:),
+                        Some(request),
+                        false,
+                    );
+                }
+                return;
+            };
             let uuid = unsafe { request.UUID() }.UUIDString().to_string();
             PENDING.with(|p| {
                 p.borrow_mut().remove(&uuid);
             });
+            // AuthenticationServices waits for this acknowledgement before
+            // dispatching the next request, even when the caller canceled.
+            let error = unsafe {
+                NSError::errorWithDomain_code_userInfo(
+                    ASWebAuthenticationSessionErrorDomain,
+                    ASWebAuthenticationSessionErrorCode::CanceledLogin.0,
+                    None,
+                )
+            };
+            unsafe { request.cancelWithError(&error) };
         }
     }
 );
@@ -249,8 +275,8 @@ fn legacy_callback_matches(scheme: Option<&NSString>, url: &NSURL) -> bool {
 }
 
 impl Handler {
-    pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(());
+    pub fn new() -> Retained<Self> {
+        let this = Self::alloc().set_ivars(());
         unsafe { msg_send![super(this), init] }
     }
 }

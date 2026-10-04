@@ -48,4 +48,4 @@ jobs:
         run: cargo clippy --release --all-targets -- -D warnings
 
       - name: cargo test
-        run: cargo test --release --bin Grinch
+        run: cargo test --release --bin Grinch --test session_dispatch

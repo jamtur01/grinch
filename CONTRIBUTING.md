@@ -114,7 +114,7 @@ HOME=/tmp/scratch ./target/release/Grinch --test "https://x.example/"
 ### Tests
 
 ```sh
-cargo test --release --bin Grinch
+cargo test --release --bin Grinch --test session_dispatch
 ```
 
 CI runs the same command on every push and PR (see
@@ -127,6 +127,11 @@ New tests should target real bugs or real behaviour, not implementation
 details. The bar is "would removing this test let a real bug ship?".
 Look at `src/engine.rs::tests` and `src/chromium.rs::tests` for the
 existing style.
+
+The `session_dispatch` target owns the main run loop to test authentication
+requests arriving on worker threads, including cancellation and callback
+completion. It uses synthetic requests without launching browsers, loading
+the user config, or writing to the user's diagnostic logs.
 
 Use `isolated_diagnostics()` for test diagnostics. Tests of default log paths
 must use a private temporary HOME; no test should write to a real user's

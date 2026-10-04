@@ -83,6 +83,16 @@ make build                      # same plus assembles Grinch.app
 make build UNIVERSAL=1          # universal arm64+x86_64, for releases
 ```
 
+`make build` signs with the selected Developer ID Application certificate when
+one is available. `scripts/sign-app.sh` adds the application-identifier
+entitlement from that certificate's team and the bundle ID, then verifies the
+signature and entitlement on every architecture. AuthenticationServices needs
+this identity to deliver sign-in requests. Ad-hoc builds can route ordinary
+URLs, but cannot be used to verify authentication-session delivery.
+
+To build without registering another copy with LaunchServices, use
+`make build LSREGISTER=/usr/bin/true`.
+
 CLI modes bypass the menu-bar app and are useful while iterating:
 
 ```sh

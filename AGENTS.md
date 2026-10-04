@@ -78,7 +78,7 @@ URL events.
 
 ### App identity or packaging
 
-Read `brand/`, the icon targets in `Makefile`, and `Info.plist`. The source
+Read `brand/`, the icon targets in `Makefile`, `scripts/sign-app.sh`, and `Info.plist`. The source
 iconset uses macOS `@2x` filenames; changing them can make `iconutil` silently
 omit Retina representations. The menu-bar image is a template asset so AppKit
 can tint it for the current appearance.

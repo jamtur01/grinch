@@ -2,6 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- scripts/sign-app.sh adds com.apple.application-identifier using the
+         signing certificate's TeamIdentifier and the bundle's identifier.
+         AuthenticationServices needs this signed identity to deliver requests. -->
     <!-- JavaScriptCore compiles JS to native code at runtime; hardened runtime
          kills processes that allocate W^X memory unless this entitlement is
          present. Required for any embedded JSC. -->

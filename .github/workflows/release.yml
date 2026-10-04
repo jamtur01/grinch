@@ -106,6 +106,10 @@ jobs:
           fi
           # Sanity-check the binary really is fat.
           lipo -info Grinch.app/Contents/MacOS/Grinch
+          codesign --verify --deep --strict --all-architectures \
+            --test-requirement='=anchor apple generic and
+              entitlement["com.apple.application-identifier"] exists' \
+            Grinch.app
 
       - name: Notarize and staple Grinch.app
         env:

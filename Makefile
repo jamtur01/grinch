@@ -73,15 +73,7 @@ endif
 	@cp $(ICON_ICNS) $(BUNDLE)/Resources/grinch.icns
 	@cp $(STATUS_ICON) $(BUNDLE)/Resources/grinchTemplate.png
 	@cp $(STATUS_ICON_2X) $(BUNDLE)/Resources/
-ifeq ($(MACOS_CODESIGN_IDENTITY),)
-	@codesign --deep --force --sign - $(APP)
-	@echo "Built $(APP) (ad-hoc signed — Accessibility grant won't survive rebuilds)"
-else
-	@codesign --deep --force --options runtime --timestamp \
-	    --entitlements Grinch.entitlements \
-	    --sign "$(MACOS_CODESIGN_IDENTITY)" $(APP)
-	@echo "Built $(APP) (signed with $(MACOS_CODESIGN_IDENTITY))"
-endif
+	@bash scripts/sign-app.sh "$(APP)" "$(MACOS_CODESIGN_IDENTITY)"
 	@$(LSREGISTER) -f $(APP)
 	@touch $(APP)
 

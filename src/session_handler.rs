@@ -38,8 +38,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
-use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{AnyThread, MainThreadMarker, Message, define_class, msg_send, sel};
 use objc2_authentication_services::{
     ASWebAuthenticationSessionErrorCode, ASWebAuthenticationSessionErrorDomain,
@@ -48,7 +49,10 @@ use objc2_authentication_services::{
 };
 // ASWebAuthenticationSessionCallback isn't used by name, but its
 // feature flag in Cargo.toml is what unlocks `request.callback()`.
-use objc2_foundation::{NSError, NSObjectNSThreadPerformAdditions, NSString, NSURL};
+use objc2_foundation::{
+    NSDictionary, NSError, NSLocalizedDescriptionKey, NSObjectNSThreadPerformAdditions, NSString,
+    NSURL,
+};
 
 use crate::engine::{Engine, ModifierFlags};
 use crate::workspace::{Opener, open_url};
@@ -66,17 +70,17 @@ thread_local! {
 }
 
 /// Installed lazily by `install` and called from the handler's protocol
-/// methods. Holds a function pointer that takes the request URL string
-/// and looks up the configured engine via the AppDelegate, then routes
-/// the URL through `engine.resolve` and `open_url`. The indirection
+/// methods. Takes the request UUID and URL, looks up the configured engine
+/// via the AppDelegate, then routes through `engine.resolve` and `open_url`.
+/// An error finishes the retained native request. The indirection
 /// avoids the handler holding a strong reference to the delegate
 /// (and the engine inside it), which would otherwise create a retain
 /// cycle (manager → handler → delegate → manager).
-type Forwarder = fn(&str, MainThreadMarker);
+type Forwarder = fn(&str, &str, MainThreadMarker) -> Result<(), &'static str>;
 
 /// One-shot store for the URL-forwarding callback. `OnceLock` because the
 /// handler installs at startup and never replaces the forwarder, and
-/// because `static mut` for an `Option<fn(&str)>` would otherwise need
+/// because `static mut` for an optional function pointer would otherwise need
 /// hand-rolled unsafe — the OnceLock here is the same shape with the
 /// memory-safety guarantees provided by the standard library.
 static FORWARDER: OnceLock<Forwarder> = OnceLock::new();
@@ -112,11 +116,19 @@ pub fn finish_startup(mtm: MainThreadMarker) {
 fn forward_pending_request(uuid: &str, mtm: MainThreadMarker) {
     let request = PENDING.with(|pending| pending.borrow().get(uuid).cloned());
     let Some(request) = request else { return };
-    if let Some(forwarder) = FORWARDER.get() {
-        let href = unsafe { request.URL() }
-            .absoluteString()
-            .unwrap_or_default();
-        forwarder(&href.to_string(), mtm);
+    let Some(forwarder) = FORWARDER.get() else {
+        fail_pending_request(
+            uuid,
+            "Grinch's authentication router is unavailable; restart Grinch",
+            mtm,
+        );
+        return;
+    };
+    let href = unsafe { request.URL() }
+        .absoluteString()
+        .unwrap_or_default();
+    if let Err(message) = forwarder(uuid, &href.to_string(), mtm) {
+        fail_pending_request(uuid, message, mtm);
     }
 }
 
@@ -124,7 +136,14 @@ fn forward_pending_request(uuid: &str, mtm: MainThreadMarker) {
 /// frontmost-app context — auth sessions don't carry the caller pid
 /// in a way we can query) and default modifier flags. Used by both
 /// `install` callers and the protocol method bodies.
-pub fn forward_through_engine(url: &str, engine: &Engine, mtm: MainThreadMarker) {
+/// A request UUID connects launch failures to native cancellation; ordinary
+/// Universal Links pass `None` and keep their existing diagnostic-only handling.
+pub fn forward_through_engine(
+    url: &str,
+    engine: &Engine,
+    uuid: Option<&str>,
+    mtm: MainThreadMarker,
+) {
     let opener = Opener {
         bundle_id: "com.apple.AuthenticationServices".to_string(),
         name: "AuthenticationServices".to_string(),
@@ -132,10 +151,47 @@ pub fn forward_through_engine(url: &str, engine: &Engine, mtm: MainThreadMarker)
         pid: 0,
     };
     let result = engine.resolve(url, &opener, ModifierFlags::default());
-    if result.browser.bundle_id.is_empty() {
-        return; // suppressed (rule explicitly dropped)
+    let uuid = uuid.map(str::to_owned);
+    open_url(
+        &result.url,
+        &result.browser,
+        engine.diagnostics(),
+        mtm,
+        move |message| {
+            let Some(uuid) = uuid.clone() else { return };
+            let message = message.to_string();
+            // Only owned Rust strings cross the worker boundary. The native request
+            // stays on main and may already have been completed or canceled there.
+            DispatchQueue::main().exec_async(move || {
+                // SAFETY: libdispatch's main queue executes on the main thread.
+                let mtm = unsafe { MainThreadMarker::new_unchecked() };
+                fail_pending_request(&uuid, &message, mtm);
+            });
+        },
+    );
+}
+
+fn fail_pending_request(uuid: &str, message: &str, _mtm: MainThreadMarker) {
+    let request = PENDING.with(|pending| pending.borrow_mut().remove(uuid));
+    if let Some(request) = request {
+        cancel_request(&request, message);
     }
-    open_url(&result.url, &result.browser, engine.diagnostics(), mtm);
+}
+
+fn cancel_request(request: &ASWebAuthenticationSessionRequest, message: &str) {
+    let description = NSString::from_str(message);
+    let info = NSDictionary::<NSString, AnyObject>::from_slices(
+        &[unsafe { NSLocalizedDescriptionKey }],
+        &[&description],
+    );
+    let error = unsafe {
+        NSError::errorWithDomain_code_userInfo(
+            ASWebAuthenticationSessionErrorDomain,
+            ASWebAuthenticationSessionErrorCode::CanceledLogin.0,
+            Some(&info),
+        )
+    };
+    unsafe { request.cancelWithError(&error) };
 }
 
 define_class!(
@@ -173,9 +229,7 @@ define_class!(
                 // No URL → can't route, can't complete. Tell the
                 // originating app immediately so its completion handler
                 // fires with a real error rather than hanging.
-                let domain = NSString::from_str("com.grinch.AuthSession");
-                let err = unsafe { NSError::errorWithDomain_code_userInfo(&domain, 1, None) };
-                unsafe { request.cancelWithError(&err) };
+                cancel_request(request, "Authentication request has no URL");
                 return;
             }
             // Stash before forwarding so a (theoretical) immediate
@@ -206,7 +260,7 @@ define_class!(
         #[unsafe(method(cancelWebAuthenticationSessionRequest:))]
         fn cancel_handling(&self, request: Option<&ASWebAuthenticationSessionRequest>) {
             let Some(request) = request else { return };
-            let Some(_mtm) = MainThreadMarker::new() else {
+            let Some(mtm) = MainThreadMarker::new() else {
                 // Keep cancellation ordered with request delivery on main.
                 unsafe {
                     self.performSelectorOnMainThread_withObject_waitUntilDone(
@@ -220,19 +274,9 @@ define_class!(
             let uuid = unsafe { request.UUID() }.UUIDString().to_string();
             // The cancellation notification is a separate object without
             // the original request's completion delegate.
-            let Some(request) = PENDING.with(|p| p.borrow_mut().remove(&uuid)) else {
-                return;
-            };
             // AuthenticationServices waits for this acknowledgement before
             // dispatching the next request, even when the caller canceled.
-            let error = unsafe {
-                NSError::errorWithDomain_code_userInfo(
-                    ASWebAuthenticationSessionErrorDomain,
-                    ASWebAuthenticationSessionErrorCode::CanceledLogin.0,
-                    None,
-                )
-            };
-            unsafe { request.cancelWithError(&error) };
+            fail_pending_request(&uuid, "Authentication was canceled", mtm);
         }
     }
 );
@@ -276,8 +320,8 @@ pub fn try_complete_callback(url_str: &str) -> bool {
             if !request_matches_callback(&request, &url_ns) {
                 continue;
             }
-            unsafe { request.completeWithCallbackURL(&url_ns) };
             p.borrow_mut().remove(&key);
+            unsafe { request.completeWithCallbackURL(&url_ns) };
             return true;
         }
         false

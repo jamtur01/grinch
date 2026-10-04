@@ -17,6 +17,7 @@ mod loader;
 mod session_handler;
 mod workspace;
 
+use std::cell::RefCell;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -34,6 +35,17 @@ use objc2_foundation::{
 };
 
 static EVENTS: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
+static CANCELLATIONS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+enum Forwarding {
+    Record,
+    Route(Box<engine::Engine>),
+    Unavailable,
+}
+
+thread_local! {
+    static FORWARDING: RefCell<Forwarding> = const { RefCell::new(Forwarding::Record) };
+}
 
 struct RequestIvars {
     url: Retained<NSURL>,
@@ -86,8 +98,12 @@ define_class!(
         }
 
         #[unsafe(method(authenticationSessionRequest:didCancelWithError:))]
-        fn cancel(&self, _request: &ASWebAuthenticationSessionRequest, error: &NSError) {
+        fn cancel(&self, request: &ASWebAuthenticationSessionRequest, error: &NSError) {
             record(format!("cancel:{}:{}", error.domain(), error.code()));
+            CANCELLATIONS.lock().unwrap().push((
+                unsafe { request.UUID() }.UUIDString().to_string(),
+                error.localizedDescription().to_string(),
+            ));
         }
     }
 );
@@ -123,11 +139,20 @@ fn record(event: String) {
         .push((event, MainThreadMarker::new().is_some()));
 }
 
-fn forwarded(url: &str, _mtm: MainThreadMarker) {
-    record(format!("forward:{url}"));
+fn forwarded(uuid: &str, url: &str, mtm: MainThreadMarker) -> Result<(), &'static str> {
+    FORWARDING.with(|forwarding| {
+        match &*forwarding.borrow() {
+            Forwarding::Record => record(format!("forward:{url}")),
+            Forwarding::Route(engine) => {
+                session_handler::forward_through_engine(url, engine, Some(uuid), mtm);
+            }
+            Forwarding::Unavailable => return Err("Configuration unavailable; fix it and reload"),
+        }
+        Ok(())
+    })
 }
 
-fn deliver_from_worker(url: &'static str, cancel: bool) {
+fn deliver_from_worker(url: &'static str, cancel: bool) -> String {
     std::thread::spawn(move || {
         assert!(MainThreadMarker::new().is_none());
         let request = Request::new(url, None);
@@ -142,9 +167,10 @@ fn deliver_from_worker(url: &'static str, cancel: bool) {
             }
         }
         // Both local retains go away before main handles the request.
+        request.ivars().uuid.UUIDString().to_string()
     })
     .join()
-    .unwrap();
+    .unwrap()
 }
 
 fn wait_for_events(count: usize) {
@@ -211,6 +237,151 @@ fn verify_startup_queue(mtm: MainThreadMarker) {
     );
 }
 
+fn canceled_event() -> String {
+    format!(
+        "cancel:{}:{}",
+        unsafe { ASWebAuthenticationSessionErrorDomain },
+        ASWebAuthenticationSessionErrorCode::CanceledLogin.0
+    )
+}
+
+fn verify_cancellation(uuid: &str, reason: &str) {
+    wait_for_events(1);
+    assert_eq!(take_events(), [canceled_event()]);
+    let errors = std::mem::take(&mut *CANCELLATIONS.lock().unwrap());
+    assert_eq!(
+        errors.len(),
+        1,
+        "each failed request must finish exactly once"
+    );
+    assert_eq!(errors[0].0, uuid);
+    assert!(
+        !errors[0].1.is_empty(),
+        "failed requests need an error description"
+    );
+    assert!(errors[0].1.contains(reason), "unexpected error: {errors:?}");
+    assert!(!session_handler::try_complete_callback(
+        "grinch-auth-test://done"
+    ));
+}
+
+fn verify_failed_routes() {
+    CANCELLATIONS.lock().unwrap().clear();
+    FORWARDING.with(|forwarding| *forwarding.borrow_mut() = Forwarding::Unavailable);
+    let uuid = deliver_from_worker("https://example.invalid/no-config", false);
+    verify_cancellation(&uuid, "Configuration unavailable");
+
+    for (config, reason) in [
+        ("{ default: { appType: 'none' } }", "URL suppressed"),
+        (
+            "{ default: 'com.grinch.test.missing-browser' }",
+            "Browser not found",
+        ),
+        (
+            "{ default: 'com.grinch.test.missing-browser',
+               rewrite: [{ match: () => true, url: '--incognito' }] }",
+            "Invalid URL",
+        ),
+        (
+            "{ default: 'com.grinch.test.missing-browser',
+               rewrite: [{ match: () => true, url: 'https://[invalid' }] }",
+            "Invalid URL",
+        ),
+    ] {
+        let engine =
+            engine::integration_tests::build_engine(&format!("module.exports = {config};"));
+        FORWARDING
+            .with(|forwarding| *forwarding.borrow_mut() = Forwarding::Route(Box::new(engine)));
+        let uuid = deliver_from_worker("https://example.invalid/failed", false);
+        verify_cancellation(&uuid, reason);
+    }
+}
+
+fn verify_native_launch_failures() {
+    // Parse a real bundle identity, then remove the fixture before launch.
+    // Both native launch strategies must fail without opening any application.
+    for args in ["", "args: ['--test'],"] {
+        let path = std::env::temp_dir().join(format!("grinch-{}.app", NSUUID::new().UUIDString()));
+        let contents = path.join("Contents");
+        std::fs::create_dir_all(&contents).unwrap();
+        std::fs::write(
+            contents.join("Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
+                <key>CFBundleIdentifier</key><string>com.grinch.test.unlaunchable</string>
+                <key>CFBundleExecutable</key><string>missing</string>
+                <key>CFBundlePackageType</key><string>APPL</string>
+            </dict></plist>"#,
+        )
+        .unwrap();
+        let config = format!(
+            "module.exports = {{ default: {{ name: {}, appType: 'path', {args} }} }};",
+            serde_json::to_string(&path).unwrap(),
+        );
+        let engine = engine::integration_tests::build_engine(&config);
+        let log_path = engine.diagnostics().ensure_file().unwrap();
+        let resolved = engine.resolve(
+            "https://example.invalid/auth",
+            &workspace::Opener::default(),
+            engine::ModifierFlags::default(),
+        );
+        assert_eq!(resolved.browser.bundle_id, "com.grinch.test.unlaunchable");
+        std::fs::remove_dir_all(&path).unwrap();
+        FORWARDING
+            .with(|forwarding| *forwarding.borrow_mut() = Forwarding::Route(Box::new(engine)));
+        let uuid = deliver_from_worker("https://example.invalid/native-failure", false);
+        verify_cancellation(&uuid, "");
+        let log = std::fs::read_to_string(log_path).unwrap();
+        let event: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        let strategy = if args.is_empty() {
+            "open_urls"
+        } else {
+            "launch_new_instance"
+        };
+        assert_eq!(event["strategy"], strategy);
+        assert!(
+            event["errorDomain"].is_string(),
+            "expected a native launch failure"
+        );
+    }
+}
+
+fn verify_late_failures_do_not_finish_twice() {
+    let engine = engine::integration_tests::build_engine(
+        "module.exports = { default: 'com.grinch.test.missing-browser' };",
+    );
+    FORWARDING.with(|forwarding| *forwarding.borrow_mut() = Forwarding::Route(Box::new(engine)));
+    let manager = unsafe { ASWebAuthenticationSessionWebBrowserSessionManager::sharedManager() };
+    let handler = unsafe { manager.sessionHandler() };
+    for cancel in [false, true] {
+        let request = Request::new("https://example.invalid/late-failure", None);
+        unsafe { handler.beginHandlingWebAuthenticationSessionRequest(Some(&request)) };
+        if cancel {
+            let notification = Request::new(
+                "https://example.invalid/late-failure",
+                Some(&request.ivars().uuid),
+            );
+            unsafe { handler.cancelWebAuthenticationSessionRequest(Some(&notification)) };
+        } else {
+            assert!(session_handler::try_complete_callback(
+                "grinch-auth-test://done"
+            ));
+        }
+        dispatch2::DispatchQueue::main().exec_async(|| record("drained".to_string()));
+        wait_for_events(2);
+        let expected = if cancel {
+            canceled_event()
+        } else {
+            "complete:grinch-auth-test://done".to_string()
+        };
+        assert_eq!(take_events(), [expected, "drained".to_string()]);
+        assert!(!session_handler::try_complete_callback(
+            "grinch-auth-test://done"
+        ));
+        assert_eq!(CANCELLATIONS.lock().unwrap().len(), usize::from(cancel));
+        CANCELLATIONS.lock().unwrap().clear();
+    }
+}
+
 fn main() {
     let mtm = MainThreadMarker::new().expect("harness must own the main thread");
     session_handler::install(mtm, forwarded);
@@ -255,7 +426,7 @@ fn main() {
 
     deliver_from_worker("", false);
     wait_for_events(1);
-    assert_eq!(take_events(), ["cancel:com.grinch.AuthSession:1"]);
+    assert_eq!(take_events(), [canceled_event()]);
     assert!(!session_handler::try_complete_callback(
         "grinch-auth-test://done"
     ));
@@ -270,7 +441,8 @@ fn main() {
         handler.cancelWebAuthenticationSessionRequest(Some(&unknown));
     }
     assert!(take_events().is_empty());
-    println!(
-        "Authentication request delivery, completion, cancellation, and invalid URL checks passed"
-    );
+    verify_failed_routes();
+    verify_native_launch_failures();
+    verify_late_failures_do_not_finish_twice();
+    println!("Authentication startup, completion, cancellation, and launch failure checks passed");
 }

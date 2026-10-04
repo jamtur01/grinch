@@ -528,6 +528,11 @@ Grinch opens the initial authentication URL in the browser selected by your
 rules as a normal tab. It does not transfer the authentication session to that
 browser or observe its subsequent navigation.
 
+Requests received during startup wait for the initial configuration load attempt.
+If configuration is unavailable, routing suppresses the URL, or the browser cannot
+be opened, Grinch finishes the authentication request with an error. Requests
+canceled during startup do not launch a browser.
+
 **Callback completion is best effort.** A callback must be delivered back to
 Grinch for it to complete the pending session. Grinch matches incoming callback
 URLs against pending requests and returns matching URLs to the originating app.

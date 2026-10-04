@@ -814,22 +814,25 @@ fn prepare_launch(
     url: &str,
     spec: &BrowserSpec,
     diagnostics: &DiagnosticLog,
-) -> Option<(LaunchPlan, Retained<NSURL>, Retained<NSURL>)> {
+) -> Result<(LaunchPlan, Retained<NSURL>, Retained<NSURL>), &'static str> {
     // Decide the launch strategy before native validation. The pure `LaunchPlan`
     // boundary also lets routing diagnostics report the chosen strategy.
     let plan = LaunchPlan::from_spec(spec, url);
     if let LaunchPlan::Suppress = plan {
-        if !spec.bundle_id.is_empty() {
-            let message = "Invalid URL; expected an absolute URL with a scheme";
-            eprintln!("grinch: {message}: {url:?}");
-            diagnostics.write_event(launch_error_event(
-                url,
-                &spec.bundle_id,
-                plan.strategy(),
-                message,
-            ));
+        if spec.bundle_id.is_empty() {
+            return Err(
+                "URL suppressed by configuration; check your routing rules and browser profile",
+            );
         }
-        return None;
+        let message = "Invalid URL; expected an absolute URL with a scheme";
+        eprintln!("grinch: {message}: {url:?}");
+        diagnostics.write_event(launch_error_event(
+            url,
+            &spec.bundle_id,
+            plan.strategy(),
+            message,
+        ));
+        return Err(message);
     }
     let Some(url_ns) = NSURL::URLWithString(&NSString::from_str(url)) else {
         eprintln!("grinch: invalid URL: {url}");
@@ -839,7 +842,7 @@ fn prepare_launch(
             plan.strategy(),
             "Invalid URL",
         ));
-        return None;
+        return Err("Invalid URL");
     };
 
     let Some(app_url) = browser_app_url(spec) else {
@@ -857,21 +860,33 @@ fn prepare_launch(
             plan.strategy(),
             "Browser not found; update your config to reference an installed browser",
         ));
-        return None;
+        return Err("Browser not found; update your config to reference an installed browser");
     };
-    Some((plan, url_ns, app_url))
+    Ok((plan, url_ns, app_url))
 }
 
 /// Open `url` in the given browser app. If the bundle ID is empty (suppress),
-/// do nothing. If the bundle ID is non-empty but no installed app matches it,
+/// report suppression without launching. If no installed app matches the ID,
 /// the URL is dropped with a one-time warning — NOT routed to the system
 /// default browser. Falling back to `NSWorkspace.openURL` with no app would
 /// bounce the URL straight back to Grinch (the usual default browser) and
 /// loop forever; `prepare_launch` records the failure instead.
-pub fn open_url(url: &str, spec: &BrowserSpec, diagnostics: &DiagnosticLog, mtm: MainThreadMarker) {
+/// `on_failure` receives suppression, validation, or native launch errors. Native
+/// completions can run on a worker queue and outlive the current engine.
+pub fn open_url(
+    url: &str,
+    spec: &BrowserSpec,
+    diagnostics: &DiagnosticLog,
+    mtm: MainThreadMarker,
+    on_failure: impl Fn(&str) + Send + Sync + 'static,
+) {
     let _ = mtm;
-    let Some((plan, url_ns, app_url)) = prepare_launch(url, spec, diagnostics) else {
-        return;
+    let (plan, url_ns, app_url) = match prepare_launch(url, spec, diagnostics) {
+        Ok(prepared) => prepared,
+        Err(message) => {
+            on_failure(message);
+            return;
+        }
     };
     let workspace = NSWorkspace::sharedWorkspace();
     let cfg = NSWorkspaceOpenConfiguration::configuration();
@@ -891,6 +906,7 @@ pub fn open_url(url: &str, spec: &BrowserSpec, diagnostics: &DiagnosticLog, mtm:
         spec.bundle_id.clone(),
         url.to_string(),
         diagnostics.event_sink(),
+        on_failure,
     );
 
     match plan {
@@ -978,6 +994,7 @@ fn launch_completion_handler(
     bundle: String,
     url: String,
     record_event: impl Fn(serde_json::Value) + Send + Sync + 'static,
+    on_failure: impl Fn(&str) + Send + Sync + 'static,
 ) -> RcBlock<dyn Fn(*mut NSRunningApplication, *mut NSError)> {
     RcBlock::new(
         move |_app: *mut NSRunningApplication, error: *mut NSError| {
@@ -996,6 +1013,7 @@ fn launch_completion_handler(
                 event["errorDomain"] = serde_json::json!(err.domain().to_string());
                 event["errorCode"] = serde_json::json!(err.code());
                 record_event(event);
+                on_failure(&message);
             }
         },
     )
@@ -1012,11 +1030,14 @@ mod tests {
         for strategy in ["open_urls", "launch_new_instance"] {
             let record_event = diagnostics.event_sink();
             std::thread::spawn(move || {
+                let failures = Arc::new(Mutex::new(Vec::new()));
+                let observed = Arc::clone(&failures);
                 let handler = launch_completion_handler(
                     strategy,
                     "missing.browser".to_string(),
                     "https://example.com/".to_string(),
                     record_event,
+                    move |message| observed.lock().unwrap().push(message.to_string()),
                 );
                 let error = unsafe {
                     NSError::errorWithDomain_code_userInfo(
@@ -1027,6 +1048,11 @@ mod tests {
                 };
                 handler.call((std::ptr::null_mut(), Retained::as_ptr(&error).cast_mut()));
                 handler.call((std::ptr::null_mut(), std::ptr::null_mut()));
+                assert_eq!(
+                    *failures.lock().unwrap(),
+                    [error.localizedDescription().to_string()],
+                    "only native errors should invoke the failure callback"
+                );
             })
             .join()
             .unwrap();
@@ -1065,12 +1091,12 @@ mod tests {
             &Opener::default(),
             ModifierFlags::default(),
         );
-        assert!(prepare_launch("--incognito", &result.browser, diagnostics).is_none());
-        assert!(prepare_launch("https://[invalid", &result.browser, diagnostics).is_none());
-        assert!(prepare_launch("https://example.com/", &result.browser, diagnostics).is_none());
+        assert!(prepare_launch("--incognito", &result.browser, diagnostics).is_err());
+        assert!(prepare_launch("https://[invalid", &result.browser, diagnostics).is_err());
+        assert!(prepare_launch("https://example.com/", &result.browser, diagnostics).is_err());
         let mut suppressed = (*result.browser).clone();
         suppressed.bundle_id.clear();
-        assert!(prepare_launch("https://example.com/", &suppressed, diagnostics).is_none());
+        assert!(prepare_launch("https://example.com/", &suppressed, diagnostics).is_err());
         let rows: Vec<serde_json::Value> = std::fs::read_to_string(path)
             .unwrap()
             .lines()

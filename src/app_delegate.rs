@@ -151,7 +151,7 @@ define_class!(
                 if result.browser.bundle_id.is_empty() {
                     continue;
                 }
-                open_url(&result.url, &result.browser, engine.diagnostics(), self.mtm());
+                open_url(&result.url, &result.browser, engine.diagnostics(), self.mtm(), |_| {});
             }
         }
 
@@ -207,7 +207,7 @@ define_class!(
             let Some(engine) = engine_ref.as_ref() else {
                 return Bool::NO;
             };
-            crate::session_handler::forward_through_engine(&href, engine, self.mtm());
+            crate::session_handler::forward_through_engine(&href, engine, None, self.mtm());
             Bool::YES
         }
 
@@ -390,7 +390,7 @@ define_class!(
             if result.browser.bundle_id.is_empty() {
                 return; // suppressed (open: null)
             }
-            open_url(&result.url, &result.browser, engine.diagnostics(), self.mtm());
+            open_url(&result.url, &result.browser, engine.diagnostics(), self.mtm(), |_| {});
         }
 
         // Menu bar action: Reload Config.
@@ -930,10 +930,14 @@ fn terminate(mtm: MainThreadMarker) {
 /// forwarding. Looks up the delegate via the same DELEGATE_PTR the
 /// SIGHUP reload path uses; reads the engine through it and dispatches
 /// via session_handler::forward_through_engine.
-fn forward_auth_session_url(url: &str, mtm: MainThreadMarker) {
+fn forward_auth_session_url(
+    uuid: &str,
+    url: &str,
+    mtm: MainThreadMarker,
+) -> Result<(), &'static str> {
     let p = DELEGATE_PTR.load(Ordering::Relaxed);
     if p.is_null() {
-        return;
+        return Err("Grinch's authentication router is unavailable; restart Grinch");
     }
     // The pointer was stored from a `Retained<Delegate>` that lives for
     // the lifetime of the process (NSApplication holds the strong ref).
@@ -941,9 +945,10 @@ fn forward_auth_session_url(url: &str, mtm: MainThreadMarker) {
     let delegate: &Delegate = unsafe { &*(p as *const Delegate) };
     let engine_ref = delegate.ivars().engine.borrow();
     let Some(engine) = engine_ref.as_ref() else {
-        return;
+        return Err("Grinch could not load its configuration; fix your config and reload it");
     };
-    crate::session_handler::forward_through_engine(url, engine, mtm);
+    crate::session_handler::forward_through_engine(url, engine, Some(uuid), mtm);
+    Ok(())
 }
 
 /// If `url` uses the `grinch:` scheme (an opt-in routing hook for scripts:

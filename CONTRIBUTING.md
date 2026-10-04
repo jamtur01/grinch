@@ -129,9 +129,10 @@ Look at `src/engine.rs::tests` and `src/chromium.rs::tests` for the
 existing style.
 
 The `session_dispatch` target owns the main run loop to test authentication
-requests arriving on worker threads, including cancellation and callback
-completion. It uses synthetic requests without launching browsers, loading
-the user config, or writing to the user's diagnostic logs.
+requests arriving on worker threads, including startup queuing, cancellation,
+callback completion, and launch failures. It uses synthetic requests and removed
+app-bundle fixtures without opening browsers, loading the user config, or writing
+to the user's diagnostic logs.
 
 Use `isolated_diagnostics()` for test diagnostics. Tests of default log paths
 must use a private temporary HOME; no test should write to a real user's

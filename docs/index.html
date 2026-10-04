@@ -68,6 +68,10 @@
       from apps using <code>ASWebAuthenticationSession</code> use the same browser
       routing rules as other links.</li>
   </ul>
+  <p>Authentication requests received during startup wait for the initial configuration
+    load attempt. Grinch returns an error if configuration is unavailable, routing
+    suppresses the URL, or the browser cannot be opened. Requests canceled during
+    startup do not launch a browser.</p>
   <p>Authentication callbacks must return to Grinch to complete the pending session.
     Grinch forwards the initial URL as a normal browser tab and cannot observe later
     navigation. Apps that rely solely on the authentication-session callback can

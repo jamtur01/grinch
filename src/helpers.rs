@@ -491,7 +491,7 @@ console = {
 //
 // Mirrors Finicky v4's `finicky.*` global so configs ported across don't
 // have to be rewritten. Pure-JS helpers live here; the OS-touching ones
-// (getModifierKeys, isAppRunning, getSystemInfo, getPowerInfo) call into
+// (getModifierKeys, isAppRunning, getRunningBrowsers, getSystemInfo) call into
 // Rust blocks installed by `install_finicky_callbacks` — typeof guards
 // keep these safe even on a JSContext where the blocks aren't installed
 // (e.g. integration tests that haven't called the installer).
@@ -522,15 +522,6 @@ var finicky = {
   matchDomains: function(matchers) {
     console.warn("finicky.matchDomains is deprecated; use finicky.matchHostnames");
     return finicky.matchHostnames(matchers);
-  },
-
-  notify: function() {
-    console.error("finicky.notify is not implemented in Grinch — use console.log instead");
-  },
-
-  getBattery: function() {
-    console.error("finicky.getBattery is deprecated — use finicky.getPowerInfo");
-    return { isCharging: false, isPluggedIn: false, chargePercentage: 0 };
   },
 
   getModifierKeys: function() {
@@ -582,30 +573,6 @@ var finicky = {
       try { return JSON.parse(__grinchGetSystemInfo()); } catch (_) {}
     }
     return { localizedName: "", name: "" };
-  },
-
-  getPowerInfo: function() {
-    // The Rust bridge currently returns placeholder values (Grinch
-    // doesn't link IOKit IOPSCopy* yet — most routing configs don't
-    // read battery state). Warn loudly the first time so configs that
-    // actually depend on the real values don't silently misroute.
-    if (!finicky.__grinchPowerInfoWarned) {
-      finicky.__grinchPowerInfoWarned = true;
-      console.warn(
-        "finicky.getPowerInfo is a stub in Grinch — it returns placeholder " +
-        "values (isCharging: false, isConnected: true, percentage: -1) " +
-        "regardless of actual battery state. File a Grinch issue if you " +
-        "need real values."
-      );
-    }
-    if (typeof __grinchGetPowerInfo === "function") {
-      try { return JSON.parse(__grinchGetPowerInfo()); } catch (_) {}
-    }
-    // Match Finicky's sentinel: an unknown `percentage` is `-1`, not `null`.
-    // A config that does `if (powerInfo.percentage < 50)` then gets a real
-    // numeric comparison (true on the stub, matching Finicky's stub
-    // semantics) rather than a `null < 50` that silently evaluates false.
-    return { isCharging: false, isConnected: true, percentage: -1 };
   },
 };
 

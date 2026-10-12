@@ -841,8 +841,11 @@ to adjust:
    `shortenerExpander` pattern can't run; resolve a shortener separately
    if you need it — see [Working with URL shorteners](#working-with-url-shorteners)
    below.
-3. **`finicky.*` namespace is shipped; three of the methods are stubbed.**
-   All eight v4 methods are present, plus one Grinch-specific helper:
+3. **`finicky.*` namespace is shipped without `notify`, `getPowerInfo`, or
+   `getBattery`.** Calling one of those throws a `TypeError`: at the top
+   level of a config that fails the load; inside a matcher or `open` fn the
+   rule is skipped and a `runtime_js_error` event is logged. Five v4 methods
+   are present, plus one Grinch-specific helper:
    - `finicky.matchHostnames(matchers)` — exact-hostname matcher fn
      (Finicky-compatible). For subdomain matching use Grinch's `domain(...)`.
    - `finicky.matchDomains(matchers)` — deprecated alias, warns and delegates.
@@ -854,17 +857,6 @@ to adjust:
      table order. Use with `Array.prototype.find` for first-running-of-preference
      routing: `prefs.find(b => running.includes(b)) || "com.apple.Safari"`.
    - `finicky.getSystemInfo()` — `{localizedName, name}` from `[NSHost currentHost]`.
-   - `finicky.getPowerInfo()` — **stub** that returns placeholder values
-     (`{isCharging:false, isConnected:true, percentage:-1}`) and emits a
-     one-time `console.warn` on first call. The `-1` sentinel matches
-     Finicky's IOKit behaviour for the "no battery detected" case, so
-     configs that check `if (powerInfo.percentage < 50)` get the same
-     result on both. Real IOKit hookup is on the TODO
-     list; routing on actual battery state isn't supported yet.
-   - `finicky.notify(...)` — **stub**; logs a `console.error` pointing at
-     `console.log` and returns. macOS notifications aren't wired up.
-   - `finicky.getBattery()` — **stub**; matches Finicky's own deprecation
-     by logging an error pointing at `getPowerInfo` and returning dummies.
 4. **`opener.windowTitle` requires Accessibility permission.** First launch
    prompts; before granting, the field returns `""` and rules depending on
    it silently no-op.

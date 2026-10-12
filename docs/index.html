@@ -51,7 +51,7 @@
 <section id="features">
   <h2>What it is</h2>
   <ul class="features">
-    <li><strong>Finicky v4 config compatibility.</strong> Most v4 configs work unchanged: <code>finicky.matchHostnames</code>, <code>ctx.opener.*</code>, the <code>options</code> block, profile shorthand. A few v4 surfaces (<code>finicky.notify</code>, <code>finicky.getPowerInfo</code>, <code>finicky.getBattery</code>) ship as stubs that log a one-time warning so misroutes don't go silent.</li>
+    <li><strong>Finicky v4 config compatibility.</strong> Most v4 configs work unchanged: <code>finicky.matchHostnames</code>, <code>ctx.opener.*</code>, the <code>options</code> block, profile shorthand. Three v4 methods are not provided: <code>finicky.notify</code>, <code>finicky.getPowerInfo</code>, and <code>finicky.getBattery</code>.</li>
     <li><strong>Browser profiles and launch options.</strong> Use <code>profile: "Work"</code>,
       <code>incognito: true</code>, or <code>openInNewWindow: true</code> with Chromium
       and Firefox browsers. Safari does not support these options.</li>

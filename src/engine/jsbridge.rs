@@ -286,18 +286,6 @@ pub(crate) fn install_finicky_callbacks(ctx: &JSContext) {
         }
         serde_json::json!(out).to_string()
     });
-
-    install_zero_arg_string(ctx, "__grinchGetPowerInfo", || {
-        // IOKit IOPSCopyPowerSourcesInfo would give real values, but the
-        // call surface is heavy and most routing configs don't read this.
-        // Return a sensible-shape stub; the JS wrapper logs an info note
-        // the first time it's called so users know to file an issue if
-        // they actually need this. `percentage: -1` matches Finicky's
-        // unknown-battery sentinel (set by `info.percentage = -1` in
-        // their info.m default), so configs that check
-        // `if (powerInfo.percentage < 50)` get the same result on both.
-        r#"{"isCharging":false,"isConnected":true,"percentage":-1}"#.to_string()
-    });
 }
 
 /// Build a URL polyfill instance via `new URL(urlString)`. If the URL fails

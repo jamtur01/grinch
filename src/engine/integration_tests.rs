@@ -2907,7 +2907,7 @@ fn ctx_opener_is_object_when_opener_known() {
 }
 
 #[test]
-fn finicky_namespace_is_present_with_all_v4_methods() {
+fn finicky_namespace_exposes_only_implemented_methods() {
     let e = build_engine(
         r#"module.exports = {
                 default: "com.apple.Safari",
@@ -2916,19 +2916,19 @@ fn finicky_namespace_is_present_with_all_v4_methods() {
                     open: () =>
                         typeof finicky.matchHostnames + "/" +
                         typeof finicky.matchDomains + "/" +
-                        typeof finicky.notify + "/" +
-                        typeof finicky.getBattery + "/" +
                         typeof finicky.getModifierKeys + "/" +
                         typeof finicky.isAppRunning + "/" +
                         typeof finicky.getSystemInfo + "/" +
-                        typeof finicky.getPowerInfo + "/" +
-                        typeof finicky.getRunningBrowsers,
+                        typeof finicky.getRunningBrowsers + "/" +
+                        typeof finicky.notify + "/" +
+                        typeof finicky.getBattery + "/" +
+                        typeof finicky.getPowerInfo,
                 }],
             };"#,
     );
     assert_eq!(
         resolve(&e, "https://x/").0,
-        "function/function/function/function/function/function/function/function/function",
+        "function/function/function/function/function/function/undefined/undefined/undefined",
     );
 }
 
@@ -3144,47 +3144,6 @@ fn finicky_is_app_running_returns_boolean() {
             };"#,
     );
     assert_eq!(resolve(&e, "https://x/").0, "t:boolean");
-}
-
-#[test]
-fn finicky_get_power_info_is_dedup_stub() {
-    // The stub returns the same shape on every call. The one-time
-    // console.warn is observable on stderr but doesn't affect the
-    // return value; verify the structure is stable across repeated
-    // calls so the dedup flag doesn't accidentally cache a
-    // different first-call return.
-    let e = build_engine(
-        r#"module.exports = {
-                default: "com.apple.Safari",
-                rules: [{
-                    match: () => true,
-                    open: () => {
-                        var a = finicky.getPowerInfo();
-                        var b = finicky.getPowerInfo();
-                        return "same:" + (a.isCharging === b.isCharging
-                            && a.isConnected === b.isConnected
-                            && a.percentage === b.percentage);
-                    },
-                }],
-            };"#,
-    );
-    assert_eq!(resolve(&e, "https://x/").0, "same:true");
-}
-
-#[test]
-fn finicky_notify_is_inert_stub() {
-    // Calling notify must not throw, must return undefined; matches
-    // Finicky's deprecated stub behaviour.
-    let e = build_engine(
-        r#"module.exports = {
-                default: "com.apple.Safari",
-                rules: [{
-                    match: () => true,
-                    open: () => "v:" + (typeof finicky.notify() === "undefined"),
-                }],
-            };"#,
-    );
-    assert_eq!(resolve(&e, "https://x/").0, "v:true");
 }
 
 #[test]

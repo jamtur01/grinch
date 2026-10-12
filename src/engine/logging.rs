@@ -228,8 +228,10 @@ impl LogWriter {
         if self.failed {
             return;
         }
-        // newline-terminated; writeln! appends one
-        let about_to_write = line.len() as u64 + 1;
+        // One buffer, one write(2): `writeln!` on an unbuffered File issues a
+        // second syscall for the newline, which doubled the cost per event.
+        let line = format!("{line}\n");
+        let about_to_write = line.len() as u64;
         if self.should_rotate(about_to_write, now_unix()) {
             self.rotate();
         }
@@ -243,7 +245,7 @@ impl LogWriter {
             return;
         }
         if let Some(f) = self.file.as_mut() {
-            if let Err(e) = writeln!(f, "{line}") {
+            if let Err(e) = f.write_all(line.as_bytes()) {
                 eprintln!(
                     "grinch: write to {} failed: {e} — disabling \
                      diagnostic file logging for this session",

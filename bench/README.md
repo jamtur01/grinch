@@ -69,7 +69,7 @@ Representative release-build measurements on Apple Silicon:
 | dynamic-default | 2251 |
 | rewrite-chain | 14615 |
 | from | 8.5 |
-| logged | 8275.4 |
+| logged | 5066.7 |
 
 | Config loading | µs/op |
 |---|---:|

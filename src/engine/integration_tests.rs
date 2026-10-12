@@ -425,7 +425,7 @@ fn profile_warning_survives_log_failure_and_clears_on_reload() {
 }
 
 #[test]
-fn direct_runtime_js_error_is_recorded_without_request_logging() {
+fn runtime_js_error_is_recorded_without_request_logging() {
     let tmp = unique_tmp("runtime-error");
     let path = tmp.join("diagnostic.log");
     let diagnostics = Rc::new(DiagnosticLog::at_path(path.clone()));
@@ -459,8 +459,8 @@ fn direct_runtime_js_error_is_recorded_without_request_logging() {
 }
 
 #[test]
-fn batched_runtime_js_error_is_recorded_and_later_rule_runs() {
-    let tmp = unique_tmp("batched-runtime-error");
+fn throwing_matcher_is_recorded_and_later_rule_runs() {
+    let tmp = unique_tmp("throwing-matcher");
     let path = tmp.join("diagnostic.log");
     let diagnostics = Rc::new(DiagnosticLog::at_path(path.clone()));
     let engine = build_engine_with_diagnostics(
@@ -468,7 +468,7 @@ fn batched_runtime_js_error_is_recorded_and_later_rule_runs() {
                 default: "com.apple.Safari",
                 rules: [
                     {
-                        match: () => { throw new Error("batched boom"); },
+                        match: () => { throw new Error("later-rule boom"); },
                         open: "com.brave.Browser",
                     },
                     { match: () => true, open: "com.google.Chrome" },
@@ -488,7 +488,7 @@ fn batched_runtime_js_error_is_recorded_and_later_rule_runs() {
         events[0]["message"]
             .as_str()
             .unwrap()
-            .contains("batched boom")
+            .contains("later-rule boom")
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -1305,20 +1305,11 @@ fn rewriter_fn_returning_url_with_no_changes_is_pass_through() {
 }
 
 #[test]
-fn dispatcher_resumes_after_target_fn_returns_null_in_run() {
+fn target_fn_returning_null_falls_through_to_next_fn_rule() {
     // Three consecutive fn-only rules. Rule 0's matcher fires but its
     // target fn returns null (Finicky `open: () => null` shape for
     // "rule matched but skip routing"). Rule 1's target fn returns
     // null too. Rule 2's target fn returns a real browser.
-    //
-    // Pre-fix: dispatcher matched rule 0, fell through; resolve loop
-    // advanced idx to 1, didn't see a run starting at 1, fell back
-    // to the per-matcher path for the rest of the run. Correct, but
-    // lost the batched-dispatch perf benefit for the resume.
-    //
-    // Now: the resolve loop detects we're still INSIDE the run and
-    // re-calls the dispatcher with start_offset = idx - run.start,
-    // so the JS-side scan picks up at the next matcher.
     let e = build_engine(
         r#"module.exports = {
                 default: "com.apple.Safari",
@@ -1336,7 +1327,7 @@ fn dispatcher_resumes_after_target_fn_returns_null_in_run() {
 }
 
 #[test]
-fn dispatcher_preserves_callback_arity_and_receiver() {
+fn fn_matcher_receives_declared_arity_and_global_receiver() {
     let mut results = Vec::new();
     for matcher in [
         "function(url) { return arguments.length === 1; }",
@@ -1351,21 +1342,19 @@ fn dispatcher_preserves_callback_arity_and_receiver() {
             return this === globalThis && arguments.length === 2 && ctx.originalUrl === url.href;
         }, {call: () => false, bind: () => false})",
     ] {
-        for neighbor in ["", ", {match: (url, ctx) => false, open: null}"] {
-            let e = build_engine(&format!(
-                r#"module.exports = {{
-                    default: "com.apple.Safari",
-                    rules: [{{match: {matcher}, open: "com.google.Chrome"}}{neighbor}],
-                }};"#,
-            ));
-            results.push(resolve(&e, "https://example.com/").0);
-        }
+        let e = build_engine(&format!(
+            r#"module.exports = {{
+                default: "com.apple.Safari",
+                rules: [{{match: {matcher}, open: "com.google.Chrome"}}],
+            }};"#,
+        ));
+        results.push(resolve(&e, "https://example.com/").0);
     }
-    assert_eq!(results, vec!["com.google.Chrome"; 14]);
+    assert_eq!(results, vec!["com.google.Chrome"; 7]);
 }
 
 #[test]
-fn dispatcher_uses_arity_captured_before_callback_execution() {
+fn fn_matcher_uses_arity_captured_at_config_load() {
     let e = build_engine(
         r#"const matcher = function(url, ctx) {
                 return arguments.length === 2 && ctx.originalUrl === url.href;
@@ -1521,10 +1510,8 @@ fn target_null_suppresses() {
 }
 
 #[test]
-fn fn_matcher_dispatcher_picks_first_matching_rule_in_a_run() {
-    // Four consecutive fn-only rules — the second one matches. The
-    // dispatcher must return offset 1 (not 0, 2, or 3) so the right
-    // rule fires. Regression test for the build_fn_matcher_runs path.
+fn consecutive_fn_rules_pick_first_matching_rule() {
+    // Four consecutive fn-only rules — only the second one matches.
     let e = build_engine(
         r#"module.exports = {
                 default: "com.apple.Safari",
@@ -1541,9 +1528,8 @@ fn fn_matcher_dispatcher_picks_first_matching_rule_in_a_run() {
 }
 
 #[test]
-fn fn_matcher_dispatcher_falls_through_to_default_when_nothing_matches() {
-    // Same shape as the slow-native bench. No matcher matches; dispatcher
-    // returns -1 and the engine skips past the whole run to the default.
+fn consecutive_fn_rules_fall_through_to_default_when_nothing_matches() {
+    // Same shape as the slow-native bench. No matcher matches.
     let e = build_engine(
         r#"module.exports = {
                 default: "com.apple.Safari",
@@ -1563,11 +1549,9 @@ fn fn_matcher_dispatcher_falls_through_to_default_when_nothing_matches() {
 }
 
 #[test]
-fn fn_matcher_dispatcher_isolates_throwing_matcher_from_neighbours() {
-    // A matcher that throws in the middle of a run must not poison
-    // matchers around it — the dispatcher's per-matcher try/catch
-    // treats a throw as no-match, same as the per-matcher path's
-    // `result.map(...).unwrap_or(false)`.
+fn throwing_fn_matcher_does_not_affect_neighbouring_rules() {
+    // A matcher that throws is a non-match and must not poison the
+    // matchers around it.
     let e = build_engine(
         r#"module.exports = {
                 default: "com.apple.Safari",

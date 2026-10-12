@@ -437,25 +437,6 @@ pub(crate) enum Target {
     Suppress,
 }
 
-/// A run of consecutive rules whose `matchers` is exactly one fn — the
-/// shape that's eligible for batched JS-side dispatch. At engine init we
-/// compile a single JS function that runs all the matchers in sequence
-/// and returns the first hit's offset (or -1). One bridge crossing
-/// replaces N — measured at ~700 ns saved per skipped matcher. See
-/// `analyse_fn_matcher_runs` + `compile_fn_matcher_dispatcher`.
-pub(crate) struct FnMatcherRun {
-    /// Inclusive index of the first rule in the run.
-    start: usize,
-    /// Exclusive end — rule indices `[start, end)` are covered.
-    end: usize,
-    /// JS function: `(url, ctx) → number`. Returns the 0-based offset
-    /// within the run of the first matching matcher, or -1.
-    dispatcher: Retained<JSValue>,
-    /// True if any matcher in the run takes a ctx arg. When false, we can
-    /// skip the `__grinchMakeCtx` build and pass undefined for ctx.
-    needs_ctx: bool,
-}
-
 pub(crate) struct Rule {
     matchers: Vec<Matcher>,
     /// If set, applied to the URL when the rule matches, before resolving target.
@@ -508,18 +489,6 @@ pub struct Engine {
     browsers: std::collections::HashMap<String, Rc<BrowserSpec>>,
     rewrites: Vec<RewriteRule>,
     rules: Vec<Rule>,
-    /// Pre-compiled JS dispatchers for runs of fn-only rules (rules whose
-    /// `matchers` is exactly one `Matcher::Fn`). Empty for configs that
-    /// have no such runs of length ≥ 2; non-empty configs save N–1
-    /// JSC bridge crossings per such run on resolves where none of those
-    /// rules match. See `FnMatcherRun` for the per-run details.
-    fn_matcher_runs: Vec<FnMatcherRun>,
-    /// `rule_to_run[i] = Some(j)` iff rule i is covered by
-    /// `fn_matcher_runs[j]`. Pre-built at engine init so the resolve
-    /// loop can answer "is this rule index inside a dispatched run?"
-    /// in O(1) instead of scanning the runs vector each iteration.
-    /// Empty (Vec of None) when there are no runs.
-    rule_to_run: Vec<Option<usize>>,
     /// JSContext owns every JSValue we still hold after compilation (user
     /// predicate functions, prelude helpers). Must outlive them.
     ctx: Retained<JSContext>,
@@ -695,18 +664,6 @@ impl Engine {
             })
             .unwrap_or_default();
 
-        // Pre-compile JS dispatchers for any runs of consecutive fn-only
-        // rules in the rule list. Failure to build a dispatcher (e.g. JSC
-        // OOM) silently falls back to the per-matcher path for that run —
-        // we never want a perf-only optimisation to break load.
-        let fn_matcher_runs = build_fn_matcher_runs(&ctx, &rules);
-        let mut rule_to_run: Vec<Option<usize>> = vec![None; rules.len()];
-        for (j, run) in fn_matcher_runs.iter().enumerate() {
-            for slot in rule_to_run.iter_mut().take(run.end).skip(run.start) {
-                *slot = Some(j);
-            }
-        }
-
         let mut needs = analyse_runtime_needs(&rewrites, &rules);
         // Dynamic defaults follow the same load-time arity contract as
         // rule callbacks. URL-only defaults do not need native context.
@@ -729,15 +686,13 @@ impl Engine {
         })?;
 
         diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_days);
-        install_runtime_error_handlers(&ctx, &config_path, Rc::clone(&diagnostics));
+        install_runtime_error_handler(&ctx, &config_path, Rc::clone(&diagnostics));
 
         Ok(Self {
             default_browser,
             browsers,
             rewrites,
             rules,
-            fn_matcher_runs,
-            rule_to_run,
             ctx,
             rewrite_result_helper,
             make_ctx_helper,
@@ -927,53 +882,10 @@ impl Engine {
         // Handlers — first match wins. A matched rule may carry its own
         // rewriter (Finicky-style combined entry); apply it before resolving
         // the target.
-        //
-        // Manual index management (rather than `for ... in enumerate`) so
-        // we can jump past a whole run of fn-only rules in one dispatcher
-        // call instead of N per-matcher bridge crossings. The dispatcher
-        // for each run is pre-compiled at engine init — see
-        // `build_fn_matcher_runs`. URL doesn't change during fn-matcher
-        // iteration (rewrites only fire after a rule matches), so the
-        // dispatcher result is consumed immediately and not cached
-        // across iterations.
-        let mut idx = 0;
-        'rules: while idx < self.rules.len() {
-            // If we're standing *inside* a fn-only run (start of run OR
-            // resumed mid-run after a Target::Fn fall-through), dispatch
-            // the remainder in one JS call. The dispatcher takes a
-            // `start_offset` so a resume scan picks up after the rule
-            // that just fell through — without it the engine would
-            // revert to the per-matcher path for the rest of the run
-            // and lose the batched-dispatch benefit.
-            // O(1) lookup via the pre-built index. Pre-fix this was a
-            // linear scan over fn_matcher_runs each iteration —
-            // negligible for the dozens-of-rules configs Grinch sees
-            // today, but the index keeps the per-resolve cost constant
-            // as configs grow.
-            if let Some(run) = self
-                .rule_to_run
-                .get(idx)
-                .and_then(|r| r.map(|j| &self.fn_matcher_runs[j]))
-            {
-                let start_offset = idx - run.start;
-                match call_fn_matcher_dispatcher(run, &rc, &current, start_offset) {
-                    Some(offset) => {
-                        idx = run.start + offset;
-                        // Fall through — `idx` now points at the matched
-                        // rule. Skip the standard any_match check (which
-                        // would redundantly re-invoke the same fn) and
-                        // jump straight to rule-processing.
-                    }
-                    None => {
-                        idx = run.end;
-                        continue 'rules;
-                    }
-                }
-            } else if !any_match(&self.rules[idx].matchers, &current, host.as_deref(), &rc) {
-                idx += 1;
-                continue 'rules;
+        for (idx, rule) in self.rules.iter().enumerate() {
+            if !any_match(&rule.matchers, &current, host.as_deref(), &rc) {
+                continue;
             }
-            let rule = &self.rules[idx];
             if let Some(rw) = &rule.rewriter {
                 match apply_rewrite(rw, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
@@ -1000,9 +912,10 @@ impl Engine {
                     return suppressed_at(Some(idx));
                 }
                 Target::Fn(uf) => {
+                    // A null/undefined return (or a failed args build)
+                    // falls through to the next rule.
                     let Some(args) = rc.fn_args(&current, uf.needs_ctx) else {
-                        idx += 1;
-                        continue 'rules;
+                        continue;
                     };
                     let result = unsafe { uf.f.callWithArguments(Some(&args)) };
                     if let Some(r) = result {
@@ -1028,11 +941,6 @@ impl Engine {
                     }
                 }
             }
-            // Target::Fn fell through (null/undefined return or args
-            // build failed) — advance to the next rule. Target::Browser
-            // / Target::Suppress have returned by now; this `idx += 1`
-            // is unreachable on those arms but cheap to guard the Fn path.
-            idx += 1;
         }
 
         // Default fallback. Static = the pre-resolved spec; Fn = invoke
@@ -1473,37 +1381,6 @@ fn apply_rewrite(r: &Rewriter, url: &str, rc: &ResolveCtx) -> RewriteOutcome {
             None => RewriteOutcome::Unchanged,
         },
     }
-}
-
-/// Call a run's dispatcher, scanning from `start_offset` within the run.
-/// Returns the 0-based offset of the first matching matcher at or after
-/// `start_offset`, or None when no later matcher matches (or the dispatch
-/// fails). The `start_offset` parameter lets the resolve loop resume
-/// inside a run after a Target::Fn returns null/undefined — without it,
-/// fall-through would revert to the per-matcher path and lose the
-/// batched-dispatch benefit for the remainder of the run.
-fn call_fn_matcher_dispatcher(
-    run: &FnMatcherRun,
-    rc: &ResolveCtx,
-    url: &str,
-    start_offset: usize,
-) -> Option<usize> {
-    let url_instance = rc.url_instance(url)?;
-    let ctx_val = if run.needs_ctx {
-        rc.ctx_object()?
-    } else {
-        unsafe { JSValue::valueWithUndefinedInContext(Some(rc.ctx)) }?
-    };
-    // ctx_val is `Retained<JSValue>`; same shape whether real ctx or undef.
-    let start_val =
-        unsafe { JSValue::valueWithDouble_inContext(start_offset as f64, Some(rc.ctx)) }?;
-    let url_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_instance) };
-    let ctx_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(ctx_val) };
-    let start_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(start_val) };
-    let args = NSArray::from_retained_slice(&[url_obj, ctx_obj, start_obj]);
-    let result = unsafe { run.dispatcher.callWithArguments(Some(&args)) }?;
-    let n = unsafe { result.toInt32() };
-    if n < 0 { None } else { Some(n as usize) }
 }
 
 #[cfg(test)]

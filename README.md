@@ -761,12 +761,10 @@ in Rust for the common fn-return shapes (string, null, undefined, URL
 polyfill instance with non-empty `.href`) instead of always going
 through the `__grinchRewriteResult` JS helper — the LegacyURLObject
 case still does. Result-checks use `JSValueGetType` (one C call) in
-place of paired `isNull()` + `isUndefined()` Obj-C dispatches. And
-runs of two-or-more consecutive fn-only rules are batched into a
-single pre-compiled JS dispatcher at engine init, so a config with N
-fn matchers that all fall through pays for one JS bridge crossing
-instead of N — the *"4 fn matchers reading `ctx.opener`"* row below
-exercises that path.
+place of paired `isNull()` + `isUndefined()` Obj-C dispatches. Each fn
+matcher is one JS bridge crossing, so a config with N fn matchers that
+all fall through crosses N times — the *"4 fn matchers reading
+`ctx.opener`"* row below exercises that path.
 
 | Workload | ns/op |
 |---|---:|

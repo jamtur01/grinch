@@ -63,9 +63,8 @@ pub(crate) unsafe fn js_exception_detail(exception: *mut JSValue) -> String {
     }
 }
 
-/// Replace the config-load exception handler with runtime diagnostics and
-/// install the callback used by batched matchers that catch exceptions in JS.
-pub(crate) fn install_runtime_error_handlers(
+/// Replace the config-load exception handler with runtime diagnostics.
+pub(crate) fn install_runtime_error_handler(
     ctx: &JSContext,
     config_path: &std::path::Path,
     diagnostics: Rc<DiagnosticLog>,
@@ -73,38 +72,14 @@ pub(crate) fn install_runtime_error_handlers(
     let path = config_path.display().to_string();
     let debug = std::env::var("GRINCH_DEBUG").is_ok();
 
-    let callback_diagnostics = Rc::clone(&diagnostics);
-    let callback_path = path.clone();
-    let callback =
-        RcBlock::with_encoding::<_, _, _, OneStringArgEncoding>(move |message: *mut NSString| {
-            let message = if message.is_null() {
-                "unknown".to_string()
-            } else {
-                unsafe { (*message).to_string() }
-            };
-            report_runtime_js_error(&callback_diagnostics, &callback_path, &message, debug);
-        });
-    let callback_ref: &block2::Block<_> = &callback;
-    let callback_obj: &AnyObject = unsafe { &*(callback_ref as *const _ as *const AnyObject) };
-    let key = NSString::from_str("__grinchRuntimeError");
-    let key_ref: &objc2_foundation::NSObject = &key;
-    unsafe {
-        ctx.setObject_forKeyedSubscript(Some(callback_obj), Some(key_ref));
-    }
-    drop(callback);
-
     let handler = RcBlock::new(move |_ctx_ptr: *mut JSContext, exception: *mut JSValue| {
         let message = unsafe { js_exception_detail(exception) };
-        report_runtime_js_error(&diagnostics, &path, &message, debug);
+        diagnostics.record_runtime_js_error(&path, &message);
+        if debug {
+            eprintln!("grinch: js error during resolve in {path}: {message}");
+        }
     });
     unsafe { ctx.setExceptionHandler(Some(&handler)) };
-}
-
-fn report_runtime_js_error(diagnostics: &DiagnosticLog, path: &str, message: &str, debug: bool) {
-    diagnostics.record_runtime_js_error(path, message);
-    if debug {
-        eprintln!("grinch: js error during resolve in {path}: {message}");
-    }
 }
 
 pub(crate) fn install_console_callbacks(ctx: &JSContext) {

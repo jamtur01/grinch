@@ -219,6 +219,22 @@ fn options_hideicon_parses_to_engine_accessor() {
 }
 
 #[test]
+fn options_check_for_updates_is_unset_unless_configured() {
+    let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
+    assert_eq!(e.check_for_updates(), None);
+
+    for (value, expected) in [("true", Some(true)), ("false", Some(false))] {
+        let e = build_engine(&format!(
+            r#"module.exports = {{
+                    default: "com.apple.Safari",
+                    options: {{ checkForUpdates: {value} }},
+                }};"#
+        ));
+        assert_eq!(e.check_for_updates(), expected);
+    }
+}
+
+#[test]
 fn options_hideicon_default_is_false() {
     let e = build_engine(r#"module.exports = { default: "com.apple.Safari" };"#);
     assert!(!e.hide_icon());

@@ -29,6 +29,7 @@ use objc2_foundation::{
 
 use crate::engine::{DiagnosticLog, Engine, ModifierFlags};
 use crate::loader::{find_config_path, load_config};
+use crate::updater::Updater;
 use crate::workspace::{
     Opener, current_modifier_flags, ensure_accessibility_permission, frontmost_opener,
     frontmost_opener_id, list_http_browsers, open_url, opener_from_pid, opener_id_from_pid,
@@ -93,6 +94,8 @@ pub struct DelegateIvars {
     load_error: RefCell<Option<String>>,
     // Pre-built menu item for config or profile errors — hidden when neither exists.
     error_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
+    // Sparkle updater; None in CLI modes and in bundles without Sparkle.
+    updater: RefCell<Option<Updater>>,
 }
 
 define_class!(
@@ -326,6 +329,7 @@ define_class!(
             crate::workspace::terminate_duplicate_instances();
             self.reload_engine();
             crate::session_handler::finish_startup(self.mtm());
+            self.start_updater();
             self.setup_menu_bar();
             install_sighup_handler(self);
             crate::workspace::install_running_apps_observer();
@@ -416,6 +420,39 @@ define_class!(
         fn menu_toggle_start_at_login(&self, _sender: Option<&AnyObject>) {
             self.toggle_start_at_login();
         }
+
+        // Menu bar action: user-initiated Sparkle update check.
+        #[unsafe(method(checkForUpdates:))]
+        fn menu_check_for_updates(&self, _sender: Option<&AnyObject>) {
+            if let Some(updater) = self.ivars().updater.borrow().as_ref() {
+                updater.check_now(self.mtm());
+            }
+        }
+
+        // Menu bar action: toggle Sparkle's automatic update checks.
+        #[unsafe(method(toggleAutomaticUpdateChecks:))]
+        fn menu_toggle_automatic_update_checks(&self, _sender: Option<&AnyObject>) {
+            if let Some(updater) = self.ivars().updater.borrow().as_ref() {
+                updater.set_automatically_checks(!updater.automatically_checks());
+            }
+        }
+
+        // NSMenuItemValidation, called each time the menu opens. Disables
+        // Check for Updates during an update session, keeps the
+        // automatic-checks item in step with Sparkle's setting, and locks it
+        // while options.checkForUpdates decides.
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> Bool {
+            let action = item.action();
+            if action == Some(sel!(checkForUpdates:)) {
+                let updater = self.ivars().updater.borrow();
+                return Bool::new(updater.as_ref().is_some_and(Updater::can_check_now));
+            }
+            if action == Some(sel!(toggleAutomaticUpdateChecks:)) {
+                return Bool::new(self.validate_automatic_update_checks_item(item));
+            }
+            Bool::YES
+        }
     }
 );
 
@@ -441,6 +478,59 @@ impl Delegate {
             *self.ivars().engine.borrow_mut() = Some(engine);
         });
         self.set_load_error(result.err());
+        self.apply_check_for_updates_option();
+    }
+
+    /// Load Sparkle, apply `options.checkForUpdates`, then start the update
+    /// cycle, so a config that disables checks never triggers one at launch.
+    fn start_updater(&self) {
+        let Some(updater) = Updater::load(self.mtm()) else {
+            return;
+        };
+        *self.ivars().updater.borrow_mut() = Some(updater);
+        self.apply_check_for_updates_option();
+        if let Some(updater) = self.ivars().updater.borrow().as_ref() {
+            updater.start();
+        }
+    }
+
+    fn apply_check_for_updates_option(&self) {
+        let updater_ref = self.ivars().updater.borrow();
+        let Some(updater) = updater_ref.as_ref() else {
+            return;
+        };
+        let configured = self.configured_check_for_updates();
+        if let Some(enabled) = configured
+            && updater.automatically_checks() != enabled
+        {
+            updater.set_automatically_checks(enabled);
+        }
+    }
+
+    fn configured_check_for_updates(&self) -> Option<bool> {
+        self.ivars()
+            .engine
+            .borrow()
+            .as_ref()
+            .and_then(|engine| engine.check_for_updates())
+    }
+
+    fn validate_automatic_update_checks_item(&self, item: &NSMenuItem) -> bool {
+        let updater_ref = self.ivars().updater.borrow();
+        let Some(updater) = updater_ref.as_ref() else {
+            return false;
+        };
+        let state = if updater.automatically_checks() {
+            NS_CONTROL_STATE_VALUE_ON
+        } else {
+            NS_CONTROL_STATE_VALUE_OFF
+        };
+        item.setState(state);
+        let locked = self.configured_check_for_updates().is_some();
+        let tooltip =
+            locked.then(|| NSString::from_str("Set by options.checkForUpdates in your config"));
+        item.setToolTip(tooltip.as_deref());
+        !locked
     }
 
     fn load_engine(&self) -> Result<Engine, String> {
@@ -834,6 +924,36 @@ impl Delegate {
         menu.addItem(&NSMenuItem::separatorItem(mtm));
     }
 
+    fn add_update_menu_items(&self, menu: &NSMenu, target: &AnyObject) {
+        if self.ivars().updater.borrow().is_none() {
+            return;
+        }
+        let mtm = self.mtm();
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+        let check_now = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Check for Updates…"),
+                Some(sel!(checkForUpdates:)),
+                &NSString::from_str(""),
+            )
+        };
+        unsafe { check_now.setTarget(Some(target)) };
+        menu.addItem(&check_now);
+
+        let automatic = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Check for Updates Automatically"),
+                Some(sel!(toggleAutomaticUpdateChecks:)),
+                &NSString::from_str(""),
+            )
+        };
+        unsafe { automatic.setTarget(Some(target)) };
+        menu.addItem(&automatic);
+    }
+
     fn setup_menu_bar(&self) {
         // options.hideIcon — Finicky-compat. Skip status-item creation
         // entirely when the user opts out. Read once at launch; reloads
@@ -889,6 +1009,7 @@ impl Delegate {
         menu.addItem(&start_at_login);
         *self.ivars().start_at_login_item.borrow_mut() = Some(start_at_login);
 
+        self.add_update_menu_items(&menu, me);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
 
         let quit = unsafe {

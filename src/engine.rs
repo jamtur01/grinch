@@ -801,6 +801,11 @@ impl Engine {
         self.options.hide_icon
     }
 
+    /// `options.checkForUpdates`, or `None` when the config doesn't set it.
+    pub fn check_for_updates(&self) -> Option<bool> {
+        self.options.check_for_updates
+    }
+
     /// Hot path: resolve a URL given the opener and modifier flags.
     ///
     /// Thin wrapper around `resolve_inner` that performs the (optional)

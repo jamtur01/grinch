@@ -9,6 +9,7 @@ mod firefox;
 mod helpers;
 mod loader;
 mod session_handler;
+mod updater;
 mod workspace;
 
 use app_delegate::Delegate;

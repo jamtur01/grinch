@@ -14,6 +14,10 @@ pub struct OptionsConfig {
     /// hide or re-show the icon mid-session (consistent with most macOS
     /// background apps that surface this kind of toggle).
     pub hide_icon: bool,
+    /// Whether Sparkle checks for updates automatically. `None` (the key is
+    /// absent) leaves the choice to the menu bar toggle; `Some` overrides it
+    /// on every config load.
+    pub check_for_updates: Option<bool>,
     /// Whether to add resolve events to the app's diagnostic JSONL log.
     /// Config-load and runtime-JavaScript errors are recorded regardless;
     /// this flag preserves Finicky's opt-in request-logging semantics.
@@ -489,14 +493,14 @@ pub(crate) const OPTION_KEYS: &[&str] = &[
     "hideIcon",
 ];
 
-/// Parse Finicky v4's `options` block. The five known keys are accepted
+/// Parse Finicky v4's `options` block. Its five keys are accepted
 /// without error so a copied-over Finicky config doesn't break:
 ///
 /// | Key | Grinch behaviour |
 /// |---|---|
 /// | `urlShorteners` | silently ignored — Finicky's hard-coded list isn't user-configurable there either; Grinch expects external expansion (see `examples/expand-shortener.sh`) |
 /// | `logRequests`   | **honoured** — adds resolve events to the app-wide diagnostic JSONL log |
-/// | `checkForUpdates` | silently ignored — Grinch doesn't poll for updates |
+/// | `checkForUpdates` | **honoured** — turns Sparkle's automatic update checks on or off; absent leaves the menu bar toggle in charge |
 /// | `keepRunning`   | silently ignored — Grinch is always resident |
 /// | `hideIcon`      | **honoured** — propagated through `OptionsConfig` to AppDelegate, which skips menu-bar status item creation when set |
 ///
@@ -507,6 +511,9 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
         match k.as_str() {
             "hideIcon" => {
                 out.hide_icon = unsafe { v.toBool() };
+            }
+            "checkForUpdates" => {
+                out.check_for_updates = Some(unsafe { v.toBool() });
             }
             "logRequests" => {
                 out.log_requests = unsafe { v.toBool() };

@@ -740,11 +740,6 @@ impl Engine {
         self.needs_modifiers
     }
 
-    /// True when `options.hideIcon` was set in the user config. Read once
-    /// by AppDelegate at app launch to decide whether to create the
-    /// menu-bar status item. Reloads don't toggle the icon mid-session
-    /// (no NSStatusItem add/remove dance) — that's consistent with how
-    /// most macOS background apps surface this setting.
     /// Human-readable lines describing the loaded rules — one per rule,
     /// in the order they're evaluated. Format:
     /// `<idx>: [<name>] <match-label> → <target-summary>`. The optional
@@ -766,6 +761,11 @@ impl Engine {
             .collect()
     }
 
+    /// True when `options.hideIcon` was set in the user config. Read once
+    /// by AppDelegate at app launch to decide whether to create the
+    /// menu-bar status item. Reloads don't toggle the icon mid-session
+    /// (no NSStatusItem add/remove dance) — that's consistent with how
+    /// most macOS background apps surface this setting.
     pub fn hide_icon(&self) -> bool {
         self.options.hide_icon
     }

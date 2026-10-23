@@ -192,6 +192,52 @@ jobs:
           cat "$NOTES_FILE"
           echo "--- end ---"
 
+      # Sparkle feed. Grinch's SUFeedURL is the appcast.xml asset of the
+      # latest release, so each release carries a feed with its own DMG.
+      # generate_appcast comes from the Sparkle archive `make build`
+      # fetched and checksum-verified (see SPARKLE_* in the Makefile).
+      - name: Generate Sparkle appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          ARTIFACT: ${{ steps.package.outputs.artifact }}
+          NOTES: ${{ steps.notes.outputs.path }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+          SPARKLE_VERSION=$(awk '/^SPARKLE_VERSION/ { print $3; exit }' Makefile)
+          GENERATE_APPCAST="build/sparkle-$SPARKLE_VERSION/bin/generate_appcast"
+          UPDATES="$RUNNER_TEMP/updates"
+          mkdir -p "$UPDATES"
+          cp "$ARTIFACT" "$UPDATES/"
+          # A Markdown file named after the DMG becomes the update's release notes.
+          cp "$NOTES" "$UPDATES/${ARTIFACT%.dmg}.md"
+          DOWNLOAD_PREFIX="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$GENERATE_APPCAST" \
+            --ed-key-file - \
+            --download-url-prefix "$DOWNLOAD_PREFIX" \
+            --embed-release-notes \
+            --link "https://github.com/${GITHUB_REPOSITORY}" \
+            "$UPDATES"
+          APPCAST="$UPDATES/appcast.xml"
+          xmllint --noout "$APPCAST"
+          ENCLOSURE=$(xmllint --xpath 'string(//item/enclosure/@url)' "$APPCAST")
+          ITEM_VERSION=$(xmllint --xpath 'string(//item/*[local-name()="version"])' "$APPCAST")
+          SIGNATURE=$(xmllint --xpath 'string(//item/enclosure/@*[local-name()="edSignature"])' "$APPCAST")
+          if [ "$ENCLOSURE" != "${DOWNLOAD_PREFIX}${ARTIFACT}" ] \
+            || [ "$ITEM_VERSION" != "$VERSION" ] || [ -z "$SIGNATURE" ]; then
+            echo "::error::appcast item doesn't match ${ARTIFACT} ${VERSION}" \
+              "(url=${ENCLOSURE} version=${ITEM_VERSION} signed=${SIGNATURE:+yes})"
+            exit 1
+          fi
+          cp "$APPCAST" appcast.xml
+          echo "--- appcast ---"
+          cat appcast.xml
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
@@ -202,3 +248,4 @@ jobs:
           files: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.artifact }}.sha256
+            appcast.xml

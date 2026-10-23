@@ -716,16 +716,20 @@ fn options_log_requests_off_writes_nothing() {
 }
 
 #[test]
-fn options_block_with_unknown_key_does_not_error() {
-    // Unknown option keys log a stderr warning but must not break
-    // engine init. The user's config still loads and resolves.
+fn unknown_config_keys_do_not_error() {
+    // Unknown option and top-level keys log a stderr warning but must not
+    // break engine init. A root-level `hideIcon` is not honoured — it only
+    // works inside `options`.
     let e = build_engine(
         r#"module.exports = {
                 default: "com.apple.Safari",
+                hideIcon: true,
+                notARealTopLevelKey: 1,
                 options: { thisIsNotARealOption: 42 },
             };"#,
     );
     assert_eq!(resolve(&e, "https://x/").0, "com.apple.Safari");
+    assert!(!e.hide_icon());
 }
 
 #[test]

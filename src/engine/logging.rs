@@ -478,6 +478,17 @@ fn iso_timestamp_for_filename() -> String {
         .into_owned()
 }
 
+/// Keys accepted inside the config's `options` block.
+pub(crate) const OPTION_KEYS: &[&str] = &[
+    "urlShorteners",
+    "logRequests",
+    "logRotateBytes",
+    "logRotateDays",
+    "checkForUpdates",
+    "keepRunning",
+    "hideIcon",
+];
+
 /// Parse Finicky v4's `options` block. The five known keys are accepted
 /// without error so a copied-over Finicky config doesn't break:
 ///
@@ -491,15 +502,6 @@ fn iso_timestamp_for_filename() -> String {
 ///
 /// Unknown keys log a one-line warning so users can spot typos.
 pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
-    const KNOWN: &[&str] = &[
-        "urlShorteners",
-        "logRequests",
-        "logRotateBytes",
-        "logRotateDays",
-        "checkForUpdates",
-        "keepRunning",
-        "hideIcon",
-    ];
     let mut out = OptionsConfig::default();
     for (k, v) in iter_object(opts) {
         match k.as_str() {
@@ -524,10 +526,10 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
                     out.log_rotate_days = Some(n as u32);
                 }
             }
-            other if !KNOWN.contains(&other) => {
+            other if !OPTION_KEYS.contains(&other) => {
                 eprintln!(
                     "grinch: unknown options.{other} — accepted keys are {}",
-                    KNOWN.join(", ")
+                    OPTION_KEYS.join(", ")
                 );
             }
             // Known but inert keys: accept silently.

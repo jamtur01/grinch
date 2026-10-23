@@ -123,6 +123,12 @@ module.exports = {
 Finicky-style aliases are accepted everywhere: `defaultBrowser`, `handlers`,
 `browser` work identically to `default`, `rules`, `open`.
 
+Any other top-level key logs a one-line warning at load time. An option
+placed at the top level (e.g. `hideIcon: true` instead of
+`options: { hideIcon: true }`) is not applied; the warning names the
+`options.<key>` it belongs under. Run `Grinch --validate` to see these
+warnings.
+
 The `options` block accepts Finicky v4's keys (plus Grinch's own
 `logRotateBytes` / `logRotateDays`). Two are wired up:
 

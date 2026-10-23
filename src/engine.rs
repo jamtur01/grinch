@@ -364,6 +364,36 @@ impl UserFn {
 
 /// Read `f.length` (declared formal parameter count) and apply the
 /// ctx-passing contract documented on `UserFn`.
+/// Top-level keys `Engine::new` reads from `module.exports`.
+const TOP_LEVEL_KEYS: &[&str] = &[
+    "default",
+    "defaultBrowser",
+    "browsers",
+    "rewrite",
+    "rules",
+    "handlers",
+    "options",
+];
+
+/// Warn about top-level config keys that `Engine::new` would otherwise
+/// ignore without a trace. A misplaced option such as a root-level
+/// `hideIcon` gets pointed at `options.hideIcon`.
+fn warn_unknown_top_level_keys(exports: &JSValue) {
+    for (k, _) in iter_object(exports) {
+        if TOP_LEVEL_KEYS.contains(&k.as_str()) {
+            continue;
+        }
+        if OPTION_KEYS.contains(&k.as_str()) {
+            eprintln!("grinch: top-level `{k}` is ignored — move it to options.{k}");
+        } else {
+            eprintln!(
+                "grinch: unknown top-level key `{k}` — accepted keys are {}",
+                TOP_LEVEL_KEYS.join(", ")
+            );
+        }
+    }
+}
+
 fn fn_needs_ctx(f: &JSValue) -> bool {
     let key_ns = NSString::from_str("length");
     let key_ref: &AnyObject = &key_ns;
@@ -608,6 +638,7 @@ impl Engine {
             .filter(|opts| !is_undef_or_null(opts) && unsafe { opts.isObject() })
             .map(|opts| parse_options_block(&opts))
             .unwrap_or_default();
+        warn_unknown_top_level_keys(&exports);
 
         // browsers
         let mut browsers: std::collections::HashMap<String, Rc<BrowserSpec>> =

@@ -61,6 +61,10 @@
     <li><strong>Native JavaScriptCore</strong> for config eval — no Electron, no bundler, no transpiler.</li>
     <li><strong>Single DMG.</strong> Universal binary (Apple Silicon + Intel).</li>
     <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar. Parse errors surface as <code>⚠️</code> with the failing line inline.</li>
+    <li><strong>Automatic updates.</strong> Grinch checks for a new release once a day with
+      <a href="https://sparkle-project.org">Sparkle</a> and installs only updates signed with the
+      Grinch release key. Turn the check off from the menu bar or with
+      <code>options: { checkForUpdates: false }</code>.</li>
     <li><strong>Declarative routing in nanoseconds</strong>,
       JavaScript callbacks in microseconds.</li>
     <li><strong>Debuggable.</strong> Every resolve can be logged as JSONL with the matched rule, opener, and modifier state. <code>--list-rules</code> prints the loaded rule table for cross-reference.</li>

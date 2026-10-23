@@ -51,6 +51,17 @@ Always install from the DMG to `/Applications` directly. Running
 translocation, which makes the same app appear multiple times in the
 default-browser picker.
 
+### Updates
+
+Release builds update themselves with [Sparkle](https://sparkle-project.org).
+Grinch checks the latest GitHub release once a day and offers to install a
+newer one. Each update must carry a valid EdDSA signature from the Grinch
+release key and the same Developer ID signature as the installed app. Use
+**Check for Updates…** in the menu bar to check now, and **Check for Updates
+Automatically** or [`options.checkForUpdates`](#configuration) to turn the
+daily check off. Builds signed ad-hoc (no Developer ID certificate) don't
+include the updater.
+
 ### With Homebrew
 
 A community-maintained cask is available from
@@ -130,11 +141,17 @@ placed at the top level (e.g. `hideIcon: true` instead of
 warnings.
 
 The `options` block accepts Finicky v4's keys (plus Grinch's own
-`logRotateBytes` / `logRotateDays`). Two are wired up:
+`logRotateBytes` / `logRotateDays`). Three are wired up:
 
 - **`hideIcon: true`** — skip the menu-bar status item at app launch.
   Useful when you don't want Grinch's icon in your menu bar. Reloads don't
-  toggle the icon mid-session; restart Grinch to apply.
+  toggle the icon mid-session; restart Grinch to apply. Automatic update
+  checks still run without the icon.
+- **`checkForUpdates: false`** — turn off the daily update check (`true`
+  turns it on). While the key is set, it overrides the **Check for Updates
+  Automatically** menu item, which is greyed out. Without the key, the menu
+  item decides. Grinch saves the value as its own preference, so after you
+  remove the key the menu item starts from the last value the config set.
 - **`logRequests: true`** — add a `resolve` event for every routed URL to
   the app's JSONL diagnostic log. Useful for figuring out *why* a particular
   click went where it did without enabling the broader `GRINCH_DEBUG=1`
@@ -226,9 +243,9 @@ dynamic browser targets on a click. Hover over the error for the full message
 or open the diagnostic log. A config-load error takes precedence in the menu;
 a successful reload clears the profile warning unless a profile error recurs.
 
-The other three are inert: `urlShorteners` (expects
-[external expansion](#working-with-url-shorteners)), `checkForUpdates`
-(Grinch doesn't poll), `keepRunning` (Grinch is always resident).
+The other two are inert: `urlShorteners` (expects
+[external expansion](#working-with-url-shorteners)) and `keepRunning`
+(Grinch is always resident).
 Unknown keys log a one-line warning.
 
 ### Browser specs
@@ -511,6 +528,8 @@ Click the Grinch eyes in the menu bar:
 | **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
 | **Open Diagnostic Log** | Opens the app-wide JSONL diagnostic log. |
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
+| **Check for Updates…** | Checks the latest release now and shows the result. See [Updates](#updates). |
+| **Check for Updates Automatically** | Toggles the daily update check. Greyed out while `options.checkForUpdates` is set. |
 | **Quit Grinch** (⌘Q) | Exit. |
 
 At launch, Grinch terminates other running instances with the same bundle

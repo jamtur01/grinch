@@ -402,4 +402,11 @@ module.exports = {
     //    workflow, Hammerspoon binding, Shortcuts.app Quick Action, etc.).
     //    See the script's header comment for setup notes.
   ],
+
+  // Finicky-compatible options; every key is optional.
+  options: {
+    // hideIcon: true,          // no menu bar icon (restart Grinch to apply)
+    // logRequests: true,       // add every routed URL to the diagnostic log
+    // checkForUpdates: false,  // turn off the daily update check
+  },
 };

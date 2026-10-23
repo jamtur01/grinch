@@ -89,7 +89,8 @@ Read `CONTRIBUTING.md` section **Releasing**, `Makefile`,
 `.github/workflows/release.yml`, and `scripts/release-notes.sh`. `Cargo.toml` is
 the version source of truth. The release workflow rejects tag or built-bundle
 version mismatches before it signs, notarizes, packages, and publishes the
-universal app.
+universal app, then signs and uploads the Sparkle `appcast.xml` that installed
+copies read from the latest release.
 Check release references in `README.md` and `docs/index.html` when publishing.
 
 ## Source map
@@ -107,6 +108,7 @@ Check release references in `README.md` and `docs/index.html` when publishing.
 - `src/workspace.rs`: LaunchServices, app discovery, opener data, launches.
 - `src/chromium.rs`, `src/firefox.rs`: browser-family profiles and metadata.
 - `src/session_handler.rs`: AuthenticationServices requests and callbacks.
+- `src/updater.rs`: Sparkle loading, update checks, activation-policy switch.
 - `src/session_dispatch_test.rs`: native main-loop authentication delivery regression check.
 - `bench/`: reproducible routing benchmarks.
 - `scripts/`: release and browser-window diagnostic tooling.

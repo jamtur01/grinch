@@ -83,12 +83,15 @@ make build                      # same plus assembles Grinch.app
 make build UNIVERSAL=1          # universal arm64+x86_64, for releases
 ```
 
-`make build` signs with the selected Developer ID Application certificate when
+`make build` downloads Sparkle into `build/` on first use (checked against the
+pinned `SPARKLE_SHA256` in the Makefile) and embeds `Sparkle.framework` in the
+bundle. It signs with the selected Developer ID Application certificate when
 one is available. `scripts/sign-app.sh` adds the application-identifier
 entitlement from that certificate's team and the bundle ID, then verifies the
 signature and entitlement on every architecture. AuthenticationServices needs
 this identity to deliver sign-in requests. Ad-hoc builds can route ordinary
-URLs, but cannot be used to verify authentication-session delivery.
+URLs, but cannot be used to verify authentication-session delivery, and they
+ship without Sparkle, so they have no updater.
 
 To build without registering another copy with LaunchServices, use
 `make build LSREGISTER=/usr/bin/true`.
@@ -253,8 +256,11 @@ but they live here for the maintainer's reference.
 4. The release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml))
    builds a universal `Grinch.app`, verifies its bundle version matches the
    tag, signs and notarises it, packages the DMG, generates release notes from
-   `git log` between this tag and the previous `v*` tag, and uploads everything
-   to the GitHub release.
+   `git log` between this tag and the previous `v*` tag, signs a Sparkle
+   `appcast.xml` for the DMG with the `SPARKLE_ED_PRIVATE_KEY` secret, and
+   uploads everything to the GitHub release. Installed copies read
+   `releases/latest/download/appcast.xml`, so publishing the release is what
+   offers the update.
 5. Confirm the workflow succeeded, download the published DMG and `.sha256`,
    and check the checksum and notarization ticket:
 
@@ -263,3 +269,12 @@ but they live here for the maintainer's reference.
    xcrun stapler validate Grinch-vX.Y.Z.dmg
    spctl --assess --type install --verbose Grinch-vX.Y.Z.dmg
    ```
+
+   Then check that `appcast.xml` is attached to the release and that the
+   previous release offers the update through **Check for Updates…**.
+
+The Sparkle EdDSA private key lives in the maintainer's login keychain under
+the `grinch` account (`generate_keys --account grinch`) and in the
+`SPARKLE_ED_PRIVATE_KEY` repository secret. Its public half is `SUPublicEDKey`
+in `Info.plist`. Losing the private key means installed copies can't accept
+further updates, so keep a backup.

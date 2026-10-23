@@ -12,19 +12,32 @@
     <string>grinch.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <!-- CFBundleShortVersionString is rewritten from Cargo.toml at build
-         time by the Makefile (PlistBuddy on $(BUNDLE)/Info.plist). The
-         source value below is a placeholder; the value in any built or
-         shipped bundle is the Cargo.toml version. Don't edit by hand. -->
+    <!-- CFBundleShortVersionString and CFBundleVersion are rewritten from
+         Cargo.toml at build time by the Makefile (PlistBuddy on
+         $(BUNDLE)/Info.plist). The source values below are placeholders;
+         the values in any built or shipped bundle are the Cargo.toml
+         version. Sparkle compares CFBundleVersion to find newer releases.
+         Don't edit by hand. -->
     <key>CFBundleShortVersionString</key>
     <string>0.0.0-DEV</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>0.0.0</string>
     <!-- Minimum macOS for the released universal binary. Mirrored in
          the README's Install section. -->
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
+    <true/>
+
+    <!-- Sparkle auto-updates. The feed is the appcast.xml asset of the
+         latest GitHub release; SUPublicEDKey verifies each update's EdDSA
+         signature. SUEnableAutomaticChecks skips Sparkle's opt-in prompt;
+         users turn checks off from the menu bar or options.checkForUpdates. -->
+    <key>SUFeedURL</key>
+    <string>https://github.com/jamtur01/grinch/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>0eeIHsAyXUpEkArtpDX+dwC6q+SK0uEsaUB/ZkdGu7s=</string>
+    <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>

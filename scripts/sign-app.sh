@@ -5,11 +5,25 @@ app="${1:?usage: sign-app.sh <app> [signing-identity]}"
 identity="${2:--}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 
+sparkle="$app/Contents/Frameworks/Sparkle.framework"
+
 if [[ "$identity" == "-" ]]; then
+	# Sparkle can only install updates into a Developer ID signed app, so
+	# ad-hoc builds ship without it and run with updates disabled.
+	rm -rf "$app/Contents/Frameworks"
 	codesign --force --sign - "$app"
 	codesign --verify --deep --strict --all-architectures "$app"
-	echo "Built $app (ad-hoc signed; authentication sessions require Developer ID signing)"
+	echo "Built $app (ad-hoc signed; authentication sessions and updates require" \
+		"Developer ID signing)"
 	exit 0
+fi
+
+# Sign Sparkle's nested code inside-out, as Sparkle's manual signing guide
+# describes; --deep would apply the app's entitlements to every helper.
+if [[ -d "$sparkle" ]]; then
+	for nested in "$sparkle/Versions/B/Autoupdate" "$sparkle/Versions/B/Updater.app" "$sparkle"; do
+		codesign --force --options runtime --timestamp --sign "$identity" "$nested"
+	done
 fi
 
 # Read the actual signer's team so certificate names and hashes both work.

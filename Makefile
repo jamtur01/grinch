@@ -27,7 +27,16 @@ STATUS_ICON_2X = brand/grinchTemplate@2x.png
 DMG       = Grinch.dmg
 DMG_STAGE = build/dmg-staging
 
-.PHONY: build run clean test loc icon clean-icon dmg
+# Sparkle auto-update framework. The SHA-256 is the GitHub release asset
+# digest; bump both together. The extracted bin/generate_appcast is used by
+# the release workflow, so the app and the appcast tooling share one pin.
+SPARKLE_VERSION   = 2.10.0
+SPARKLE_SHA256    = c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
+SPARKLE_DIR       = build/sparkle-$(SPARKLE_VERSION)
+SPARKLE_ARCHIVE   = $(SPARKLE_DIR)/Sparkle-$(SPARKLE_VERSION).tar.xz
+SPARKLE_FRAMEWORK = $(SPARKLE_DIR)/Sparkle.framework
+
+.PHONY: build run clean test loc icon clean-icon dmg sparkle
 
 LSREGISTER = /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
 
@@ -51,10 +60,21 @@ $(ICON_ICNS): $(ICON_SOURCES)
 
 icon: $(ICON_ICNS)
 
+$(SPARKLE_FRAMEWORK):
+	@mkdir -p $(SPARKLE_DIR)
+	@curl -fsSL -o $(SPARKLE_ARCHIVE) \
+	    https://github.com/sparkle-project/Sparkle/releases/download/$(SPARKLE_VERSION)/Sparkle-$(SPARKLE_VERSION).tar.xz
+	@echo "$(SPARKLE_SHA256)  $(SPARKLE_ARCHIVE)" | shasum -a 256 -c - >/dev/null || \
+	    { echo "error: $(SPARKLE_ARCHIVE) does not match SPARKLE_SHA256" >&2; rm -f $(SPARKLE_ARCHIVE); exit 1; }
+	@tar -xJf $(SPARKLE_ARCHIVE) -C $(SPARKLE_DIR) Sparkle.framework bin/generate_appcast
+	@echo "Fetched Sparkle $(SPARKLE_VERSION)"
+
+sparkle: $(SPARKLE_FRAMEWORK)
+
 clean-icon:
 	rm -f $(ICON_ICNS)
 
-build: $(ICON_ICNS) $(STATUS_ICON) $(STATUS_ICON_2X)
+build: $(ICON_ICNS) $(STATUS_ICON) $(STATUS_ICON_2X) $(SPARKLE_FRAMEWORK)
 ifeq ($(UNIVERSAL),1)
 	cargo build --release --target aarch64-apple-darwin
 	cargo build --release --target x86_64-apple-darwin
@@ -70,6 +90,13 @@ endif
 	@cp $(RELEASE_BIN) $(BINARY)
 	@cp Info.plist $(BUNDLE)/Info.plist
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(CARGO_VERSION)" $(BUNDLE)/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(CARGO_VERSION)" $(BUNDLE)/Info.plist
+	@rm -rf $(BUNDLE)/Frameworks
+	@mkdir -p $(BUNDLE)/Frameworks
+	@ditto $(SPARKLE_FRAMEWORK) $(BUNDLE)/Frameworks/Sparkle.framework
+	@# Grinch isn't sandboxed, so Sparkle's XPC services are unused.
+	@rm -rf $(BUNDLE)/Frameworks/Sparkle.framework/XPCServices \
+	    $(BUNDLE)/Frameworks/Sparkle.framework/Versions/B/XPCServices
 	@cp $(ICON_ICNS) $(BUNDLE)/Resources/grinch.icns
 	@cp $(STATUS_ICON) $(BUNDLE)/Resources/grinchTemplate.png
 	@cp $(STATUS_ICON_2X) $(BUNDLE)/Resources/

@@ -4,6 +4,13 @@
 use super::*;
 use std::sync::Mutex;
 
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LogFormat {
+    #[default]
+    Json,
+    Text,
+}
+
 /// Outcome of parsing the user config's `options` block. Only fields
 /// Grinch acts on appear here. Known inert options are still accepted at
 /// parse time and discarded (see `parse_options_block`).
@@ -18,10 +25,11 @@ pub struct OptionsConfig {
     /// absent) leaves the choice to the menu bar toggle; `Some` overrides it
     /// on every config load.
     pub check_for_updates: Option<bool>,
-    /// Whether to add resolve events to the app's diagnostic JSONL log.
+    /// Whether to add resolve events to the app's diagnostic log.
     /// Config-load and runtime-JavaScript errors are recorded regardless;
     /// this flag preserves Finicky's opt-in request-logging semantics.
     pub log_requests: bool,
+    pub(crate) log_format: LogFormat,
     /// Rotate the diagnostic log when it grows past this many bytes.
     /// `None` (the default) disables size-based rotation. Rotation
     /// renames the current file to `<path>.<iso-timestamp>` (with a numeric
@@ -36,7 +44,7 @@ pub struct OptionsConfig {
     pub log_rotate_days: Option<u32>,
 }
 
-/// App-owned JSONL diagnostic log shared across config reloads and engines.
+/// App-owned diagnostic log shared across config reloads and engines.
 /// Error events are always recorded; `Engine` decides whether to add resolve
 /// events from `options.logRequests`. The file is opened lazily on the first
 /// event or when the menu action explicitly opens it.
@@ -72,6 +80,13 @@ impl DiagnosticLog {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .configure_rotation(bytes, days);
+    }
+
+    pub(crate) fn configure_format(&self, format: LogFormat) {
+        self.writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .configure_format(format);
     }
 
     pub(crate) fn ensure_file(&self) -> std::io::Result<std::path::PathBuf> {
@@ -201,7 +216,9 @@ pub(crate) fn launch_error_event(
 /// `bytes_written` is tracked in-process (initialised from the existing
 /// file's size on open) so rotation decisions don't stat() per write.
 pub(crate) struct LogWriter {
+    base_path: std::path::PathBuf,
     path: std::path::PathBuf,
+    format: LogFormat,
     pub(crate) file: Option<std::fs::File>,
     failed: bool,
     rotate_bytes: Option<u64>,
@@ -217,7 +234,9 @@ impl LogWriter {
         rotate_days: Option<u32>,
     ) -> Self {
         Self {
+            base_path: path.clone(),
             path,
+            format: LogFormat::Json,
             file: None,
             failed: false,
             rotate_bytes,
@@ -236,9 +255,14 @@ impl LogWriter {
         // second syscall for the newline, which doubled the cost per event.
         let seconds = event["ts"].as_f64().unwrap_or_else(now_unix_f64) as libc::time_t;
         let date = local_timestamp(seconds, c"%Y-%m-%dT%H:%M:%S%z");
-        let event = event.to_string();
-        let separator = if event.len() > 2 { "," } else { "" };
-        let line = format!("{{\"date\":\"{date}\"{separator}{}\n", &event[1..]);
+        let line = match self.format {
+            LogFormat::Json => {
+                let event = event.to_string();
+                let separator = if event.len() > 2 { "," } else { "" };
+                format!("{{\"date\":\"{date}\"{separator}{}\n", &event[1..])
+            }
+            LogFormat::Text => format_text_event(event, &date),
+        };
         let about_to_write = line.len() as u64;
         if self.should_rotate(about_to_write, now_unix()) {
             self.rotate();
@@ -280,6 +304,43 @@ impl LogWriter {
     fn configure_rotation(&mut self, bytes: Option<u64>, days: Option<u32>) {
         self.rotate_bytes = bytes;
         self.rotate_days = days;
+    }
+
+    fn configure_format(&mut self, format: LogFormat) {
+        if self.format == format {
+            return;
+        }
+        if self.file.is_none() && !self.path.exists() {
+            self.format = format;
+            return;
+        }
+        for number in 1_u64.. {
+            let path = self.base_path.with_extension(format!("{number}.log"));
+            match std::fs::OpenOptions::new()
+                .create_new(true)
+                .append(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    self.path = path;
+                    self.file = Some(file);
+                    self.format = format;
+                    self.bytes_written = 0;
+                    self.opened_at_unix = now_unix();
+                    self.failed = false;
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    eprintln!(
+                        "grinch: couldn't create log file {}: {error}",
+                        path.display()
+                    );
+                    self.failed = true;
+                    return;
+                }
+            }
+        }
     }
 
     fn ensure_open(&mut self) -> std::io::Result<()> {
@@ -389,6 +450,39 @@ fn now_unix_f64() -> f64 {
         .unwrap_or(0.0)
 }
 
+fn format_text_event(event: &serde_json::Value, date: &str) -> String {
+    use std::fmt::Write;
+    let kind = event["event"].as_str().unwrap_or("unknown");
+    let mut text = format!("{date}  {kind}\n");
+    if let Some(fields) = event.as_object() {
+        for (key, value) in fields {
+            if key == "event" || key == "ts" {
+                continue;
+            }
+            if let Some(fields) = value.as_object() {
+                let _ = writeln!(text, "  {key}:");
+                for (name, value) in fields {
+                    let _ = writeln!(text, "    {name}: {}", text_value(value));
+                }
+            } else {
+                let _ = writeln!(text, "  {key}: {}", text_value(value));
+            }
+        }
+    }
+    text.push('\n');
+    text
+}
+
+fn text_value(value: &serde_json::Value) -> String {
+    match value.as_str() {
+        Some(s) => s
+            .replace('\\', "\\\\")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r"),
+        None => value.to_string(),
+    }
+}
+
 /// One `resolve` JSONL event. Schema:
 ///
 /// - `event`: always `resolve`
@@ -486,6 +580,7 @@ fn local_timestamp(secs: libc::time_t, format: &std::ffi::CStr) -> String {
 pub(crate) const OPTION_KEYS: &[&str] = &[
     "urlShorteners",
     "logRequests",
+    "logFormat",
     "logRotateBytes",
     "logRotateDays",
     "checkForUpdates",
@@ -499,7 +594,7 @@ pub(crate) const OPTION_KEYS: &[&str] = &[
 /// | Key | Grinch behaviour |
 /// |---|---|
 /// | `urlShorteners` | silently ignored — Finicky's hard-coded list isn't user-configurable there either; Grinch expects external expansion (see `examples/expand-shortener.sh`) |
-/// | `logRequests`   | **honoured** — adds resolve events to the app-wide diagnostic JSONL log |
+/// | `logRequests`   | **honoured** — adds resolve events to the app-wide diagnostic log |
 /// | `checkForUpdates` | **honoured** — turns Sparkle's automatic update checks on or off; absent leaves the menu bar toggle in charge |
 /// | `keepRunning`   | silently ignored — Grinch is always resident |
 /// | `hideIcon`      | **honoured** — propagated through `OptionsConfig` to AppDelegate, which skips menu-bar status item creation when set |
@@ -518,6 +613,11 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
             "logRequests" => {
                 out.log_requests = unsafe { v.toBool() };
             }
+            "logFormat" => match js_to_string(&v).as_deref() {
+                Some("json") => out.log_format = LogFormat::Json,
+                Some("text") => out.log_format = LogFormat::Text,
+                _ => eprintln!("grinch: invalid options.logFormat — use 'json' or 'text'"),
+            },
             "logRotateBytes" => {
                 // JS numbers are doubles; coerce to u64 with bounds-check
                 // so a negative/NaN/infinity value disables rotation

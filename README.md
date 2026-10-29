@@ -140,8 +140,7 @@ placed at the top level (e.g. `hideIcon: true` instead of
 `options.<key>` it belongs under. Run `Grinch --validate` to see these
 warnings.
 
-The `options` block accepts Finicky v4's keys (plus Grinch's own
-`logRotateBytes` / `logRotateDays`). Three are wired up:
+The `options` block accepts Finicky v4's keys plus Grinch's log settings:
 
 - **`hideIcon: true`** — skip the menu-bar status item at app launch.
   Useful when you don't want Grinch's icon in your menu bar. Reloads don't
@@ -153,7 +152,7 @@ The `options` block accepts Finicky v4's keys (plus Grinch's own
   item decides. Grinch saves the value as its own preference, so after you
   remove the key the menu item starts from the last value the config set.
 - **`logRequests: true`** — add a `resolve` event for every routed URL to
-  the app's JSONL diagnostic log. Useful for figuring out *why* a particular
+  the app's diagnostic log. Useful for figuring out *why* a particular
   click went where it did without enabling the broader `GRINCH_DEBUG=1`
   stderr trace.
 
@@ -163,14 +162,31 @@ The `options` block accepts Finicky v4's keys (plus Grinch's own
   Same-second collisions append `.1`, `.2`, etc., preserving earlier archives.
   Both triggers can be combined (whichever fires first wins). Default:
   no rotation, file grows until you delete it.
+- **`logFormat: "text"`** — write readable diagnostic events. The default,
+  `"json"`, writes one JSON object per line.
 
-Grinch keeps one diagnostic log per app launch at
+Grinch keeps a diagnostic log per app launch at
 `~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Config-load errors,
 runtime JavaScript exceptions, profile errors, and launch failures are recorded even when
 `logRequests` is false; that option controls only the higher-volume `resolve`
 events. The file opens
 lazily on the first event or when you click **Open Diagnostic Log**. Rotation
 settings take effect after a config loads successfully.
+Changing `logFormat` after a successful config load starts a new log file;
+earlier events remain in the previous file. Errors before the first successful
+config load use JSON. The menu opens the current file.
+
+Text format begins each event with the local date, UTC offset, and event type,
+followed by its fields:
+
+```text
+2026-05-11T12:57:25-0400  resolve
+  browser: com.google.Chrome
+  final: https://example.com/
+  url: https://example.com/
+```
+
+JSON format includes the same event details:
 
 ```json
 {
@@ -528,7 +544,7 @@ Click the Grinch eyes in the menu bar:
 | **Grinch X.Y.Z** | Disabled label at the top showing the running binary's version. Matches `Grinch --version`. |
 | **Open Config** (⌘O) | Opens the active config file in your default `.js` handler (VS Code / Cursor / etc.). |
 | **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
-| **Open Diagnostic Log** | Opens the app-wide JSONL diagnostic log. |
+| **Open Diagnostic Log** | Opens the current diagnostic log. |
 | **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
 | **Check for Updates…** | Checks the latest release now and shows the result. See [Updates](#updates). |
 | **Check for Updates Automatically** | Toggles the daily update check. Greyed out while `options.checkForUpdates` is set. |

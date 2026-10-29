@@ -717,6 +717,7 @@ impl Engine {
         })?;
 
         diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_days);
+        diagnostics.configure_format(options.log_format);
         install_runtime_error_handler(&ctx, &config_path, Rc::clone(&diagnostics));
 
         Ok(Self {

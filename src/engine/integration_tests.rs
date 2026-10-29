@@ -278,6 +278,80 @@ fn diagnostic_log_is_available_without_request_logging() {
 }
 
 #[test]
+fn log_format_switches_files_and_preserves_background_events() {
+    let diagnostics = Rc::new(isolated_diagnostics());
+    let json = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari", options: { logRequests: true } };"#,
+        Rc::clone(&diagnostics),
+    );
+    let background = diagnostics.event_sink();
+    let _ = resolve(&json, "https://example.com/before");
+    let json_path = diagnostics.ensure_file().unwrap();
+    let text = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari", options: { logRequests: true, logFormat: "text" } };"#,
+        Rc::clone(&diagnostics),
+    );
+    let _ = resolve(&text, "https://example.com/after");
+    background(serde_json::json!({
+        "event": "launch_error", "ts": 1.0, "message": "launch failed\ntry again"
+    }));
+    diagnostics.record_config_error(None, "config failed");
+    diagnostics.record_runtime_js_error("config.js", "script failed");
+    diagnostics.record_profile_warning("browser", None, "profile failed");
+    let text_path = diagnostics.ensure_file().unwrap();
+    let _ = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari", options: { logFormat: "text" } };"#,
+        Rc::clone(&diagnostics),
+    );
+    assert_eq!(diagnostics.ensure_file().unwrap(), text_path);
+    assert_ne!(json_path, text_path);
+    let initial = std::fs::read_to_string(&json_path).unwrap();
+    let row: serde_json::Value = serde_json::from_str(initial.trim()).unwrap();
+    assert_eq!(row["url"], "https://example.com/before");
+    let body = std::fs::read_to_string(&text_path).unwrap();
+    assert!(body.contains("  resolve\n"));
+    assert!(body.contains("url: https://example.com/after"));
+    assert!(body.contains("  launch_error\n"));
+    assert!(body.contains("message: launch failed\\ntry again"));
+    assert!(body.contains("  config_error\n"));
+    assert!(body.contains("  runtime_js_error\n"));
+    assert!(body.contains("  profile_error\n"));
+    let _ = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari" };"#,
+        Rc::clone(&diagnostics),
+    );
+    let next = diagnostics.ensure_file().unwrap();
+    assert_ne!(next, text_path);
+    assert_ne!(next, json_path);
+    background(serde_json::json!({ "event": "config_error", "ts": 2.0 }));
+    let row: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(next).unwrap().trim()).unwrap();
+    assert_eq!(row["event"], "config_error");
+    assert_eq!(std::fs::read_to_string(json_path).unwrap(), initial);
+    assert_eq!(std::fs::read_to_string(text_path).unwrap(), body);
+
+    let text = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari", options: {
+            logRequests: true, logFormat: "text", logRotateBytes: 1
+        } };"#,
+        Rc::clone(&diagnostics),
+    );
+    let path = diagnostics.ensure_file().unwrap();
+    let _ = resolve(&text, "https://example.com/rotated");
+    let _ = resolve(&text, "https://example.com/current");
+    let active = std::fs::read_to_string(&path).unwrap();
+    assert!(active.contains("url: https://example.com/current"));
+    let rotated = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            std::fs::read_to_string(entry.path())
+                .is_ok_and(|body| body.contains("url: https://example.com/rotated"))
+        });
+    assert!(rotated, "the previous text event should survive rotation");
+}
+
+#[test]
 fn ensure_diagnostic_log_reports_filesystem_errors() {
     let tmp = unique_tmp("open-log-error");
     std::fs::write(&tmp, b"not a directory").expect("fixture file should be writable");

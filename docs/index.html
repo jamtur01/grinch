@@ -144,7 +144,7 @@ make run</code></pre>
 <section id="diagnostics">
   <h2>When a click goes the wrong way</h2>
 
-  <p>A handful of CLI flags + a JSONL log answer "why did <em>that</em> click go <em>there</em>?":</p>
+  <p>A handful of CLI flags and a diagnostic log answer "why did <em>that</em> click go <em>there</em>?":</p>
 
   <h3>List the loaded rules</h3>
   <p><code>Grinch --list-rules</code> prints every rule with its index, label, and target — pair with the JSONL log to map a <code>matchedRule.index</code> back to the actual entry in your config.</p>
@@ -155,11 +155,13 @@ make run</code></pre>
 
   <h3>Open the diagnostic log</h3>
   <p>Grinch records config-load, runtime JavaScript, profile, and browser launch errors
-    in one JSONL file per app
+    in a diagnostic file per app
     launch at <code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code>. Set
     <code>options: { logRequests: true }</code> to add one <code>resolve</code> event per
     routed URL. Use <em>Open Diagnostic Log</em> in the menu bar to open the active file:
   </p>
+  <p>JSON is the default; set <code>logFormat: "text"</code> in <code>options</code>
+    for readable text. Changing formats starts a new file, preserving the previous log.</p>
 <pre><code>{
   "event": "resolve",
   "ts": 1778518645.634,

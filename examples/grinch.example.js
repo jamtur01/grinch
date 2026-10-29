@@ -407,6 +407,7 @@ module.exports = {
   options: {
     // hideIcon: true,          // no menu bar icon (restart Grinch to apply)
     // logRequests: true,       // add every routed URL to the diagnostic log
+    // logFormat: "text",       // human-readable log; default is "json"
     // checkForUpdates: false,  // turn off the daily update check
   },
 };

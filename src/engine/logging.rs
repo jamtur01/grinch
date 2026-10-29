@@ -31,6 +31,7 @@ pub struct OptionsConfig {
     pub log_requests: bool,
     /// Output format for diagnostic events; defaults to JSON.
     pub(crate) log_format: LogFormat,
+    pub(crate) invalid_log_format: bool,
     /// Rotate the diagnostic log when it grows past this many bytes.
     /// `None` (the default) disables size-based rotation. Rotation
     /// renames the current file to `<path>.<iso-timestamp>` (with a numeric
@@ -629,7 +630,7 @@ pub(crate) const OPTION_KEYS: &[&str] = &[
 /// | `hideIcon`      | **honoured** — propagated through `OptionsConfig` to AppDelegate, which skips menu-bar status item creation when set |
 ///
 /// Unknown keys log a one-line warning so users can spot typos.
-pub(crate) fn parse_options_block(opts: &JSValue) -> Result<OptionsConfig, EngineError> {
+pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
     let mut out = OptionsConfig::default();
     for (k, v) in iter_object(opts) {
         match k.as_str() {
@@ -642,10 +643,11 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> Result<OptionsConfig, Engin
             "logRequests" => {
                 out.log_requests = unsafe { v.toBool() };
             }
+            "logFormat" if is_undef_or_null(&v) => {}
             "logFormat" => match js_to_string(&v).as_deref() {
                 Some("json") => out.log_format = LogFormat::Json,
                 Some("text") => out.log_format = LogFormat::Text,
-                _ => return Err(EngineError::InvalidLogFormat),
+                _ => out.invalid_log_format = true,
             },
             "logRotateBytes" => {
                 // JS numbers are doubles; coerce to u64 with bounds-check
@@ -672,7 +674,7 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> Result<OptionsConfig, Engin
             _ => {}
         }
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]

@@ -389,28 +389,64 @@ fn format_change_includes_profile_errors_from_config_load() {
 }
 
 #[test]
-fn invalid_log_format_rejects_reload_without_switching_logs() {
+fn invalid_log_format_preserves_routing_and_current_format() {
     let diagnostics = Rc::new(isolated_diagnostics());
+    let engine = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari", options: { logFormat: "Text", logRequests: true } };"#,
+        Rc::clone(&diagnostics),
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.apple.Safari"
+    );
+    let body = std::fs::read_to_string(diagnostics.ensure_file().unwrap()).unwrap();
+    let mut events = body.lines();
+    let row: serde_json::Value = serde_json::from_str(events.next().unwrap()).unwrap();
+    assert_eq!(row["event"], "config_error");
+    assert!(row["message"].as_str().unwrap().contains("logFormat"));
+    let row: serde_json::Value = serde_json::from_str(events.next().unwrap()).unwrap();
+    assert_eq!(row["event"], "resolve");
     let _ = build_engine_with_diagnostics(
         r#"module.exports = { default: "com.apple.Safari", options: { logFormat: "text" } };"#,
         Rc::clone(&diagnostics),
     );
     let path = diagnostics.ensure_file().unwrap();
-    let result = try_build_engine_with_diagnostics(
+    let engine = build_engine_with_diagnostics(
         r#"module.exports = { default: "com.apple.Safari", options: { logFormat: "Text" } };"#,
         Rc::clone(&diagnostics),
     );
-    let Err(error) = result else {
-        panic!("invalid log format must fail config load");
-    };
-    assert!(error.to_string().contains("logFormat"));
-    assert_eq!(diagnostics.ensure_file().unwrap(), path);
-    diagnostics.record_config_error(None, &error.to_string());
-    assert!(
-        std::fs::read_to_string(path)
-            .unwrap()
-            .contains("  config_error\n")
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.apple.Safari"
     );
+    assert_eq!(diagnostics.ensure_file().unwrap(), path);
+    let body = std::fs::read_to_string(path).unwrap();
+    assert!(body.contains("  config_error\n"));
+    assert!(body.contains("logFormat"));
+}
+
+#[test]
+fn null_and_undefined_log_format_use_default() {
+    for value in ["null", "undefined"] {
+        let diagnostics = Rc::new(isolated_diagnostics());
+        let engine = build_engine_with_diagnostics(
+            &format!(
+                r#"module.exports = {{ default: "com.apple.Safari", options: {{
+                logFormat: {value}, logRequests: true
+            }} }};"#
+            ),
+            Rc::clone(&diagnostics),
+        );
+        assert_eq!(
+            resolve(&engine, "https://example.com/").0,
+            "com.apple.Safari"
+        );
+        let body = std::fs::read_to_string(diagnostics.ensure_file().unwrap()).unwrap();
+        for line in body.lines() {
+            let row: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_ne!(row["event"], "config_error");
+        }
+    }
 }
 
 #[test]

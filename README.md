@@ -163,8 +163,8 @@ The `options` block accepts Finicky v4's keys plus Grinch's log settings:
   Both triggers can be combined (whichever fires first wins). Default:
   no rotation, file grows until you delete it.
 - **`logFormat: "text"`** — write readable diagnostic events. The default,
-  `"json"`, writes one JSON object per line. Other values reject the config
-  and leave the previous engine active.
+  `"json"`, writes one JSON object per line. Invalid values leave the current
+  format in place and record a config error; routing continues.
 
 Grinch keeps a diagnostic log per app launch at
 `~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Config-load errors,

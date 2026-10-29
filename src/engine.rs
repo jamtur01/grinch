@@ -575,7 +575,6 @@ pub struct Engine {
 #[derive(Debug)]
 pub enum EngineError {
     MissingDefault,
-    InvalidLogFormat,
     /// One of the prelude globals (`RegExp`, `Function`, `URL`, or a
     /// `__grinch*` helper) was missing or null when the engine tried to
     /// look it up. Almost always caused by user config that overwrites
@@ -593,9 +592,6 @@ impl std::fmt::Display for EngineError {
                 "config has no `default` (or `defaultBrowser`) — \
                  add e.g. `default: \"Google Chrome\"` to module.exports"
             ),
-            EngineError::InvalidLogFormat => {
-                write!(f, "invalid options.logFormat — use 'json' or 'text'")
-            }
             EngineError::PreludeBroken { global } => write!(
                 f,
                 "prelude global `{global}` is missing or null — your config \
@@ -641,10 +637,16 @@ impl Engine {
         let options = key(&exports, "options")
             .filter(|opts| !is_undef_or_null(opts) && unsafe { opts.isObject() })
             .map(|opts| parse_options_block(&opts))
-            .transpose()?
             .unwrap_or_default();
         diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_days);
-        diagnostics.configure_format(options.log_format);
+        if options.invalid_log_format {
+            diagnostics.record_config_error(
+                Some(&config_path),
+                "invalid options.logFormat — use 'json' or 'text'; keeping the current format",
+            );
+        } else {
+            diagnostics.configure_format(options.log_format);
+        }
         warn_unknown_top_level_keys(&exports);
 
         // browsers

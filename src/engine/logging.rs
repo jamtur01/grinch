@@ -31,6 +31,7 @@ pub struct OptionsConfig {
     pub log_requests: bool,
     /// Output format for diagnostic events; defaults to JSON.
     pub(crate) log_format: LogFormat,
+    /// Whether an invalid format should leave the current format unchanged.
     pub(crate) invalid_log_format: bool,
     /// Rotate the diagnostic log when it grows past this many bytes.
     /// `None` (the default) disables size-based rotation. Rotation

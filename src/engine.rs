@@ -640,10 +640,10 @@ impl Engine {
             .unwrap_or_default();
         diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_days);
         if options.invalid_log_format {
-            diagnostics.record_config_error(
-                Some(&config_path),
-                "invalid options.logFormat — use 'json' or 'text'; keeping the current format",
-            );
+            let message =
+                "invalid options.logFormat — use 'json' or 'text'; keeping the current format";
+            eprintln!("grinch: {message}");
+            diagnostics.record_config_error(Some(&config_path), message);
         } else {
             diagnostics.configure_format(options.log_format);
         }

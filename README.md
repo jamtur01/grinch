@@ -171,10 +171,11 @@ runtime JavaScript exceptions, profile errors, and launch failures are recorded 
 `logRequests` is false; that option controls only the higher-volume `resolve`
 events. The file opens
 lazily on the first event or when you click **Open Diagnostic Log**. Rotation
-settings take effect after a config loads successfully.
-Changing `logFormat` after a successful config load starts a new log file;
-earlier events remain in the previous file. Errors before the first successful
-config load use JSON. The menu opens the current file.
+settings take effect after the JavaScript config is evaluated and its options
+are parsed, even if later engine construction fails. Changing `logFormat`
+starts a new log file; earlier events remain in the previous file. Errors
+before the first config's options are parsed use JSON. The menu opens the
+current file.
 
 Text format begins each event with the local date, UTC offset, and event type,
 followed by its fields:

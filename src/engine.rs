@@ -638,6 +638,8 @@ impl Engine {
             .filter(|opts| !is_undef_or_null(opts) && unsafe { opts.isObject() })
             .map(|opts| parse_options_block(&opts))
             .unwrap_or_default();
+        diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_days);
+        diagnostics.configure_format(options.log_format);
         warn_unknown_top_level_keys(&exports);
 
         // browsers
@@ -716,8 +718,6 @@ impl Engine {
             global: "valueWithBool(false)",
         })?;
 
-        diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_days);
-        diagnostics.configure_format(options.log_format);
         install_runtime_error_handler(&ctx, &config_path, Rc::clone(&diagnostics));
 
         Ok(Self {

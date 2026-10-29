@@ -352,6 +352,40 @@ fn log_format_switches_files_and_preserves_background_events() {
 }
 
 #[test]
+fn format_change_includes_profile_errors_from_config_load() {
+    let home = unique_tmp("format-profile-error");
+    with_home(&home, || {
+        let diagnostics = Rc::new(isolated_diagnostics());
+        diagnostics.record_config_error(None, "previous error");
+        let old = diagnostics.ensure_file().unwrap();
+        let _ = build_engine_with_diagnostics(
+            r#"module.exports = { default: "Google Chrome:NoSuchProfileXYZ", options: {
+            logFormat: "text"
+        } };"#,
+            Rc::clone(&diagnostics),
+        );
+        let current = diagnostics.ensure_file().unwrap();
+        assert_ne!(old, current);
+        assert!(diagnostics.profile_error().is_some());
+        let body = std::fs::read_to_string(current).unwrap();
+        assert!(body.contains("  profile_error\n"), "{body}");
+        assert!(body.contains("NoSuchProfileXYZ"), "{body}");
+        let body = std::fs::read_to_string(old).unwrap();
+        assert!(!body.contains("profile_error"), "{body}");
+        let result = try_build_engine_with_diagnostics(
+            r#"module.exports = { options: { logFormat: "json" } };"#,
+            Rc::clone(&diagnostics),
+        );
+        assert!(result.is_err());
+        diagnostics.record_config_error(None, "missing default");
+        let current = diagnostics.ensure_file().unwrap();
+        let body = std::fs::read_to_string(current).unwrap();
+        let row: serde_json::Value = serde_json::from_str(body.trim()).unwrap();
+        assert_eq!(row["message"], "missing default");
+    });
+}
+
+#[test]
 fn ensure_diagnostic_log_reports_filesystem_errors() {
     let tmp = unique_tmp("open-log-error");
     std::fs::write(&tmp, b"not a directory").expect("fixture file should be writable");

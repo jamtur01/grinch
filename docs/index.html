@@ -67,7 +67,7 @@
       <code>options: { checkForUpdates: false }</code>.</li>
     <li><strong>Declarative routing in nanoseconds</strong>,
       JavaScript callbacks in microseconds.</li>
-    <li><strong>Debuggable.</strong> Every resolve can be logged as JSONL with the matched rule, opener, and modifier state. <code>--list-rules</code> prints the loaded rule table for cross-reference.</li>
+    <li><strong>Debuggable.</strong> Every resolve can be logged as JSON or text with the matched rule, opener, and modifier state. <code>--list-rules</code> prints the loaded rule table for cross-reference.</li>
     <li><strong>SSO / OAuth popups route through your rules.</strong> Sign-in requests
       from apps using <code>ASWebAuthenticationSession</code> use the same browser
       routing rules as other links.</li>
@@ -147,7 +147,7 @@ make run</code></pre>
   <p>A handful of CLI flags and a diagnostic log answer "why did <em>that</em> click go <em>there</em>?":</p>
 
   <h3>List the loaded rules</h3>
-  <p><code>Grinch --list-rules</code> prints every rule with its index, label, and target — pair with the JSONL log to map a <code>matchedRule.index</code> back to the actual entry in your config.</p>
+  <p><code>Grinch --list-rules</code> prints every rule with its index, label, and target — pair with the diagnostic log to map a <code>matchedRule.index</code> back to the actual entry in your config.</p>
 <pre><code>0: zoom.us/j/* | *.zoom.us/j/* → us.zoom.xos
 1: [slack-to-chrome] from:com.tinyspeck.slackmacgap → com.google.Chrome
 2: github.com → com.google.Chrome --profile-directory=Profile 1
@@ -161,7 +161,8 @@ make run</code></pre>
     routed URL. Use <em>Open Diagnostic Log</em> in the menu bar to open the active file:
   </p>
   <p>JSON is the default; set <code>logFormat: "text"</code> in <code>options</code>
-    for readable text. Changing formats starts a new file, preserving the previous log.</p>
+    for readable text. Changing formats starts a new file, preserving the previous log.
+    Switched files use suffixes such as <code>.1.log</code> and <code>.2.log</code>.</p>
   <p>For example, a configuration error in JSON:</p>
 <pre><code>{"date":"2026-05-11T12:57:25-0400","event":"config_error","message":"SyntaxError (line 4)","path":"/Users/alex/.grinch.js","ts":1778518645.634}</code></pre>
   <p>The same event in text format:</p>

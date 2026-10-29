@@ -29,6 +29,7 @@ pub struct OptionsConfig {
     /// Config-load and runtime-JavaScript errors are recorded regardless;
     /// this flag preserves Finicky's opt-in request-logging semantics.
     pub log_requests: bool,
+    /// Output format for diagnostic events; defaults to JSON.
     pub(crate) log_format: LogFormat,
     /// Rotate the diagnostic log when it grows past this many bytes.
     /// `None` (the default) disables size-based rotation. Rotation

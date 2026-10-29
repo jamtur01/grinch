@@ -176,15 +176,31 @@ settings take effect after the JavaScript config is evaluated and its options
 are parsed, even if later engine construction fails. Changing `logFormat`
 starts a new log file; earlier events remain in the previous file. Errors
 before the first config's options are parsed use JSON. The menu opens the
-current file.
+current file. Files created by format changes use suffixes such as `.1.log`
+and `.2.log` in place of the initial `.log` suffix.
 
 Text format begins each event with the local date, UTC offset, and event type,
 followed by its fields:
 
 ```text
 2026-05-11T12:57:25-0400  resolve
+  args: ["--profile-directory=Profile 10"]
   browser: com.google.Chrome
   final: https://example.com/
+  matchedRule:
+    index: 11
+    name: shift-override
+  modifiers:
+    command: false
+    control: false
+    option: false
+    shift: true
+  opener:
+    bundleId: com.tinyspeck.slackmacgap
+    name: Slack
+    pid: 731
+  rewritten: false
+  strategy: launch_new_instance
   url: https://example.com/
 ```
 

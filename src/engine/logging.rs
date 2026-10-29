@@ -473,10 +473,10 @@ fn format_text_event(event: &serde_json::Value, date: &str) -> String {
             if let Some(fields) = value.as_object() {
                 let _ = writeln!(text, "  {key}:");
                 for (name, value) in fields {
-                    let _ = writeln!(text, "    {name}: {}", text_value(value));
+                    write_text_field(&mut text, "    ", name, value);
                 }
             } else {
-                let _ = writeln!(text, "  {key}: {}", text_value(value));
+                write_text_field(&mut text, "  ", key, value);
             }
         }
     }
@@ -484,12 +484,29 @@ fn format_text_event(event: &serde_json::Value, date: &str) -> String {
     text
 }
 
+fn write_text_field(text: &mut String, indent: &str, name: &str, value: &serde_json::Value) {
+    use std::fmt::Write;
+    let value = text_value(value);
+    if value.is_empty() {
+        let _ = writeln!(text, "{indent}{name}:");
+    } else {
+        let _ = writeln!(text, "{indent}{name}: {value}");
+    }
+}
+
 fn text_value(value: &serde_json::Value) -> String {
     match value.as_str() {
-        Some(s) => s
-            .replace('\\', "\\\\")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r"),
+        Some(s) => {
+            let mut result = String::new();
+            for character in s.chars() {
+                if character.is_control() || character == '\\' {
+                    result.extend(character.escape_default());
+                } else {
+                    result.push(character);
+                }
+            }
+            result
+        }
         None => value.to_string(),
     }
 }

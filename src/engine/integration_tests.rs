@@ -293,7 +293,7 @@ fn log_format_switches_files_and_preserves_background_events() {
     );
     let _ = resolve(&text, "https://example.com/after");
     background(serde_json::json!({
-        "event": "launch_error", "ts": 1.0, "message": "launch failed\ntry again"
+        "event": "launch_error", "ts": 1.0, "message": "launch failed\ntry again\u{1b}\t"
     }));
     diagnostics.record_config_error(None, "config failed");
     diagnostics.record_runtime_js_error("config.js", "script failed");
@@ -313,6 +313,9 @@ fn log_format_switches_files_and_preserves_background_events() {
     assert!(body.contains("url: https://example.com/after"));
     assert!(body.contains("  launch_error\n"));
     assert!(body.contains("message: launch failed\\ntry again"));
+    assert!(body.contains("\\u{1b}\\t"), "{body:?}");
+    assert!(!body.contains('\u{1b}'));
+    assert!(body.contains("    bundleId:\n"));
     assert!(body.contains("  config_error\n"));
     assert!(body.contains("  runtime_js_error\n"));
     assert!(body.contains("  profile_error\n"));

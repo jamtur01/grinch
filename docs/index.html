@@ -162,7 +162,15 @@ make run</code></pre>
   </p>
   <p>JSON is the default; set <code>logFormat: "text"</code> in <code>options</code>
     for readable text. Changing formats starts a new file, preserving the previous log.</p>
+  <p>For example, a configuration error in JSON:</p>
+<pre><code>{"date":"2026-05-11T12:57:25-0400","event":"config_error","message":"SyntaxError (line 4)","path":"/Users/alex/.grinch.js","ts":1778518645.634}</code></pre>
+  <p>The same event in text format:</p>
+<pre><code>2026-05-11T12:57:25-0400  config_error
+  message: SyntaxError (line 4)
+  path: /Users/alex/.grinch.js</code></pre>
+  <p>A resolve event contains routing details:</p>
 <pre><code>{
+  "date": "2026-05-11T12:57:25-0400",
   "event": "resolve",
   "ts": 1778518645.634,
   "url": "https://github.com/foo",
@@ -184,10 +192,6 @@ make run</code></pre>
   },
   "matchedRule": { "index": 2, "name": "github.com" }
 }</code></pre>
-<pre><code>
-{"event":"config_error","ts":1.0,"path":"~/.grinch.js","message":"SyntaxError"}
-{"event":"runtime_js_error","ts":2.0,"path":"~/.grinch.js","message":"TypeError"}
-</code></pre>
   <p><code>launch_error</code> records invalid URLs, missing browsers, and native launch
     failures even when request logging is disabled. It includes <code>url</code>,
     <code>browser</code>, <code>strategy</code>, and <code>message</code>; native errors

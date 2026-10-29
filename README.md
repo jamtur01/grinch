@@ -186,7 +186,7 @@ followed by its fields:
   url: https://example.com/
 ```
 
-JSON format includes the same event details:
+JSON format also includes the numeric Unix timestamp:
 
 ```json
 {
@@ -230,11 +230,18 @@ Field notes:
   to their full source.
 
 Config and JavaScript error events include the config path, when one was found, and the captured
-JavaScript message:
+JavaScript message. For example, this JSON event:
 
 ```json
-{"event":"config_error","ts":1.0,"path":"~/.grinch.js","message":"SyntaxError (line 4)"}
-{"event":"runtime_js_error","ts":2.0,"path":"~/.grinch.js","message":"TypeError (line 18)"}
+{"date":"2026-05-11T12:57:25-0400","event":"config_error","message":"SyntaxError (line 4)","path":"/Users/alex/.grinch.js","ts":1778518645.634}
+```
+
+The same event in text format:
+
+```text
+2026-05-11T12:57:25-0400  config_error
+  message: SyntaxError (line 4)
+  path: /Users/alex/.grinch.js
 ```
 
 `launch_error` records invalid URLs, missing browsers, and failures reported by

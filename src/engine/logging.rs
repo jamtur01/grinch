@@ -219,6 +219,7 @@ pub(crate) struct LogWriter {
     base_path: std::path::PathBuf,
     path: std::path::PathBuf,
     format: LogFormat,
+    pending_format_switch: bool,
     pub(crate) file: Option<std::fs::File>,
     failed: bool,
     rotate_bytes: Option<u64>,
@@ -237,6 +238,7 @@ impl LogWriter {
             base_path: path.clone(),
             path,
             format: LogFormat::Json,
+            pending_format_switch: false,
             file: None,
             failed: false,
             rotate_bytes,
@@ -314,6 +316,21 @@ impl LogWriter {
             self.format = format;
             return;
         }
+        self.file = None;
+        self.format = format;
+        self.pending_format_switch = true;
+        if let Err(error) = self.ensure_open() {
+            eprintln!("grinch: couldn't create a new diagnostic log: {error}");
+            self.failed = true;
+        } else {
+            self.failed = false;
+        }
+    }
+
+    fn open_next_format_file(&mut self) -> std::io::Result<(std::fs::File, u64)> {
+        if let Some(parent) = self.base_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         for number in 1_u64.. {
             let path = self.base_path.with_extension(format!("{number}.log"));
             match std::fs::OpenOptions::new()
@@ -323,31 +340,25 @@ impl LogWriter {
             {
                 Ok(file) => {
                     self.path = path;
-                    self.file = Some(file);
-                    self.format = format;
-                    self.bytes_written = 0;
-                    self.opened_at_unix = now_unix();
-                    self.failed = false;
-                    return;
+                    self.pending_format_switch = false;
+                    return Ok((file, 0));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => {
-                    eprintln!(
-                        "grinch: couldn't create log file {}: {error}",
-                        path.display()
-                    );
-                    self.failed = true;
-                    return;
-                }
+                Err(error) => return Err(error),
             }
         }
+        unreachable!()
     }
 
     fn ensure_open(&mut self) -> std::io::Result<()> {
         if self.file.is_some() {
             return Ok(());
         }
-        let (file, size) = Self::open(&self.path)?;
+        let (file, size) = if self.pending_format_switch {
+            self.open_next_format_file()?
+        } else {
+            Self::open(&self.path)?
+        };
         self.file = Some(file);
         self.bytes_written = size;
         self.opened_at_unix = now_unix();
@@ -649,6 +660,31 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
 #[cfg(test)]
 mod tests {
     use crate::engine::logging::rename_rotated_log;
+
+    #[test]
+    fn format_switch_retries_after_directory_failure() {
+        let diagnostics = crate::engine::integration_tests::isolated_diagnostics();
+        diagnostics.record_config_error(None, "before");
+        let old = diagnostics.ensure_file().unwrap();
+        let directory = old.parent().unwrap();
+        let moved = directory.with_extension("moved");
+        std::fs::rename(directory, &moved).unwrap();
+        std::fs::write(directory, "not a directory").unwrap();
+        diagnostics.configure_format(super::LogFormat::Text);
+        let failed = diagnostics.ensure_file().is_err();
+        std::fs::remove_file(directory).unwrap();
+        std::fs::rename(&moved, directory).unwrap();
+        assert!(failed);
+        let current = diagnostics.ensure_file().unwrap();
+        assert_ne!(old, current);
+        diagnostics.record_config_error(None, "after");
+        let body = std::fs::read_to_string(current).unwrap();
+        assert!(body.contains("  config_error\n"), "{body}");
+        assert!(body.contains("message: after"), "{body}");
+        let body = std::fs::read_to_string(old).unwrap();
+        assert!(body.contains("\"before\""));
+        assert!(!body.contains("after"));
+    }
 
     #[test]
     fn background_events_share_rotation_and_survive_the_log_owner() {

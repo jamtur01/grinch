@@ -160,9 +160,16 @@ make run</code></pre>
     <code>options: { logRequests: true }</code> to add one <code>resolve</code> event per
     routed URL. Use <em>Open Diagnostic Log</em> in the menu bar to open the active file:
   </p>
-  <p>JSON is the default; set <code>logFormat: "text"</code> in <code>options</code>
-    for readable text. Changing formats starts a new file, preserving the previous log.
-    Switched files use suffixes such as <code>.1.log</code> and <code>.2.log</code>.</p>
+  <p>JSON is the default; set <code>options: { logFormat: "text" }</code>
+    for readable text. Omitting the setting, or setting it to <code>null</code> or
+    <code>undefined</code>, selects JSON. An invalid value keeps the current format,
+    records a config error, and prints a warning without stopping routing.
+    <code>Grinch --validate</code> shows the warning but still exits 0 if the config
+    loads. Changing formats starts a new file, preserving the previous log;
+    switched files use suffixes such as <code>.1.log</code> and <code>.2.log</code>.</p>
+  <p>Logging options take effect after the config's JavaScript is evaluated and its
+    options are parsed, even if later engine construction fails. Errors before the
+    first config's options are parsed use JSON. The menu opens the current file.</p>
   <p>For example, a configuration error in JSON:</p>
 <pre><code>{"date":"2026-05-11T12:57:25-0400","event":"config_error","message":"SyntaxError (line 4)","path":"/Users/alex/.grinch.js","ts":1778518645.634}</code></pre>
   <p>The same event in text format:</p>

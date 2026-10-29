@@ -127,7 +127,7 @@ module.exports = {
   browsers: { ... },      // optional: named-browser dictionary
   rewrite: [ ... ],       // optional: URL rewriters, applied in order
   rules: [ ... ],         // optional: routing rules, first match wins
-  options: { ... },       // optional: Finicky-compat options block (parsed, mostly inert)
+  options: { ... },       // optional: Finicky-compatible and Grinch-specific settings
 };
 ```
 
@@ -164,7 +164,9 @@ The `options` block accepts Finicky v4's keys plus Grinch's log settings:
   no rotation, file grows until you delete it.
 - **`logFormat: "text"`** — write readable diagnostic events. The default,
   `"json"`, writes one JSON object per line. Invalid values leave the current
-  format in place and record a config error; routing continues.
+  format in place, record a config error, and print a warning; routing continues.
+  An omitted, `null`, or `undefined` value selects the default JSON format.
+  `Grinch --validate` shows the warning but still exits 0 for a valid config.
 
 Grinch keeps a diagnostic log per app launch at
 `~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Config-load errors,

@@ -174,6 +174,7 @@ settings take effect after a config loads successfully.
 
 ```json
 {
+  "date": "2026-05-11T12:57:25-0400",
   "event": "resolve",
   "ts": 1778518645.634,
   "url": "https://example.com/",
@@ -199,6 +200,7 @@ settings take effect after a config loads successfully.
 
 Field notes:
 
+- `date` — local date and time with UTC offset; `ts` remains Unix seconds.
 - `event` — `resolve`, `config_error`, `runtime_js_error`, `profile_error`, or `launch_error`.
 - `rewritten` — true iff `final != url` (a rewrite fired).
 - `opener` — the app that *sent* the URL, identified via the GURL Apple

@@ -158,7 +158,7 @@ impl DiagnosticLog {
         self.writer
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .write(&event.to_string());
+            .write(&event);
     }
 
     /// Retain the same rotating writer for callbacks that can outlive an engine
@@ -169,7 +169,7 @@ impl DiagnosticLog {
             writer
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .write(&event.to_string());
+                .write(&event);
         }
     }
 }
@@ -227,14 +227,18 @@ impl LogWriter {
         }
     }
 
-    pub(crate) fn write(&mut self, line: &str) {
+    pub(crate) fn write(&mut self, event: &serde_json::Value) {
         use std::io::Write;
         if self.failed {
             return;
         }
         // One buffer, one write(2): `writeln!` on an unbuffered File issues a
         // second syscall for the newline, which doubled the cost per event.
-        let line = format!("{line}\n");
+        let seconds = event["ts"].as_f64().unwrap_or_else(now_unix_f64) as libc::time_t;
+        let date = local_timestamp(seconds, c"%Y-%m-%dT%H:%M:%S%z");
+        let event = event.to_string();
+        let separator = if event.len() > 2 { "," } else { "" };
+        let line = format!("{{\"date\":\"{date}\"{separator}{}\n", &event[1..]);
         let about_to_write = line.len() as u64;
         if self.should_rotate(about_to_write, now_unix()) {
             self.rotate();
@@ -456,28 +460,24 @@ pub(crate) fn log_file_path() -> std::path::PathBuf {
 /// log filenames. Avoids colons (which some macOS Finder pickers
 /// remap) and keeps things human-readable.
 fn iso_timestamp_for_filename() -> String {
-    use std::ffi::CStr;
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as libc::time_t)
         .unwrap_or(0);
+    local_timestamp(secs, c"%Y-%m-%dT%H-%M-%S")
+}
+
+fn local_timestamp(secs: libc::time_t, format: &std::ffi::CStr) -> String {
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe {
         libc::localtime_r(&secs, &mut tm);
     }
     let mut buf = [0i8; 64];
-    let n = unsafe {
-        libc::strftime(
-            buf.as_mut_ptr(),
-            buf.len(),
-            c"%Y-%m-%dT%H-%M-%S".as_ptr(),
-            &tm,
-        )
-    };
+    let n = unsafe { libc::strftime(buf.as_mut_ptr(), buf.len(), format.as_ptr(), &tm) };
     if n == 0 {
         return secs.to_string();
     }
-    unsafe { CStr::from_ptr(buf.as_ptr()) }
+    unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
         .to_string_lossy()
         .into_owned()
 }
@@ -561,24 +561,37 @@ mod tests {
         let worker = std::thread::spawn(move || {
             worker_barrier.wait();
             for id in 0..10 {
-                record(serde_json::json!({"id": id}));
+                record(serde_json::json!({"id": id, "ts": 0.0}));
             }
         });
         barrier.wait();
         for id in 10..20 {
-            diagnostics.write_event(serde_json::json!({"id": id}));
+            diagnostics.write_event(serde_json::json!({"id": id, "ts": 0.0}));
         }
         worker.join().unwrap();
         let record = diagnostics.event_sink();
         drop(diagnostics);
-        record(serde_json::json!({"id": 20}));
+        record(serde_json::json!({"id": 20, "ts": 0.0}));
+        let expected = std::process::Command::new("/bin/date")
+            .args(["-r", "0", "+%Y-%m-%dT%H:%M:%S%z"])
+            .output()
+            .unwrap();
+        assert!(expected.status.success());
+        let expected = String::from_utf8(expected.stdout).unwrap();
         let mut ids = Vec::new();
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap() {
             for line in std::fs::read_to_string(entry.unwrap().path())
                 .unwrap()
                 .lines()
             {
+                assert!(
+                    line.starts_with("{\"date\":\""),
+                    "date must be first: {line}"
+                );
                 let row: serde_json::Value = serde_json::from_str(line).unwrap();
+                let date = row["date"].as_str().unwrap();
+                assert_eq!(date, expected.trim());
+                assert_eq!(row["ts"], 0.0);
                 ids.push(row["id"].as_u64().unwrap());
             }
         }

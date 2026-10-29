@@ -611,7 +611,7 @@ pub(crate) const OPTION_KEYS: &[&str] = &[
 /// | `hideIcon`      | **honoured** — propagated through `OptionsConfig` to AppDelegate, which skips menu-bar status item creation when set |
 ///
 /// Unknown keys log a one-line warning so users can spot typos.
-pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
+pub(crate) fn parse_options_block(opts: &JSValue) -> Result<OptionsConfig, EngineError> {
     let mut out = OptionsConfig::default();
     for (k, v) in iter_object(opts) {
         match k.as_str() {
@@ -627,7 +627,7 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
             "logFormat" => match js_to_string(&v).as_deref() {
                 Some("json") => out.log_format = LogFormat::Json,
                 Some("text") => out.log_format = LogFormat::Text,
-                _ => eprintln!("grinch: invalid options.logFormat — use 'json' or 'text'"),
+                _ => return Err(EngineError::InvalidLogFormat),
             },
             "logRotateBytes" => {
                 // JS numbers are doubles; coerce to u64 with bounds-check
@@ -654,7 +654,7 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
             _ => {}
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]

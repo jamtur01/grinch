@@ -386,6 +386,31 @@ fn format_change_includes_profile_errors_from_config_load() {
 }
 
 #[test]
+fn invalid_log_format_rejects_reload_without_switching_logs() {
+    let diagnostics = Rc::new(isolated_diagnostics());
+    let _ = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari", options: { logFormat: "text" } };"#,
+        Rc::clone(&diagnostics),
+    );
+    let path = diagnostics.ensure_file().unwrap();
+    let result = try_build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari", options: { logFormat: "Text" } };"#,
+        Rc::clone(&diagnostics),
+    );
+    let Err(error) = result else {
+        panic!("invalid log format must fail config load");
+    };
+    assert!(error.to_string().contains("logFormat"));
+    assert_eq!(diagnostics.ensure_file().unwrap(), path);
+    diagnostics.record_config_error(None, &error.to_string());
+    assert!(
+        std::fs::read_to_string(path)
+            .unwrap()
+            .contains("  config_error\n")
+    );
+}
+
+#[test]
 fn ensure_diagnostic_log_reports_filesystem_errors() {
     let tmp = unique_tmp("open-log-error");
     std::fs::write(&tmp, b"not a directory").expect("fixture file should be writable");

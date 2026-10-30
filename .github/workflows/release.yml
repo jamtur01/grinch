@@ -41,8 +41,27 @@ jobs:
             echo "::error::Tag $TAG (version $VERSION) does not match Cargo.toml version $CARGO_VERSION"
             exit 1
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-beta\.([1-9][0-9]{0,2})$ ]]; then
+            if [ "${BASH_REMATCH[2]}" -gt 255 ]; then
+              echo "::error::Beta number must not exceed 255"; exit 1
+            fi
+            SHORT_VERSION="${BASH_REMATCH[1]}"
+            BUILD_VERSION="${SHORT_VERSION}b${BASH_REMATCH[2]}"
+            PRERELEASE=true
+          elif [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            SHORT_VERSION="$VERSION"
+            BUILD_VERSION="$VERSION"
+            PRERELEASE=false
+          else
+            echo "::error::Expected a stable version or X.Y.Z-beta.N"; exit 1
+          fi
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "short_version=$SHORT_VERSION"
+            echo "build_version=$BUILD_VERSION"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -94,7 +113,8 @@ jobs:
 
       - name: Build Grinch.app (universal)
         env:
-          EXPECTED_VERSION: ${{ steps.meta.outputs.version }}
+          EXPECTED_VERSION: ${{ steps.meta.outputs.short_version }}
+          EXPECTED_BUILD: ${{ steps.meta.outputs.build_version }}
         run: |
           set -euo pipefail
           make build UNIVERSAL=1
@@ -102,6 +122,11 @@ jobs:
             Grinch.app/Contents/Info.plist)
           if [ "$BUNDLE_VERSION" != "$EXPECTED_VERSION" ]; then
             echo "::error::Built app version $BUNDLE_VERSION does not match $EXPECTED_VERSION"
+            exit 1
+          fi
+          BUNDLE_BUILD=$(plutil -extract CFBundleVersion raw Grinch.app/Contents/Info.plist)
+          if [ "$BUNDLE_BUILD" != "$EXPECTED_BUILD" ]; then
+            echo "::error::Built app version $BUNDLE_BUILD does not match $EXPECTED_BUILD"
             exit 1
           fi
           # Sanity-check the binary really is fat.
@@ -197,6 +222,7 @@ jobs:
       # generate_appcast comes from the Sparkle archive `make build`
       # fetched and checksum-verified (see SPARKLE_* in the Makefile).
       - name: Generate Sparkle appcast
+        if: steps.meta.outputs.prerelease == 'false'
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
           TAG: ${{ steps.meta.outputs.tag }}
@@ -243,9 +269,10 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Grinch ${{ steps.meta.outputs.tag }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           body_path: ${{ steps.notes.outputs.path }}
           fail_on_unmatched_files: true
           files: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.artifact }}.sha256
-            appcast.xml
+            ${{ steps.meta.outputs.prerelease == 'false' && 'appcast.xml' || '' }}

@@ -273,6 +273,13 @@ but they live here for the maintainer's reference.
    Then check that `appcast.xml` is attached to the release and that the
    previous release offers the update through **Check for Updates…**.
 
+For a beta, use `X.Y.Z-beta.N` in `Cargo.toml` and tag it
+`vX.Y.Z-beta.N`, incrementing `N` from 1 to at most 255. The workflow marks
+it as a GitHub prerelease and does not publish an appcast, so beta releases
+must be downloaded manually and do not replace the stable update feed. The
+bundle uses `X.Y.Z` as its short version and `X.Y.ZbN` as its build version.
+Stable release notes include changes since the previous stable release.
+
 The Sparkle EdDSA private key lives in the maintainer's login keychain under
 the `grinch` account (`generate_keys --account grinch`) and in the
 `SPARKLE_ED_PRIVATE_KEY` repository secret. Its public half is `SUPublicEDKey`

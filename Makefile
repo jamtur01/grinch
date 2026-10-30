@@ -2,10 +2,10 @@ APP     = Grinch.app
 BUNDLE  = $(APP)/Contents
 BINARY  = $(BUNDLE)/MacOS/Grinch
 
-# Single source of truth for the version. Read from Cargo.toml and stamped
-# into the bundled Info.plist at build time so CFBundleShortVersionString
-# can't drift from the crate version (and therefore from the release tag).
+# Cargo's beta suffix becomes an Apple build suffix, e.g. 0.9.2b1.
 CARGO_VERSION := $(shell awk -F'"' '/^version =/ {print $$2; exit}' Cargo.toml)
+BUNDLE_VERSION := $(firstword $(subst -, ,$(CARGO_VERSION)))
+BUNDLE_BUILD_VERSION := $(subst -beta.,b,$(CARGO_VERSION))
 
 # UNIVERSAL=1 builds both aarch64 and x86_64 and fuses them with lipo so the
 # resulting bundle runs natively on Apple Silicon and Intel.
@@ -89,8 +89,8 @@ endif
 	@mkdir -p $(BUNDLE)/MacOS $(BUNDLE)/Resources
 	@cp $(RELEASE_BIN) $(BINARY)
 	@cp Info.plist $(BUNDLE)/Info.plist
-	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(CARGO_VERSION)" $(BUNDLE)/Info.plist
-	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(CARGO_VERSION)" $(BUNDLE)/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(BUNDLE_VERSION)" $(BUNDLE)/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(BUNDLE_BUILD_VERSION)" $(BUNDLE)/Info.plist
 	@rm -rf $(BUNDLE)/Frameworks
 	@mkdir -p $(BUNDLE)/Frameworks
 	@ditto $(SPARKLE_FRAMEWORK) $(BUNDLE)/Frameworks/Sparkle.framework

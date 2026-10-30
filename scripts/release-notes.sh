@@ -5,7 +5,8 @@
 #   scripts/release-notes.sh <previous-tag> <current-tag>
 #
 # If <previous-tag> is "auto", picks the tag immediately before <current-tag>
-# from `git tag --sort=v:refname`. The current tag must already exist.
+# from `git tag --sort=v:refname`. Stable releases compare to the preceding
+# stable release; betas compare to the preceding beta or stable release.
 #
 # Output goes to stdout; the release workflow captures it into a file and
 # hands it to action-gh-release as the release body.
@@ -16,11 +17,14 @@ prev="${1:?usage: release-notes.sh <previous-tag>|auto <current-tag>}"
 curr="${2:?usage: release-notes.sh <previous-tag>|auto <current-tag>}"
 
 if [ "$prev" = "auto" ]; then
-	# Pick the version tag immediately before $curr. Restrict to `v*`-prefix
-	# tags so transient/test tags can't poison the lookup, and exclude $curr
-	# itself by walking the sorted list and stopping when we hit it.
+	base="${curr%%-beta.*}"
 	prev=$(git tag --list 'v*' --sort=v:refname |
-		awk -v c="$curr" '$0 == c { exit } { last = $0 } END { print last }')
+		awk -v c="$curr" -v base="$base" '
+			$0 == c { exit }
+			$0 == base { next }
+			index($0, "-") == 0 || (c != base && index($0, base "-beta.") == 1) { last = $0 }
+			END { print last }
+		')
 	if [ -z "$prev" ]; then
 		echo "::error::no previous v* tag found before $curr" >&2
 		exit 1

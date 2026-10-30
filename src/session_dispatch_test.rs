@@ -9,12 +9,14 @@
     reason = "libtest functions in imported app modules are omitted by this custom harness"
 )]
 
+mod app_delegate;
 mod chromium;
 mod engine;
 mod firefox;
 mod helpers;
 mod loader;
 mod session_handler;
+mod updater;
 mod workspace;
 
 use std::cell::RefCell;
@@ -22,8 +24,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
-use objc2::{AnyThread, DefinedClass, MainThreadMarker, Message, define_class, msg_send};
+use objc2::runtime::{Bool, ProtocolObject, Sel};
+use objc2::{
+    AnyThread, ClassType, DefinedClass, MainThreadMarker, Message, define_class, msg_send, sel,
+};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSButton, NSTextField, NSView};
 use objc2_authentication_services::{
     ASWebAuthenticationSessionCallback, ASWebAuthenticationSessionErrorCode,
     ASWebAuthenticationSessionErrorDomain, ASWebAuthenticationSessionRequest,
@@ -382,8 +387,102 @@ fn verify_late_failures_do_not_finish_twice() {
     }
 }
 
+fn verify_actions_window(mtm: MainThreadMarker) {
+    let old_home = std::env::var_os("HOME");
+    let home = std::env::temp_dir().join(format!("grinch-actions-{}", NSUUID::new().UUIDString()));
+    std::fs::create_dir(&home).unwrap();
+    let config = home.join(".grinch.js");
+    std::fs::write(&config, "module.exports = {};").unwrap();
+    unsafe { std::env::set_var("HOME", &home) };
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    let delegate = app_delegate::Delegate::new(mtm);
+    let handled: Bool = unsafe {
+        msg_send![&*delegate, applicationShouldHandleReopen: &*app, hasVisibleWindows: false]
+    };
+    assert!(!handled.as_bool());
+    assert_eq!(
+        app.activationPolicy(),
+        NSApplicationActivationPolicy::Accessory
+    );
+    let windows = app.windows();
+    let window = windows.objectAtIndex(0);
+    assert!(window.isVisible());
+    let content = window.contentView().unwrap();
+    let views = content.subviews();
+    let mut actions: Vec<Sel> = Vec::new();
+    let mut reload: Option<Retained<NSView>> = None;
+    let mut status: Option<Retained<NSView>> = None;
+    for index in 0..views.count() {
+        let view = views.objectAtIndex(index);
+        let is_button: bool = unsafe { msg_send![&*view, isKindOfClass: NSButton::class()] };
+        if is_button {
+            let action: Option<Sel> = unsafe { msg_send![&*view, action] };
+            let action = action.unwrap();
+            let target: *mut objc2::runtime::AnyObject = unsafe { msg_send![&*view, target] };
+            assert_eq!(
+                target.cast_const(),
+                (&*delegate as *const app_delegate::Delegate).cast()
+            );
+            if action == sel!(reloadConfig:) {
+                reload = Some(view.clone());
+            }
+            if action == sel!(checkForUpdates:) {
+                let enabled: bool = unsafe { msg_send![&*view, isEnabled] };
+                assert!(!enabled, "updates must be disabled without Sparkle");
+            }
+            actions.push(action);
+        } else {
+            let is_label: bool = unsafe { msg_send![&*view, isKindOfClass: NSTextField::class()] };
+            if is_label {
+                status = Some(view);
+            }
+        }
+    }
+    for action in [
+        sel!(openConfig:),
+        sel!(reloadConfig:),
+        sel!(openDiagnosticLog:),
+        sel!(checkForUpdates:),
+    ] {
+        assert!(actions.contains(&action), "missing action {action:?}");
+    }
+    let reload = reload.unwrap();
+    let status = status.unwrap();
+    let _: () = unsafe { msg_send![&*reload, performClick: None::<&objc2::runtime::AnyObject>] };
+    let value: Retained<NSString> = unsafe { msg_send![&*status, stringValue] };
+    assert!(value.to_string().contains("Config error:"));
+    std::fs::write(&config, "module.exports = { default: null };").unwrap();
+    let _: () = unsafe { msg_send![&*reload, performClick: None::<&objc2::runtime::AnyObject>] };
+    let value: Retained<NSString> = unsafe { msg_send![&*status, stringValue] };
+    assert_eq!(value.to_string(), "Config loaded");
+    window.close();
+    assert_eq!(
+        app.activationPolicy(),
+        NSApplicationActivationPolicy::Prohibited
+    );
+    let _: Bool = unsafe {
+        msg_send![&*delegate, applicationShouldHandleReopen: &*app, hasVisibleWindows: false]
+    };
+    assert!(window.isVisible());
+    window.close();
+    assert_eq!(
+        app.activationPolicy(),
+        NSApplicationActivationPolicy::Prohibited
+    );
+    unsafe {
+        if let Some(old_home) = old_home {
+            std::env::set_var("HOME", old_home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+    std::fs::remove_dir_all(home).unwrap();
+}
+
 fn main() {
     let mtm = MainThreadMarker::new().expect("harness must own the main thread");
+    verify_actions_window(mtm);
     session_handler::install(mtm, forwarded);
     verify_startup_queue(mtm);
 

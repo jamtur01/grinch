@@ -145,7 +145,8 @@ The `options` block accepts Finicky v4's keys plus Grinch's log settings:
 - **`hideIcon: true`** — skip the menu-bar status item at app launch.
   Useful when you don't want Grinch's icon in your menu bar. Reloads don't
   toggle the icon mid-session; restart Grinch to apply. Automatic update
-  checks still run without the icon.
+  checks still run without the icon. Reopen the running app from Spotlight or
+  Finder to show a window with config, log, and update actions.
 - **`checkForUpdates: false`** — turn off the daily update check (`true`
   turns it on). While the key is set, it overrides the **Check for Updates
   Automatically** menu item, which is greyed out. Without the key, the menu
@@ -579,6 +580,12 @@ Click the Grinch eyes in the menu bar:
 
 At launch, Grinch terminates other running instances with the same bundle
 identifier before installing its menu bar item, preventing duplicate instances.
+
+When `hideIcon: true` hides the menu-bar icon, reopen the running Grinch app
+from Spotlight or Finder to access **Open Config**, **Reload Config**,
+**Open Diagnostic Log**, and **Check for Updates…**. The window also shows
+config and profile errors. The update button is disabled when the updater is
+unavailable. Closing the window leaves Grinch running in the background.
 
 If a reload fails (syntax error, unreadable file, missing `default`),
 the menu bar icon flips to **⚠️** and a non-clickable "Config error:

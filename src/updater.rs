@@ -13,6 +13,12 @@ use objc2::runtime::{AnyClass, AnyObject, NSObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::{NSBundle, NSString};
+use std::cell::Cell;
+
+thread_local! {
+    static UPDATE_UI_VISIBLE: Cell<bool> = const { Cell::new(false) };
+    static ACTIONS_WINDOW_VISIBLE: Cell<bool> = const { Cell::new(false) };
+}
 
 define_class!(
     #[unsafe(super = NSObject)]
@@ -147,10 +153,45 @@ impl Updater {
 /// Switch between the Prohibited policy Grinch normally runs with and the
 /// Accessory policy Sparkle's windows need. Neither shows a Dock icon.
 fn allow_windows(mtm: MainThreadMarker, allow: bool) {
-    let policy = if allow {
+    UPDATE_UI_VISIBLE.set(allow);
+    update_activation_policy(mtm);
+}
+
+pub(crate) fn set_actions_window_visible(mtm: MainThreadMarker, visible: bool) {
+    ACTIONS_WINDOW_VISIBLE.set(visible);
+    update_activation_policy(mtm);
+}
+
+fn update_activation_policy(mtm: MainThreadMarker) {
+    let policy = activation_policy(UPDATE_UI_VISIBLE.get(), ACTIONS_WINDOW_VISIBLE.get());
+    NSApplication::sharedApplication(mtm).setActivationPolicy(policy);
+}
+
+fn activation_policy(
+    updater_visible: bool,
+    actions_visible: bool,
+) -> NSApplicationActivationPolicy {
+    if updater_visible || actions_visible {
         NSApplicationActivationPolicy::Accessory
     } else {
         NSApplicationActivationPolicy::Prohibited
-    };
-    NSApplication::sharedApplication(mtm).setActivationPolicy(policy);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::activation_policy;
+    use objc2_app_kit::NSApplicationActivationPolicy;
+
+    #[test]
+    fn activation_policy_keeps_windows_available_until_both_close() {
+        for (updater, actions, expected) in [
+            (false, false, NSApplicationActivationPolicy::Prohibited),
+            (true, false, NSApplicationActivationPolicy::Accessory),
+            (false, true, NSApplicationActivationPolicy::Accessory),
+            (true, true, NSApplicationActivationPolicy::Accessory),
+        ] {
+            assert_eq!(activation_policy(updater, actions), expected);
+        }
+    }
 }

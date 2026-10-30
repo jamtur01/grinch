@@ -15,16 +15,18 @@ fn debug_enabled() -> bool {
 
 use dispatch2::DispatchQueue;
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::{AnyObject, Bool};
+use objc2::runtime::{AnyObject, Bool, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, class, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationDelegate, NSImage, NSMenu, NSMenuItem, NSSquareStatusItemLength,
-    NSStatusBar, NSStatusItem, NSWorkspace,
+    NSApplication, NSApplicationDelegate, NSBackingStoreType, NSButton, NSImage, NSMenu,
+    NSMenuItem, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSTextField, NSWindow,
+    NSWindowDelegate, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_core_services::{AEEventClass, AEEventID};
 use objc2_foundation::{
     MainThreadMarker, NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSObject,
-    NSObjectProtocol, NSString, NSURL, NSUserActivity, NSUserActivityTypeBrowsingWeb,
+    NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL, NSUserActivity,
+    NSUserActivityTypeBrowsingWeb,
 };
 
 use crate::engine::{DiagnosticLog, Engine, ModifierFlags};
@@ -96,6 +98,9 @@ pub struct DelegateIvars {
     error_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
     // Sparkle updater; None in CLI modes and in bundles without Sparkle.
     updater: RefCell<Option<Updater>>,
+    actions_window: RefCell<Option<Retained<NSWindow>>>,
+    actions_status: RefCell<Option<Retained<NSTextField>>>,
+    actions_update: RefCell<Option<Retained<NSButton>>>,
 }
 
 define_class!(
@@ -107,7 +112,22 @@ define_class!(
 
     unsafe impl NSObjectProtocol for Delegate {}
 
+    unsafe impl NSWindowDelegate for Delegate {
+        #[unsafe(method(windowWillClose:))]
+        fn window_will_close(&self, _notification: &NSNotification) {
+            crate::updater::set_actions_window_visible(self.mtm(), false);
+        }
+    }
+
     unsafe impl NSApplicationDelegate for Delegate {
+        #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
+        fn application_should_handle_reopen(&self, _app: &NSApplication, _visible: bool) -> Bool {
+            if self.ivars().status_item.borrow().is_none() {
+                self.show_actions_window();
+                return Bool::NO;
+            }
+            Bool::YES
+        }
         // Modern unified URL-open hook (macOS 10.13+). Apple routes both
         // URL-scheme events (http://, https://, mailto:) and document-open
         // events (file:// from `open foo.html`) through this method when
@@ -424,7 +444,9 @@ define_class!(
         // Menu bar action: user-initiated Sparkle update check.
         #[unsafe(method(checkForUpdates:))]
         fn menu_check_for_updates(&self, _sender: Option<&AnyObject>) {
-            if let Some(updater) = self.ivars().updater.borrow().as_ref() {
+            if let Some(updater) = self.ivars().updater.borrow().as_ref()
+                && updater.can_check_now()
+            {
                 updater.check_now(self.mtm());
             }
         }
@@ -465,6 +487,7 @@ impl Delegate {
             if let Some(delegate) = weak.load() {
                 delegate.refresh_status_item();
                 delegate.refresh_error_menu_item();
+                delegate.refresh_actions_window();
             }
         });
         this
@@ -479,6 +502,85 @@ impl Delegate {
         });
         self.set_load_error(result.err());
         self.apply_check_for_updates_option();
+        self.refresh_actions_window();
+    }
+
+    fn show_actions_window(&self) {
+        let mtm = self.mtm();
+        crate::updater::set_actions_window_visible(mtm, true);
+        if self.ivars().actions_window.borrow().is_none() {
+            self.create_actions_window();
+        }
+        self.refresh_actions_window();
+        if let Some(window) = self.ivars().actions_window.borrow().as_ref() {
+            window.makeKeyAndOrderFront(None);
+            // `activate` is unavailable on the supported macOS 13 baseline.
+            #[allow(deprecated)]
+            NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+        }
+    }
+
+    fn create_actions_window(&self) {
+        let mtm = self.mtm();
+        let window = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                NSWindow::alloc(mtm),
+                NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 260.0)),
+                NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        unsafe { window.setReleasedWhenClosed(false) };
+        window.setTitle(&NSString::from_str("Grinch"));
+        window.setDelegate(Some(ProtocolObject::from_ref(self)));
+        window.center();
+        let Some(content) = window.contentView() else {
+            eprintln!("grinch: couldn't create actions window content");
+            crate::updater::set_actions_window_visible(mtm, false);
+            return;
+        };
+        let status = NSTextField::labelWithString(&NSString::from_str(""), mtm);
+        status.setFrame(NSRect::new(
+            NSPoint::new(24.0, 222.0),
+            NSSize::new(312.0, 20.0),
+        ));
+        content.addSubview(&status);
+        *self.ivars().actions_status.borrow_mut() = Some(status);
+        for (title, action, y) in [
+            ("Open Config", sel!(openConfig:), 168.0),
+            ("Reload Config", sel!(reloadConfig:), 126.0),
+            ("Open Diagnostic Log", sel!(openDiagnosticLog:), 84.0),
+            ("Check for Updates…", sel!(checkForUpdates:), 42.0),
+        ] {
+            let button = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str(title),
+                    Some(self.as_ref()),
+                    Some(action),
+                    mtm,
+                )
+            };
+            button.setFrame(NSRect::new(NSPoint::new(24.0, y), NSSize::new(312.0, 32.0)));
+            content.addSubview(&button);
+            if action == sel!(checkForUpdates:) {
+                *self.ivars().actions_update.borrow_mut() = Some(button);
+            }
+        }
+        *self.ivars().actions_window.borrow_mut() = Some(window);
+    }
+
+    fn refresh_actions_window(&self) {
+        if let Some(status) = self.ivars().actions_status.borrow().as_ref() {
+            let message = self
+                .status_error()
+                .unwrap_or_else(|| "Config loaded".to_string());
+            status.setStringValue(&NSString::from_str(&message));
+            status.setToolTip(Some(&NSString::from_str(&message)));
+        }
+        if let Some(button) = self.ivars().actions_update.borrow().as_ref() {
+            button.setEnabled(self.ivars().updater.borrow().is_some());
+        }
     }
 
     /// Load Sparkle, apply `options.checkForUpdates`, then start the update

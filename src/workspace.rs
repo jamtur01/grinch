@@ -890,6 +890,9 @@ pub fn open_url(
     };
     let workspace = NSWorkspace::sharedWorkspace();
     let cfg = NSWorkspaceOpenConfiguration::configuration();
+    // Native failure tests must not wait for a user to dismiss macOS alerts.
+    #[cfg(test)]
+    cfg.setPromptsUserIfNeeded(false);
     // macOS Recent Items defaults to *adding* every URL Grinch routes,
     // which clogs the system menu with one entry per routed click.
     // Browsers maintain their own history; the OS-wide Recent list is

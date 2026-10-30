@@ -97,10 +97,9 @@ pub struct DelegateIvars {
     // Pre-built menu item for config or profile errors — hidden when neither exists.
     error_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
     // Sparkle updater; None in CLI modes and in bundles without Sparkle.
-    updater: RefCell<Option<Updater>>,
+    pub(crate) updater: RefCell<Option<Updater>>,
     actions_window: RefCell<Option<Retained<NSWindow>>>,
     actions_status: RefCell<Option<Retained<NSTextField>>>,
-    actions_update: RefCell<Option<Retained<NSButton>>>,
 }
 
 define_class!(
@@ -564,7 +563,11 @@ impl Delegate {
             button.setFrame(NSRect::new(NSPoint::new(24.0, y), NSSize::new(312.0, 32.0)));
             content.addSubview(&button);
             if action == sel!(checkForUpdates:) {
-                *self.ivars().actions_update.borrow_mut() = Some(button);
+                if let Some(updater) = self.ivars().updater.borrow().as_ref() {
+                    updater.bind_check_button(&button);
+                } else {
+                    button.setEnabled(false);
+                }
             }
         }
         *self.ivars().actions_window.borrow_mut() = Some(window);
@@ -577,9 +580,6 @@ impl Delegate {
                 .unwrap_or_else(|| "Config loaded".to_string());
             status.setStringValue(&NSString::from_str(&message));
             status.setToolTip(Some(&NSString::from_str(&message)));
-        }
-        if let Some(button) = self.ivars().actions_update.borrow().as_ref() {
-            button.setEnabled(self.ivars().updater.borrow().is_some());
         }
     }
 

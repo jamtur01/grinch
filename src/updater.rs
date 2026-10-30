@@ -11,7 +11,10 @@
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject, NSObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationPolicy, NSButton, NSEnabledBinding,
+    NSObjectNSKeyValueBindingCreation,
+};
 use objc2_foundation::{NSBundle, NSString};
 use std::cell::Cell;
 
@@ -24,7 +27,7 @@ define_class!(
     #[unsafe(super = NSObject)]
     #[thread_kind = MainThreadOnly]
     #[name = "GrinchUpdaterUserDriverDelegate"]
-    struct UserDriverDelegate;
+    pub(crate) struct UserDriverDelegate;
 
     impl UserDriverDelegate {
         // Sparkle logs a warning for menu bar apps that schedule update
@@ -54,16 +57,16 @@ define_class!(
 );
 
 impl UserDriverDelegate {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+    pub(crate) fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(());
         unsafe { msg_send![super(this), init] }
     }
 }
 
 pub struct Updater {
-    controller: Retained<AnyObject>,
+    pub(crate) controller: Retained<AnyObject>,
     // Sparkle references its delegates weakly; the updater owns this one.
-    _user_driver_delegate: Retained<UserDriverDelegate>,
+    pub(crate) _user_driver_delegate: Retained<UserDriverDelegate>,
 }
 
 impl Updater {
@@ -131,6 +134,18 @@ impl Updater {
         unsafe {
             let updater: Retained<AnyObject> = msg_send![&self.controller, updater];
             msg_send![&updater, canCheckForUpdates]
+        }
+    }
+
+    pub fn bind_check_button(&self, button: &NSButton) {
+        let updater: Retained<AnyObject> = unsafe { msg_send![&self.controller, updater] };
+        unsafe {
+            button.bind_toObject_withKeyPath_options(
+                NSEnabledBinding,
+                &updater,
+                &NSString::from_str("canCheckForUpdates"),
+                None,
+            );
         }
     }
 

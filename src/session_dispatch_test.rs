@@ -19,16 +19,23 @@ mod session_handler;
 mod updater;
 mod workspace;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
 use objc2::runtime::{Bool, ProtocolObject, Sel};
 use objc2::{
-    AnyThread, ClassType, DefinedClass, MainThreadMarker, Message, define_class, msg_send, sel,
+    AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class,
+    msg_send, sel,
 };
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSButton, NSTextField, NSView};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSButton, NSTextField,
+    NSView, NSWindow,
+};
 use objc2_authentication_services::{
     ASWebAuthenticationSessionCallback, ASWebAuthenticationSessionErrorCode,
     ASWebAuthenticationSessionErrorDomain, ASWebAuthenticationSessionRequest,
@@ -36,7 +43,7 @@ use objc2_authentication_services::{
     ASWebAuthenticationSessionWebBrowserSessionManager,
 };
 use objc2_foundation::{
-    NSDate, NSError, NSObject, NSObjectProtocol, NSRunLoop, NSString, NSURL, NSUUID,
+    NSDate, NSError, NSNotification, NSObject, NSObjectProtocol, NSRunLoop, NSString, NSURL, NSUUID,
 };
 
 static EVENTS: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
@@ -57,6 +64,63 @@ struct RequestIvars {
     uuid: Retained<NSUUID>,
     observer: Option<Retained<Observer>>,
 }
+
+define_class!(
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[name = "GrinchTestReopenDelegate"]
+    #[ivars = Retained<app_delegate::Delegate>]
+    struct ReopenDelegate;
+
+    unsafe impl NSObjectProtocol for ReopenDelegate {}
+
+    unsafe impl NSApplicationDelegate for ReopenDelegate {
+        #[unsafe(method(applicationDidFinishLaunching:))]
+        fn did_finish(&self, _notification: &NSNotification) {
+            probe_record("started");
+        }
+
+        #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
+        fn reopen(&self, app: &NSApplication, visible: bool) -> Bool {
+            let handled: Bool = unsafe {
+                msg_send![&**self.ivars(), applicationShouldHandleReopen: app,
+                    hasVisibleWindows: visible]
+            };
+            let windows = app.windows();
+            let visible_count = (0..windows.count())
+                .filter(|&i| windows.objectAtIndex(i).isVisible())
+                .count();
+            probe_record(&format!("reopen:{visible_count}"));
+            handled
+        }
+    }
+);
+
+define_class!(
+    #[unsafe(super = NSObject)]
+    #[name = "GrinchTestUpdater"]
+    #[ivars = Cell<bool>]
+    struct TestUpdater;
+
+    unsafe impl NSObjectProtocol for TestUpdater {}
+
+    impl TestUpdater {
+        #[unsafe(method_id(updater))]
+        fn updater(&self) -> Retained<Self> {
+            self.retain()
+        }
+
+        #[unsafe(method(canCheckForUpdates))]
+        fn can_check(&self) -> bool {
+            self.ivars().get()
+        }
+
+        #[unsafe(method(setCanCheckForUpdates:))]
+        fn set_can_check(&self, enabled: bool) {
+            self.ivars().set(enabled);
+        }
+    }
+);
 
 define_class!(
     #[unsafe(super = ASWebAuthenticationSessionRequest)]
@@ -406,7 +470,10 @@ fn verify_actions_window(mtm: MainThreadMarker) {
         NSApplicationActivationPolicy::Accessory
     );
     let windows = app.windows();
-    let window = windows.objectAtIndex(0);
+    let window = (0..windows.count())
+        .map(|i| windows.objectAtIndex(i))
+        .find(|window| window.isVisible())
+        .unwrap();
     assert!(window.isVisible());
     let content = window.contentView().unwrap();
     let views = content.subviews();
@@ -456,11 +523,7 @@ fn verify_actions_window(mtm: MainThreadMarker) {
     let _: () = unsafe { msg_send![&*reload, performClick: None::<&objc2::runtime::AnyObject>] };
     let value: Retained<NSString> = unsafe { msg_send![&*status, stringValue] };
     assert_eq!(value.to_string(), "Config loaded");
-    window.close();
-    assert_eq!(
-        app.activationPolicy(),
-        NSApplicationActivationPolicy::Prohibited
-    );
+    verify_window_overlap(mtm, &app, &delegate, &window);
     let _: Bool = unsafe {
         msg_send![&*delegate, applicationShouldHandleReopen: &*app, hasVisibleWindows: false]
     };
@@ -480,8 +543,168 @@ fn verify_actions_window(mtm: MainThreadMarker) {
     std::fs::remove_dir_all(home).unwrap();
 }
 
+fn verify_window_overlap(
+    mtm: MainThreadMarker,
+    app: &NSApplication,
+    delegate: &app_delegate::Delegate,
+    window: &NSWindow,
+) {
+    let driver = updater::UserDriverDelegate::new(mtm);
+    let _: () = unsafe {
+        msg_send![&*driver, standardUserDriverWillHandleShowingUpdate: true,
+            forUpdate: &*driver, state: &*driver]
+    };
+    window.close();
+    assert_eq!(
+        app.activationPolicy(),
+        NSApplicationActivationPolicy::Accessory
+    );
+    let _: Bool = unsafe {
+        msg_send![delegate, applicationShouldHandleReopen: app, hasVisibleWindows: false]
+    };
+    let _: () = unsafe { msg_send![&*driver, standardUserDriverWillFinishUpdateSession] };
+    assert!(window.isVisible());
+    assert_eq!(
+        app.activationPolicy(),
+        NSApplicationActivationPolicy::Accessory
+    );
+    window.close();
+    assert_eq!(
+        app.activationPolicy(),
+        NSApplicationActivationPolicy::Prohibited
+    );
+}
+
+fn verify_update_button_binding(mtm: MainThreadMarker) {
+    let updater = TestUpdater::alloc().set_ivars(Cell::new(false));
+    let updater: Retained<TestUpdater> = unsafe { msg_send![super(updater), init] };
+    let app = NSApplication::sharedApplication(mtm);
+    let delegate = app_delegate::Delegate::new(mtm);
+    *delegate.ivars().updater.borrow_mut() = Some(updater::Updater {
+        controller: updater.clone().into_super().into(),
+        _user_driver_delegate: updater::UserDriverDelegate::new(mtm),
+    });
+    let _: Bool = unsafe {
+        msg_send![&*delegate, applicationShouldHandleReopen: &*app, hasVisibleWindows: false]
+    };
+    let windows = app.windows();
+    let window = (0..windows.count())
+        .map(|i| windows.objectAtIndex(i))
+        .find(|window| window.isVisible())
+        .unwrap();
+    let views = window.contentView().unwrap().subviews();
+    let button = (0..views.count())
+        .map(|i| views.objectAtIndex(i))
+        .find(|view| {
+            let is_button: bool = unsafe { msg_send![&**view, isKindOfClass: NSButton::class()] };
+            if !is_button {
+                return false;
+            }
+            let action: Option<Sel> = unsafe { msg_send![&**view, action] };
+            action == Some(sel!(checkForUpdates:))
+        })
+        .unwrap();
+    let enabled: bool = unsafe { msg_send![&*button, isEnabled] };
+    assert!(!enabled);
+    for enabled in [true, false, true] {
+        let _: () = unsafe { msg_send![&*updater, setCanCheckForUpdates: enabled] };
+        let actual: bool = unsafe { msg_send![&*button, isEnabled] };
+        assert_eq!(actual, enabled);
+    }
+    window.close();
+}
+
+fn probe_record(event: &str) {
+    let path = std::env::var_os("GRINCH_REOPEN_PROBE").unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    writeln!(file, "{event}").unwrap();
+}
+
+fn run_reopen_probe(mtm: MainThreadMarker) {
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    let delegate = ReopenDelegate::alloc(mtm).set_ivars(app_delegate::Delegate::new(mtm));
+    let delegate: Retained<ReopenDelegate> = unsafe { msg_send![super(delegate), init] };
+    app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    app.run();
+}
+
+struct ReopenProbe {
+    child: Child,
+    directory: PathBuf,
+}
+
+impl Drop for ReopenProbe {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn wait_for_probe_events(path: &Path, count: usize) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let contents = std::fs::read_to_string(path).unwrap_or_default();
+        let events: Vec<String> = contents.lines().map(str::to_owned).collect();
+        if events.len() >= count {
+            return events;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reopen events timed out: {events:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn verify_real_reopen() {
+    let id = NSUUID::new().UUIDString().to_string();
+    let directory = std::env::temp_dir().join(format!("grinch-reopen-{id}"));
+    let bundle = directory.join("ReopenProbe.app");
+    let contents = bundle.join("Contents");
+    let executable = contents.join("MacOS/probe");
+    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    let plist = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
+        \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\
+        <plist version=\"1.0\"><dict><key>CFBundleIdentifier</key>\
+        <string>org.grinch.test.reopen-{id}</string><key>CFBundleExecutable</key>\
+        <string>probe</string><key>CFBundlePackageType</key><string>APPL</string>\
+        <key>LSUIElement</key><true/></dict></plist>"
+    );
+    std::fs::write(contents.join("Info.plist"), plist).unwrap();
+    let events = directory.join("events");
+    let child = Command::new(&executable)
+        .arg("--reopen-probe")
+        .env("HOME", &directory)
+        .env("GRINCH_REOPEN_PROBE", &events)
+        .spawn()
+        .unwrap();
+    let _probe = ReopenProbe { child, directory };
+    assert_eq!(wait_for_probe_events(&events, 1), ["started"]);
+    for count in 2..=3 {
+        let status = Command::new("/usr/bin/open").arg(&bundle).status().unwrap();
+        assert!(status.success(), "open failed: {status}");
+        let recorded = wait_for_probe_events(&events, count);
+        assert_eq!(recorded.last().unwrap(), "reopen:1");
+    }
+}
+
 fn main() {
     let mtm = MainThreadMarker::new().expect("harness must own the main thread");
+    if std::env::args().any(|arg| arg == "--reopen-probe") {
+        run_reopen_probe(mtm);
+        return;
+    }
+    verify_real_reopen();
+    verify_update_button_binding(mtm);
     verify_actions_window(mtm);
     session_handler::install(mtm, forwarded);
     verify_startup_queue(mtm);

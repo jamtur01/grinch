@@ -60,7 +60,7 @@
     <li><strong>Pure Rust core</strong> + a small embedded JS prelude.</li>
     <li><strong>Native JavaScriptCore</strong> for config eval — no Electron, no bundler, no transpiler.</li>
     <li><strong>Single DMG.</strong> Universal binary (Apple Silicon + Intel).</li>
-    <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar. Parse errors surface as <code>⚠️</code> with the failing line inline. With <code>hideIcon: true</code>, reopen Grinch from Spotlight or Finder to access config, log, and update actions in a window.</li>
+    <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar. Parse errors surface as <code>⚠️</code> with the failing line inline. With <code>hideIcon: true</code>, reopen Grinch from Spotlight or Finder to access config, log, and update actions in a window. The update button is disabled when the updater cannot check for updates.</li>
     <li><strong>Automatic updates.</strong> Grinch checks for a new release once a day with
       <a href="https://sparkle-project.org">Sparkle</a> and installs only updates signed with the
       Grinch release key. Turn the check off from the menu bar or with

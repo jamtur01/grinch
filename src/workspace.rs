@@ -896,7 +896,23 @@ pub(crate) fn browser_app_url(spec: &BrowserSpec) -> Option<Retained<NSURL>> {
         }
         return Some(NSURL::fileURLWithPath(&NSString::from_str(path)));
     }
-    resolved_app_url(&spec.bundle_id)
+    let url = resolved_app_url(&spec.bundle_id)?;
+    if url.isFileURL() && url.checkResourceIsReachableAndReturnError().is_ok() {
+        return Some(url);
+    }
+    if let Some(cache) = BUNDLE_URL_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_mut()
+    {
+        cache.remove(&spec.bundle_id);
+    }
+    let refreshed = resolved_app_url(&spec.bundle_id)?;
+    if refreshed.isFileURL() && refreshed.checkResourceIsReachableAndReturnError().is_ok() {
+        Some(refreshed)
+    } else {
+        None
+    }
 }
 
 /// Resolve launch inputs without opening anything, recording unexpected drops.
@@ -1115,6 +1131,48 @@ fn launch_completion_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removed_cached_app_bundle_is_not_returned() {
+        const CHILD: &str = "GRINCH_STALE_APP_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "workspace::tests::removed_cached_app_bundle_is_not_returned",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let id = format!("com.grinch.test.removed-{}", std::process::id());
+        let path = std::env::temp_dir().join(format!("grinch stale # {}.app", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        let encoded = url.absoluteString().unwrap().to_string();
+        BUNDLE_URL_CACHE
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(id.clone(), Some(encoded));
+        let spec = BrowserSpec {
+            bundle_id: id,
+            app_path: None,
+            args: Vec::new(),
+            open_in_background: false,
+            creates_new_instance: false,
+        };
+        assert!(browser_app_url(&spec).is_some());
+        std::fs::remove_dir(&path).unwrap();
+        assert!(browser_app_url(&spec).is_none());
+    }
 
     #[test]
     fn duplicate_cleanup_lock_serializes_contenders() {

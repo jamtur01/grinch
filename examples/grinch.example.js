@@ -51,7 +51,7 @@ const browsers = {
 
   // appType: "path" — point at an .app bundle directly. Useful for
   // browsers outside /Applications or not registered with LaunchServices.
-  custom: { name: "/Applications/MyBrowser.app", appType: "path" },
+  custom: { name: "/Applications/Safari.app", appType: "path" },
 
   // appType: "none" — explicit no-op browser. Same effect as `open: null`,
   // but can be referenced by key from rules below.

@@ -87,16 +87,16 @@ Representative release-build measurements on Apple Silicon:
 | wildcard | 34.0 |
 | many-rules | 263.3 |
 | rewrite-then-domain | 242.9 |
-| slow-native | 4717.1 |
-| slow-dynopen | 3855.3 |
-| slow-early | 39.2 |
-| slow-drop | 2143.9 |
-| slow-proto | 3395.6 |
-| slow-slack | 4194.8 |
-| slow-urlonly | 2363.0 |
-| dynamic-default | 1959.4 |
-| dynamic-object | 6480.2 |
-| rewrite-chain | 10095.9 |
+| slow-native | 4368.6 |
+| slow-dynopen | 3726.3 |
+| slow-early | 38.5 |
+| slow-drop | 2201.8 |
+| slow-proto | 3352.3 |
+| slow-slack | 4382.5 |
+| slow-urlonly | 2454.8 |
+| dynamic-default | 2065.7 |
+| dynamic-object | 6510.9 |
+| rewrite-chain | 10479.7 |
 | from | 8.4 |
 | logged | 6304.1 |
 

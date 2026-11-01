@@ -126,6 +126,23 @@ fn resolve_with(
 // ---------- Engine end-to-end ----------
 
 #[test]
+fn negative_array_like_lengths_do_not_abort_config_loading() {
+    let engine = build_engine(
+        r#"module.exports = {
+        default: { name: "com.apple.Safari", args: { length: -1 } },
+        rules: { length: -1 }, rewrite: { length: -1 }
+    };"#,
+    );
+    let result = engine.resolve(
+        "https://example.com",
+        &Opener::default(),
+        ModifierFlags::default(),
+    );
+    assert_eq!(result.browser.bundle_id, "com.apple.Safari");
+    assert!(result.browser.args.is_empty());
+}
+
+#[test]
 fn default_engine_fixture_isolates_runtime_error_logs() {
     let home = unique_tmp("fixture-log-home");
     with_home(&home, || {

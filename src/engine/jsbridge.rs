@@ -416,7 +416,8 @@ pub(crate) fn js_to_string(v: &JSValue) -> Option<String> {
 
 pub(crate) fn js_array_len(v: &JSValue) -> usize {
     let len = key(v, "length");
-    len.map(|n| unsafe { n.toInt32() } as usize).unwrap_or(0)
+    len.and_then(|n| usize::try_from(unsafe { n.toInt32() }).ok())
+        .unwrap_or(0)
 }
 
 pub(crate) fn js_array_at(v: &JSValue, i: usize) -> Option<Retained<JSValue>> {

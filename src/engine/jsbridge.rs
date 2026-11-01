@@ -624,14 +624,11 @@ fn string_keys(keys_array: &JSValue) -> Vec<String> {
     out
 }
 
-pub(crate) fn unknown_config_keys(v: &JSValue, helper: &str) -> Vec<String> {
+pub(crate) fn unknown_config_keys(v: &JSValue, helper: Option<&JSValue>) -> Vec<String> {
     if !unsafe { v.isObject() } {
         return vec![];
     }
-    let Some(ctx) = (unsafe { v.context() }) else {
-        return object_keys(v);
-    };
-    let Some(function) = (unsafe { eval_global(&ctx, helper) }) else {
+    let Some(function) = helper else {
         return object_keys(v);
     };
     if !unsafe { function.isObject() } {
@@ -640,10 +637,10 @@ pub(crate) fn unknown_config_keys(v: &JSValue, helper: &str) -> Vec<String> {
     let clone: Retained<AnyObject> = unsafe { Retained::cast_unchecked(v.retain()) };
     let args = NSArray::from_retained_slice(&[clone]);
     let Some(keys) = (unsafe { function.callWithArguments(Some(&args)) }) else {
-        return object_keys(v);
+        return vec![];
     };
     if !unsafe { keys.isArray() } {
-        return object_keys(v);
+        return vec![];
     }
     string_keys(&keys)
 }

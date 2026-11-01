@@ -31,6 +31,26 @@ pub struct LoadedConfig {
     pub ctx: Retained<JSContext>,
     pub path: PathBuf,
     pub diagnostics: Rc<DiagnosticLog>,
+    pub(crate) checks: KeyCheckers,
+}
+
+/// Config-field checks retained before user code can replace their globals.
+pub(crate) struct KeyCheckers {
+    pub(crate) rule: Option<Retained<JSValue>>,
+    pub(crate) browser: Option<Retained<JSValue>>,
+}
+
+impl KeyCheckers {
+    pub(crate) fn capture(ctx: &JSContext) -> Self {
+        fn get(ctx: &JSContext, name: &str) -> Option<Retained<JSValue>> {
+            let name = NSString::from_str(name);
+            unsafe { ctx.objectForKeyedSubscript(Some(&*name)) }
+        }
+        Self {
+            rule: get(ctx, "__grinchUnknownRuleKeys"),
+            browser: get(ctx, "__grinchUnknownBrowserKeys"),
+        }
+    }
 }
 
 /// Returns the path to the config file the loader would (or did) read,
@@ -107,6 +127,7 @@ fn evaluate_config(
         let msg = take_error("prelude eval failed");
         return Err(record_config_error(&diagnostics, Some(&path), msg));
     }
+    let checks = KeyCheckers::capture(&ctx);
     // Console blocks must be installed BEFORE the user config evaluates so
     // top-level `console.log("…")` calls land on the wired blocks, not the
     // prelude's `typeof` no-op fallback. Same ordering applies to the
@@ -161,6 +182,7 @@ fn evaluate_config(
         ctx,
         path,
         diagnostics,
+        checks,
     })
 }
 

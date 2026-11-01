@@ -101,7 +101,11 @@ fn expand_tilde(s: &str) -> String {
     s.to_string()
 }
 
-pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> BrowserSpec {
+pub(crate) fn parse_browser_jsval(
+    v: &JSValue,
+    diagnostics: &DiagnosticLog,
+    checks: &crate::loader::KeyCheckers,
+) -> BrowserSpec {
     if unsafe { v.isString() } {
         let s = js_to_string(v).unwrap_or_default();
         // Path autodetect: bare-string browser specs that look like
@@ -148,7 +152,7 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
         return BrowserSpec::empty();
     }
 
-    for field in unknown_config_keys(v, "__grinchUnknownBrowserKeys") {
+    for field in unknown_config_keys(v, checks.browser.as_deref()) {
         if ![
             "id",
             "bundleId",
@@ -290,6 +294,7 @@ pub(crate) fn resolve_browser(
     browsers: &std::collections::HashMap<String, Rc<BrowserSpec>>,
     apply_string_shorthand: bool,
     diagnostics: &DiagnosticLog,
+    checks: &crate::loader::KeyCheckers,
 ) -> Option<Rc<BrowserSpec>> {
     if unsafe { v.isString() } {
         let s = js_to_string(v)?;
@@ -303,14 +308,14 @@ pub(crate) fn resolve_browser(
         if apply_string_shorthand || looks_like_app_path(&s) {
             // `parse_browser_jsval`'s string branch handles bare-name +
             // "Name:Profile" shorthand.
-            return Some(Rc::new(parse_browser_jsval(v, diagnostics)));
+            return Some(Rc::new(parse_browser_jsval(v, diagnostics, checks)));
         }
         return Some(Rc::new(BrowserSpec::from_bundle_id(
             resolve_browser_identifier(&s),
         )));
     }
     if unsafe { v.isObject() } {
-        return Some(Rc::new(parse_browser_jsval(v, diagnostics)));
+        return Some(Rc::new(parse_browser_jsval(v, diagnostics, checks)));
     }
     None
 }

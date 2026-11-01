@@ -6,10 +6,11 @@ use super::*;
 pub(crate) fn parse_rule_array(
     arr: &JSValue,
     browsers: &std::collections::HashMap<String, Rc<BrowserSpec>>,
-    regexp_ctor: &JSValue,
-    function_ctor: &JSValue,
+    constructors: (&JSValue, &JSValue),
     diagnostics: &DiagnosticLog,
+    checks: &crate::loader::KeyCheckers,
 ) -> Vec<Rule> {
+    let (regexp_ctor, function_ctor) = constructors;
     if is_undef_or_null(arr) {
         return vec![];
     }
@@ -20,7 +21,7 @@ pub(crate) fn parse_rule_array(
             continue;
         };
         let mut misplaced = false;
-        for field in unknown_config_keys(&item, "__grinchUnknownRuleKeys") {
+        for field in unknown_config_keys(&item, checks.rule.as_deref()) {
             if ["match", "open", "browser", "url", "name"].contains(&field.as_str()) {
                 continue;
             }
@@ -60,7 +61,7 @@ pub(crate) fn parse_rule_array(
             Some(_) if misplaced => Target::Suppress,
             Some(ov) if unsafe { ov.isNull() } => Target::Suppress,
             Some(ov) if is_function(ov, function_ctor) => Target::Fn(UserFn::new(ov.clone())),
-            Some(ov) => match resolve_browser(ov, browsers, true, diagnostics) {
+            Some(ov) => match resolve_browser(ov, browsers, true, diagnostics, checks) {
                 // Empty bundle_id = explicit no-op browser (e.g. via
                 // `appType: "none"`). Normalise to Target::Suppress so the
                 // resolve path's URL handling matches `open: null` exactly,

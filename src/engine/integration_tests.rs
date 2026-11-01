@@ -65,6 +65,7 @@ fn try_build_engine_with_diagnostics(
 
     let prelude_ns = NSString::from_str(JS_PRELUDE);
     unsafe { ctx.evaluateScript(Some(&prelude_ns)) }.expect("prelude evaluation returned null");
+    let checks = crate::loader::KeyCheckers::capture(&ctx);
 
     // Match the loader's ordering: install bridges between prelude eval
     // and user-config eval so top-level `console.log` / `finicky.*`
@@ -90,6 +91,7 @@ fn try_build_engine_with_diagnostics(
         ctx,
         path: PathBuf::from("test-config.js"),
         diagnostics,
+        checks,
     })
 }
 
@@ -992,6 +994,52 @@ fn nested_warnings_ignore_inherited_keys_and_do_not_read_values() {
     );
     assert!(resolve(&engine, "https://example.com/").0.is_empty());
     assert!(diagnostics.config_warning().unwrap().contains("profile"));
+}
+
+#[test]
+fn config_checks_preserve_enumeration_behavior() {
+    let diagnostics = Rc::new(isolated_diagnostics());
+    for source in [
+        r#"__grinchUnknownRuleKeys = () => [];
+           module.exports = {default: "com.apple.Safari", rules: [
+             {match: "example.com", open: "com.google.Chrome", profile: "Work"}
+           ]};"#,
+        r#"var original = Object.keys;
+           Object.keys = function(o) {
+             if (o && o.match && this === Object) return [];
+             return original(o);
+           };
+           module.exports = {default: "com.apple.Safari", rules: [
+             {match: "example.com", open: "com.google.Chrome", profile: "Work"}
+           ]};"#,
+    ] {
+        let engine = build_engine_with_diagnostics(source, Rc::clone(&diagnostics));
+        assert!(resolve(&engine, "https://example.com/").0.is_empty());
+        assert!(diagnostics.config_warning().unwrap().contains("profile"));
+    }
+    let engine = build_engine_with_diagnostics(
+        r#"__grinchUnknownBrowserKeys = () => [];
+           module.exports = {default: () => ({name: "com.apple.Safari", typo: true})};"#,
+        Rc::clone(&diagnostics),
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.apple.Safari"
+    );
+    assert!(diagnostics.config_warning().unwrap().contains("typo"));
+    let engine = build_engine_with_diagnostics(
+        r#"var count = 0;
+           var rule = new Proxy({match: "example.com", open: "com.google.Chrome", profile: "Work"}, {
+             ownKeys(o) { if (++count === 1) throw Error("first call"); return Reflect.ownKeys(o); }
+           });
+           module.exports = {default: "com.apple.Safari", rules: [rule]};"#,
+        Rc::clone(&diagnostics),
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.google.Chrome"
+    );
+    assert!(diagnostics.config_warning().is_none());
 }
 
 #[test]

@@ -522,6 +522,7 @@ pub struct Engine {
     /// JSContext owns every JSValue we still hold after compilation (user
     /// predicate functions, prelude helpers). Must outlive them.
     ctx: Retained<JSContext>,
+    checks: crate::loader::KeyCheckers,
     /// Cached `__grinchRewriteResult` JS function for normalising user
     /// rewrite return values to a string href or null.
     rewrite_result_helper: Retained<JSValue>,
@@ -608,6 +609,7 @@ impl Engine {
         let exports = loaded.exports;
         let config_path = loaded.path;
         let diagnostics = loaded.diagnostics;
+        let checks = loaded.checks;
 
         crate::chromium::clear_profile_cache();
         crate::firefox::clear_profile_cache();
@@ -657,7 +659,7 @@ impl Engine {
             && !is_undef_or_null(&b)
         {
             for (k, v) in iter_object(&b) {
-                browsers.insert(k, Rc::new(parse_browser_jsval(&v, &diagnostics)));
+                browsers.insert(k, Rc::new(parse_browser_jsval(&v, &diagnostics, &checks)));
             }
         }
 
@@ -683,8 +685,8 @@ impl Engine {
             // read opener / modifiers / url) and a URL polyfill instance.
             DefaultBrowser::Fn(UserFn::new(default_val.retain()))
         } else {
-            let spec =
-                resolve_browser(&default_val, &browsers, true, &diagnostics).unwrap_or_else(|| {
+            let spec = resolve_browser(&default_val, &browsers, true, &diagnostics, &checks)
+                .unwrap_or_else(|| {
                     Rc::new(BrowserSpec::from_bundle_id(
                         js_to_string(&default_val).unwrap_or_default(),
                     ))
@@ -701,7 +703,13 @@ impl Engine {
         let rules_val = key(&exports, "rules").or_else(|| key(&exports, "handlers"));
         let rules = rules_val
             .map(|arr| {
-                parse_rule_array(&arr, &browsers, &regexp_ctor, &function_ctor, &diagnostics)
+                parse_rule_array(
+                    &arr,
+                    &browsers,
+                    (&regexp_ctor, &function_ctor),
+                    &diagnostics,
+                    &checks,
+                )
             })
             .unwrap_or_default();
 
@@ -734,6 +742,7 @@ impl Engine {
             rewrites,
             rules,
             ctx,
+            checks,
             rewrite_result_helper,
             make_ctx_helper,
             url_ctor,
@@ -970,13 +979,18 @@ impl Engine {
                         if !matches!(kind, JSType::Null | JSType::Undefined) {
                             // Runtime fn return: don't apply Name:Profile shorthand —
                             // an opaque debug string like "t:function" must stay literal.
-                            let spec =
-                                resolve_browser(&r, &self.browsers, false, &self.diagnostics)
-                                    .unwrap_or_else(|| {
-                                        Rc::new(BrowserSpec::from_bundle_id(
-                                            js_to_string(&r).unwrap_or_default(),
-                                        ))
-                                    });
+                            let spec = resolve_browser(
+                                &r,
+                                &self.browsers,
+                                false,
+                                &self.diagnostics,
+                                &self.checks,
+                            )
+                            .unwrap_or_else(|| {
+                                Rc::new(BrowserSpec::from_bundle_id(
+                                    js_to_string(&r).unwrap_or_default(),
+                                ))
+                            });
                             return Resolution {
                                 browser: spec,
                                 url: current,
@@ -1005,12 +1019,13 @@ impl Engine {
                     && !unsafe { r.isUndefined() }
                     && !unsafe { r.isNull() }
                 {
-                    let spec = resolve_browser(&r, &self.browsers, false, &self.diagnostics)
-                        .unwrap_or_else(|| {
-                            Rc::new(BrowserSpec::from_bundle_id(
-                                js_to_string(&r).unwrap_or_default(),
-                            ))
-                        });
+                    let spec =
+                        resolve_browser(&r, &self.browsers, false, &self.diagnostics, &self.checks)
+                            .unwrap_or_else(|| {
+                                Rc::new(BrowserSpec::from_bundle_id(
+                                    js_to_string(&r).unwrap_or_default(),
+                                ))
+                            });
                     break 'fn_default Resolution {
                         browser: spec,
                         url: current,

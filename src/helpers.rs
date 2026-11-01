@@ -580,7 +580,7 @@ var finicky = {
 // Keep these known keys in sync with the Rust fallback checks.
 var __grinchUnknownRuleKeys = (function(define) {
   return function(v) {
-    var keys = Object.keys(v), out = [];
+    var keysFn = Object.keys, keys = keysFn(v), out = [];
     for (var i = 0, n = keys.length >>> 0; i < n; i++) {
       var k = keys[i];
       if (k !== "match" && k !== "open" && k !== "browser" && k !== "url" && k !== "name")
@@ -591,7 +591,7 @@ var __grinchUnknownRuleKeys = (function(define) {
 })(Object.defineProperty);
 var __grinchUnknownBrowserKeys = (function(define) {
   return function(v) {
-    var keys = Object.keys(v), out = [];
+    var keysFn = Object.keys, keys = keysFn(v), out = [];
     for (var i = 0, n = keys.length >>> 0; i < n; i++) {
       var k = keys[i];
       if (k !== "id" && k !== "bundleId" && k !== "name" && k !== "appType" &&

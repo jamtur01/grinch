@@ -802,6 +802,10 @@ fn verify_ordinary_startup_delivery(mtm: MainThreadMarker) {
     assert!(messages.contains(
         "Cannot route URLs received during startup because the config did not load (2 dropped)"
     ));
+    assert!(messages.lines().any(|line| {
+        let event: serde_json::Value = serde_json::from_str(line).unwrap();
+        event["event"] == "config_error" && event["droppedUrls"] == 2
+    }));
     unsafe {
         if let Some(home) = previous {
             std::env::set_var("HOME", home);
@@ -945,6 +949,10 @@ fn main() {
         session_handler::install(mtm, forwarded);
         session_handler::finish_startup(mtm);
         verify_removed_app_launch_failures();
+        return;
+    }
+    if std::env::args().any(|arg| arg == "--check-startup-urls") {
+        verify_ordinary_startup_delivery(mtm);
         return;
     }
     verify_real_reopen();

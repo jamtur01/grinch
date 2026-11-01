@@ -184,6 +184,19 @@ impl DiagnosticLog {
         }));
     }
 
+    pub(crate) fn record_dropped_startup_urls(&self, count: usize) {
+        self.write_event(serde_json::json!({
+            "event": "config_error",
+            "ts": now_unix_f64(),
+            "path": null,
+            "message": format!(
+                "Cannot route URLs received during startup because the config did not load \
+                 ({count} dropped)"
+            ),
+            "droppedUrls": count,
+        }));
+    }
+
     pub(crate) fn record_runtime_js_error(&self, path: &str, message: &str) {
         self.write_event(serde_json::json!({
             "event": "runtime_js_error",

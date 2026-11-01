@@ -507,10 +507,9 @@ impl Delegate {
         let engine = self.ivars().engine.borrow();
         let Some(engine) = engine.as_ref() else {
             if !urls.is_empty() {
-                self.ivars().diagnostics.record_config_error(
-                    None,
-                    &format!("Cannot route URLs received during startup because the config did not load ({} dropped)", urls.len()),
-                );
+                self.ivars()
+                    .diagnostics
+                    .record_dropped_startup_urls(urls.len());
             }
             return;
         };

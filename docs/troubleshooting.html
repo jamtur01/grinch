@@ -271,6 +271,9 @@ rules:  1</span></code></pre>
     <dt><code>rewritten</code></dt>
     <dd>True when <code>final</code> differs from <code>url</code>. A suppressed
       URL also becomes <code>about:blank</code> and has <code>rewritten: true</code>.</dd>
+    <dt><code>droppedUrls</code></dt>
+    <dd>On a startup <code>config_error</code>, the number of queued links dropped
+      because the first config load failed.</dd>
     <dt><code>opener</code></dt>
     <dd>The app that sent the URL, identified from the Apple Event's sender. An
       empty <code>bundleId</code> means neither the sender nor the frontmost-app

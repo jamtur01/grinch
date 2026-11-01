@@ -161,7 +161,9 @@ define_class!(
                 .and_then(|e| sender_pid_from_event(&e));
             let Some(engine) = engine_ref.as_ref() else {
                 if !self.ivars().startup_complete.get() {
-                    let opener = sender_pid.and_then(opener_from_pid).unwrap_or_else(frontmost_opener);
+                    let opener = sender_pid
+                        .and_then(opener_from_pid)
+                        .unwrap_or_else(frontmost_opener);
                     let modifiers = current_modifier_flags();
                     for i in 0..count {
                         if let Some(raw) = urls.objectAtIndex(i).absoluteString() {
@@ -172,7 +174,11 @@ define_class!(
                 return;
             };
             let opener = resolve_opener(engine, sender_pid);
-            let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
+            let modifiers = if engine.needs_modifiers() {
+                current_modifier_flags()
+            } else {
+                ModifierFlags::default()
+            };
             for i in 0..count {
                 let url = urls.objectAtIndex(i);
                 let Some(raw) = url.absoluteString() else { continue };
@@ -237,7 +243,11 @@ define_class!(
                 }
                 return Bool::NO;
             };
-            let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
+            let modifiers = if engine.needs_modifiers() {
+                current_modifier_flags()
+            } else {
+                ModifierFlags::default()
+            };
             self.route_url(engine, &href, &Opener::default(), modifiers);
             Bool::YES
         }
@@ -291,17 +301,18 @@ define_class!(
             // for a one-shot CLI invocation, and skipping them avoids the
             // SMAppService / NSStatusBar work (which can stall in headless
             // sandboxes that have no UI session).
-            let args = cli_arguments(std::env::args_os());
-            let Ok(args) = args else {
-                eprintln!("grinch: arguments must be valid UTF-8");
-                std::process::exit(2);
-            };
+            let args: Vec<_> = std::env::args_os().collect();
             let cli_test = args.iter().position(|a| a == "--test");
             let cli_bench = args.iter().position(|a| a == "--bench");
             let cli_bench_init = args.iter().position(|a| a == "--bench-init");
             let cli_list_rules = args.iter().any(|a| a == "--list-rules");
             let cli_list_browsers = args.iter().any(|a| a == "--list-browsers");
             let cli_validate = args.iter().any(|a| a == "--validate");
+            let cli_requested = args.iter().any(|arg| arg.as_encoded_bytes().starts_with(b"--"));
+            let Ok(args) = cli_arguments(args, cli_requested) else {
+                eprintln!("grinch: arguments must be valid UTF-8");
+                std::process::exit(2);
+            };
 
             if let Some(idx) = cli_test {
                 let Some(url) = args.get(idx + 1) else {
@@ -340,7 +351,10 @@ define_class!(
                 let n = match args.get(idx + 1) {
                     Some(value) => match value.parse::<usize>() {
                         Ok(n) if n > 0 => n,
-                        _ => { eprintln!("grinch: --bench-init iterations must be a positive integer"); std::process::exit(2); }
+                        _ => {
+                            eprintln!("grinch: --bench-init iterations must be a positive integer");
+                            std::process::exit(2);
+                        }
                     },
                     None => 1_000,
                 };
@@ -409,20 +423,27 @@ define_class!(
             let sender_pid = sender_pid_from_event(event);
             let Some(engine) = engine_ref.as_ref() else {
                 if !self.ivars().startup_complete.get() {
-                    let opener = sender_pid.and_then(opener_from_pid).unwrap_or_else(frontmost_opener);
+                    let opener = sender_pid
+                        .and_then(opener_from_pid)
+                        .unwrap_or_else(frontmost_opener);
                     self.queue_startup_url(raw, opener, current_modifier_flags());
                 }
                 return;
             };
             let opener = resolve_opener(engine, sender_pid);
-            let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
+            let modifiers = if engine.needs_modifiers() {
+                current_modifier_flags()
+            } else {
+                ModifierFlags::default()
+            };
 
             // Diagnostic — gated by GRINCH_DEBUG=1 in env. Prints opener and
             // modifier state for each resolved URL so the user can verify
             // CGEventSourceFlagsState is actually picking up held keys.
             if debug_enabled() {
                 eprintln!(
-                    "grinch: resolve url={raw:?} opener=(bundle={}, name={}) modifiers={{shift:{}, option:{}, command:{}, control:{}}}",
+                    "grinch: resolve url={raw:?} opener=(bundle={}, name={}) \
+                     modifiers={{shift:{}, option:{}, command:{}, control:{}}}",
                     opener.bundle_id, opener.name,
                     modifiers.shift, modifiers.option, modifiers.command, modifiers.control,
                 );
@@ -1216,18 +1237,10 @@ impl Delegate {
 }
 
 fn cli_arguments(
-    args: impl Iterator<Item = std::ffi::OsString>,
+    args: Vec<std::ffi::OsString>,
+    cli_requested: bool,
 ) -> Result<Vec<String>, std::ffi::OsString> {
-    let args: Vec<_> = args.collect();
-    let flags = [
-        "--test",
-        "--bench",
-        "--bench-init",
-        "--list-rules",
-        "--list-browsers",
-        "--validate",
-    ];
-    if !args.iter().any(|arg| flags.iter().any(|flag| arg == flag)) {
+    if !cli_requested {
         return Ok(Vec::new());
     }
     args.into_iter().map(|arg| arg.into_string()).collect()
@@ -1601,12 +1614,12 @@ mod tests {
 
         let invalid = OsString::from_vec(vec![0xff]);
         assert!(
-            super::cli_arguments(vec![OsString::from("Grinch"), invalid.clone()].into_iter())
-                .is_ok()
+            super::cli_arguments(vec![OsString::from("Grinch"), invalid.clone()], false).is_ok()
         );
         assert!(
             super::cli_arguments(
-                vec![OsString::from("Grinch"), OsString::from("--test"), invalid].into_iter()
+                vec![OsString::from("Grinch"), OsString::from("--test"), invalid],
+                true
             )
             .is_err()
         );
@@ -1636,7 +1649,8 @@ mod tests {
         assert!(!modifiers.shift);
 
         let engine = crate::engine::integration_tests::build_engine(
-            "module.exports = {default: 'com.apple.Safari', rules: [{match: from('com.example.sender'), open: null}]};",
+            "module.exports = {default: 'com.apple.Safari', rules: \
+             [{match: from('com.example.sender'), open: null}]};",
         );
         let (opener, modifiers) = startup_context(&engine, &pending);
         assert_eq!(opener.bundle_id, "com.example.sender");

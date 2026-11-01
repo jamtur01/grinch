@@ -191,7 +191,7 @@ fn unwrap_proofpoint_v3(url: &str) -> Option<String> {
         };
     }
     let replacement_bytes = base64_url_decode(marker_b64)?;
-    let mut replacement = replacement_bytes.iter().copied();
+    let mut replacement = replacement_bytes.iter();
 
     let mut result = Vec::with_capacity(encoded.len() + replacement_bytes.len());
     let bytes = encoded.as_bytes();
@@ -206,11 +206,17 @@ fn unwrap_proofpoint_v3(url: &str) -> Option<String> {
             if i + 2 < bytes.len() && bytes[i + 1] == b'*' {
                 let n = proofpoint_v3_run_length(bytes[i + 2])?;
                 for _ in 0..n {
-                    result.push(replacement.next()?);
+                    result.push(*replacement.next()?);
                 }
                 i += 3;
             } else {
-                result.push(replacement.next()?);
+                let next = std::str::from_utf8(replacement.as_slice())
+                    .ok()?
+                    .chars()
+                    .next()?;
+                for _ in 0..next.len_utf8() {
+                    result.push(*replacement.next()?);
+                }
                 i += 1;
             }
         } else {

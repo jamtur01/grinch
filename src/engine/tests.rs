@@ -433,6 +433,10 @@ fn proofpoint_v3_preserves_unicode_and_rejects_invalid_utf8() {
             Some("https://example.com/café"),
         ),
         (
+            "https://urldefense.com/v3/__https://example.com/caf*__;w6k!!tag$",
+            Some("https://example.com/café"),
+        ),
+        (
             "https://urldefense.com/v3/__https://example.com/*__;_w!!tag$",
             None,
         ),

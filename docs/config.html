@@ -177,6 +177,11 @@
     <code>"Profile N"</code> also identify a profile by its directory name.
     Dynamic functions returning strings don't use the <code>Name:Profile</code>
     shorthand.</p>
+  <p>Other browsers, including Safari, don't support profiles. If a target
+    names a profile for one of them, whether as an object, with the
+    <code>Name:Profile</code> shorthand, or in an object a function returns,
+    Grinch doesn't open the link and records a profile error. Remove the
+    profile or use a Chromium or Firefox browser.</p>
   <p>If a Chrome profile can't be found, Grinch doesn't open the link rather than
     risk the wrong profile. Check the profile name and
     <strong>Open Diagnostic Log</strong>, then choose <strong>Reload Config</strong>
@@ -199,9 +204,9 @@
       problem.</p>
     <p>Firefox profiles use names from <code>profiles.ini</code>. Grinch logs
       unreadable files and unknown names when an inventory is available, but
-      still passes the name to Firefox. Other browsers ignore
-      <code>profile</code> with a warning. The full supported browser-family
-      lists are in
+      still passes the name to Firefox. A profile on any other browser records
+      a <code>profile_error</code> and suppresses the launch. The full supported
+      browser-family lists are in
       <a href="https://github.com/jamtur01/grinch/blob/main/src/chromium.rs"><code>src/chromium.rs</code></a> and
       <a href="https://github.com/jamtur01/grinch/blob/main/src/firefox.rs"><code>src/firefox.rs</code></a>.</p>
   </details>

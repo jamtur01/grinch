@@ -274,9 +274,10 @@ path:   /Users/alex/.config/grinch.js</span>
     <summary>Profile errors</summary>
     <p><code>profile_error</code> events include the browser bundle ID, the
       profile-data file path when available, and a message saying what to fix.
-      They report unreadable profile files and profile names Grinch couldn't
-      resolve.</p>
-    <p>Only Chromium errors that stop a launch affect the menu bar; Firefox
+      They report unreadable profile files, profile names Grinch couldn't
+      resolve, and profiles set on browsers that don't support them.</p>
+    <p>Errors that stop a launch affect the menu bar: an unresolved Chromium
+      profile, or a profile on a browser that doesn't support profiles. Firefox
       warnings stay in the log. The first such error after a config load changes
       the icon to <strong>⚠️</strong> and shows <strong>Profile error:</strong>
       in the menu, including errors found when a dynamic target runs on a click.

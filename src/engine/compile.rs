@@ -35,7 +35,8 @@ pub(crate) fn parse_rule_array(
             {
                 misplaced = true;
                 diagnostics.record_suppressing_warning(&format!(
-                    "rules[{i}].{field} is ignored; move it inside the browser target; this rule is suppressed"
+                    "rules[{i}].{field} is ignored; move it inside the browser target; \
+                     this rule is suppressed"
                 ));
             } else {
                 diagnostics
@@ -80,13 +81,19 @@ pub(crate) fn parse_rule_array(
                 Some(b) if b.bundle_id.is_empty() => Target::Suppress,
                 Some(b) => Target::Browser(b),
                 None => {
-                    diagnostics.record_config_warning(&format!("rules[{i}] has unresolvable `open` (not a string, object, or browser key) — entry ignored"));
+                    diagnostics.record_config_warning(&format!(
+                        "rules[{i}] has unresolvable `open` (not a string, object, or browser \
+                         key) — entry ignored"
+                    ));
                     continue;
                 }
             },
             None => {
                 if rewriter.is_some() {
-                    diagnostics.record_config_warning(&format!("rules[{i}] has `url:` but no `open:` — move it to the top-level `rewrite:` array if it should apply globally"));
+                    diagnostics.record_config_warning(&format!(
+                        "rules[{i}] has `url:` but no `open:` — move it to the top-level \
+                         `rewrite:` array if it should apply globally"
+                    ));
                 } else {
                     diagnostics.record_config_warning(&format!(
                         "rules[{i}] has neither `open` nor `url` — entry ignored"
@@ -384,7 +391,10 @@ pub(crate) fn compile_matcher(
                     // no diagnostic. Surface the failure at load time
                     // so users can port the pattern to a supported
                     // form (e.g. wildcards, fn matchers).
-                    diagnostics.record_config_warning(&format!("regex /{pattern}/ failed to compile: {e}. This matcher will not fire; use a wildcard, domain(), or function matcher"));
+                    diagnostics.record_config_warning(&format!(
+                        "regex /{pattern}/ failed to compile: {e}. This matcher will not fire; \
+                         use a wildcard, domain(), or function matcher"
+                    ));
                 }
             }
         }
@@ -428,6 +438,19 @@ fn compile_strip(
 /// get an optional `(?:https?:|...)?(?://)?` prefix so e.g. `"zoom.us/j/*"`
 /// matches both bare and protocol-prefixed URLs.
 pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
+    let primary = wildcard_expression(pattern, false);
+    let anchored = if wildcard_scheme_prefix(pattern, true).is_some()
+        && wildcard_scheme_prefix(pattern, false).is_none()
+    {
+        let scheme = wildcard_expression(pattern, true);
+        format!("(?:{primary})|(?:{scheme})")
+    } else {
+        primary
+    };
+    RegexBuilder::new(&anchored).build().ok()
+}
+
+fn wildcard_expression(pattern: &str, allow_ambiguous_scheme: bool) -> String {
     // Private-use codepoint as the "this `*` was escaped" sentinel.
     // Previously U+0000 (NUL), which is a valid char in JS strings — a
     // pattern containing a literal NUL would have been misinterpreted as
@@ -437,14 +460,18 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
 
     // Step 1: replace escaped asterisks with a sentinel.
     let mut work = pattern.replace("\\*", &PLACEHOLDER.to_string());
-    let has_protocol = pattern_has_protocol_prefix(pattern) && !is_host_port_pattern(pattern);
-    let host_start = if has_protocol {
+    let wildcard_scheme = wildcard_scheme_prefix(pattern, allow_ambiguous_scheme);
+    let has_protocol = wildcard_scheme.is_some()
+        || (pattern_has_protocol_prefix(pattern) && !is_host_port_pattern(pattern));
+    let host_start = if let Some(index) = wildcard_scheme {
+        work[index..].starts_with("://").then_some(index + 3)
+    } else if has_protocol {
         work.find(':')
             .filter(|&index| work[index..].starts_with("://"))
             .map(|index| index + 3)
     } else if work.starts_with("*://") {
         Some(4)
-    } else if !work.starts_with('*') || work.starts_with("*.") {
+    } else if !work.starts_with('*') {
         Some(0)
     } else {
         None
@@ -489,7 +516,8 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
         }
     } else {
         if let Some(index) = work.find(':') {
-            work = format!("(?i-u:{}){}", &work[..index], &work[index..]);
+            let scheme = work[..index].replace('*', "[a-z0-9+._-]{0,}?");
+            work = format!("(?i-u:{scheme}){}", &work[index..]);
         }
         work = work.replace('/', "\\/");
         if work.ends_with("\\/\\/") {
@@ -504,10 +532,61 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
     work = work.replace(PLACEHOLDER, "\\*");
 
     // Step 6: anchor.
-    let anchored = format!("^{work}$");
+    wildcard_anchor(
+        &work,
+        !has_protocol && pattern.starts_with('*'),
+        pattern.ends_with('*'),
+    )
+}
 
-    // Only the hostname is normalized; the remaining pattern stays case-sensitive.
-    RegexBuilder::new(&anchored).build().ok()
+fn wildcard_anchor(work: &str, leading_wildcard: bool, trailing_wildcard: bool) -> String {
+    if !leading_wildcard {
+        return format!("^{work}$");
+    }
+    let end = [work.find('/'), work.find("\\?"), work.find('#')]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(work.len());
+    if !work[..end].bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return format!("^{work}$");
+    }
+    // Preserve case-sensitive path matches while allowing a normalized host.
+    let host = work[..end].to_ascii_lowercase().replace(".*?", "[^/?#@]*?");
+    let remainder = &work[end..];
+    let trailing = if end == work.len() && trailing_wildcard {
+        "(?:[/?#].*)?"
+    } else {
+        ""
+    };
+    format!("^(?:{work}|(?i-u:[a-z][a-z0-9+.-]*://)?(?:[^/?#]*@)?{host}{remainder}{trailing})$")
+}
+
+fn wildcard_scheme_prefix(pattern: &str, allow_ambiguous: bool) -> Option<usize> {
+    let index = pattern.find(':')?;
+    let scheme = &pattern[..index];
+    if !scheme.contains('*') || scheme.is_empty() {
+        return None;
+    }
+    if !scheme
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"+.-_*".contains(&byte))
+    {
+        return None;
+    }
+    let tail = &pattern[index + 1..];
+    if !allow_ambiguous
+        && scheme.starts_with('*')
+        && scheme.contains('.')
+        && !tail.starts_with("//")
+    {
+        return None;
+    }
+    let first = tail.split(['/', '?', '#']).next().unwrap_or("");
+    if !allow_ambiguous && !first.is_empty() && first.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(index)
 }
 
 fn is_host_port_pattern(pattern: &str) -> bool {

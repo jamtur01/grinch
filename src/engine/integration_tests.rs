@@ -401,6 +401,162 @@ fn wildcard_normalizes_hostname_but_not_path() {
         resolve(&engine, "https://FIRST.example/start").0,
         "com.google.Chrome"
     );
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+          { match: "first.example/*", url: () => "https://SECOND.example/Path", open: () => null },
+          { match: "second.example/Path", open: "com.google.Chrome" }
+        ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "https://FIRST.example/start").0,
+        "com.google.Chrome"
+    );
+}
+
+#[test]
+fn wildcard_scheme_case_matrix() {
+    assert_wildcard_cases(&[
+        ("github.com/Path/*", "HTTPS://GITHUB.COM/Path/x", true),
+        ("github.com/Path/*", "HtTpS://github.com/Path/x", true),
+        ("github.com/Path/*", "HTTP://github.com/path/x", false),
+        ("github.com/Path/*", "FTP://github.com/Path/x", true),
+        ("github.com/Path/*", "MAILTO:github.com/Path/x", true),
+        ("github.com/Path/*", "FILE://github.com/Path/x", true),
+        ("github.com/Path/*", "TEL:github.com/Path/x", true),
+        ("github.com/Path/*", "SMS:github.com/Path/x", true),
+        ("github.com/Path/*", "DATA:github.com/Path/x", true),
+        ("github.com/Path/*", "WS://github.com/Path/x", false),
+        ("github.com/Path/*", "git+https://github.com/Path/x", false),
+        (
+            "https://github.com/Path/*",
+            "HTTPS://GITHUB.COM/Path/x",
+            true,
+        ),
+        (
+            "HTTPS://github.com/Path/*",
+            "https://github.com/Path/x",
+            true,
+        ),
+        (
+            "http://github.com/Path/*",
+            "HTTPS://github.com/Path/x",
+            false,
+        ),
+        (
+            "web+app://github.com/Path/*",
+            "WEB+APP://GITHUB.COM/Path/x",
+            true,
+        ),
+        (
+            "git+https://github.com/Path/*",
+            "GIT+HTTPS://github.com/Path/x",
+            true,
+        ),
+        ("chrome-extension://abc/*", "CHROME-EXTENSION://abc/x", true),
+        ("mailto:*@example.com", "MAILTO:User@example.com", true),
+        ("MA*TO:*@example.com", "MAILTO:User@example.com", true),
+        ("MA*TO:*@example.com", "MOLTO:User@example.com", false),
+        ("T*L:123", "TEL:123", true),
+        ("loc*lhost:3000/*", "HTTP://localhost:3000/x", true),
+        ("fo*:123", "HTTP://foo:123", true),
+        ("*://github.com/Path/*", "HTTPS://GITHUB.COM/Path/x", true),
+        ("*://github.com/Path/*", "WS://GITHUB.COM/Path/x", true),
+        ("*://github.com/Path/*", "WSS://github.com/Path/x", true),
+        ("*://[2001:DB8::1]/*", "HTTPS://[2001:db8::1]/x", true),
+        (
+            "HT*PS://github.com/Path/*",
+            "https://github.com/Path/x",
+            true,
+        ),
+        (
+            "HT*PS://github.com/Path/*",
+            "HTTPS://github.com/Path/x",
+            true,
+        ),
+        (
+            "HT*PS://github.com/Path/*",
+            "FTP://github.com/Path/x",
+            false,
+        ),
+        (
+            "ht*ps://GitHub.COM/Path/*",
+            "HTTPS://github.com/Path/x",
+            true,
+        ),
+    ]);
+}
+
+#[test]
+fn wildcard_authority_case_matrix() {
+    assert_wildcard_cases(&[
+        ("*GitHub.com/*", "HTTPS://github.com/Path/x", true),
+        ("*GitHub.com/*", "https://other.example/GitHub.com/x", true),
+        ("*GitHub.com/*", "https://other.example/github.com/x", false),
+        ("*GitHub.com/*", "https://github.com@evil.example/x", false),
+        ("*GitHub.com*", "https://github.com/x", true),
+        ("*GitHub.com:*", "https://github.com:8080/x", true),
+        ("*GitHub.com:8080/*", "https://github.com:8080/x", true),
+        ("*GitHub.com*", "https://github.com@evil.example/x", false),
+        ("*.GitHub.com/*", "https://sub.github.com/x", true),
+        (
+            "*.GitHub.com/*",
+            "https://other.example/x.GitHub.com/x",
+            true,
+        ),
+        (
+            "*.GitHub.com/*",
+            "https://other.example/x.github.com/x",
+            false,
+        ),
+        ("*GitHub.com?x=*", "https://github.com?x=value", true),
+        ("*GitHub.com#Fragment", "https://github.com#Fragment", true),
+        ("*GitHub.com#Fragment", "https://github.com#fragment", false),
+        ("localhost:3000/*", "HTTP://LOCALHOST:3000/x", true),
+        ("localhost:3000", "HTTP://LOCALHOST:3000/x", true),
+        ("LOCALHOST:3000/*", "HTTP://localhost:3000/x", true),
+        ("LOCALHOST:3000", "HTTP://localhost:3000/x", true),
+    ]);
+}
+
+fn assert_wildcard_cases(cases: &[(&str, &str, bool)]) {
+    for &(pattern, url, matches) in cases {
+        let source = format!(
+            "module.exports = {{ default: 'com.apple.Safari', rules: \
+             [{{ match: {}, open: 'com.google.Chrome' }}] }};",
+            serde_json::to_string(pattern).unwrap()
+        );
+        let engine = build_engine(&source);
+        let actual = resolve(&engine, url).0;
+        let expected = if matches {
+            "com.google.Chrome"
+        } else {
+            "com.apple.Safari"
+        };
+        assert_eq!(actual, expected, "pattern {pattern:?}, URL {url:?}");
+    }
+}
+
+#[test]
+fn url_protocol_normalizes_schemes_for_functions() {
+    for (url, scheme) in [
+        ("HTTPS://example.com/x", "https:"),
+        ("HtTp://example.com/x", "http:"),
+        ("FTP://example.com/x", "ftp:"),
+        ("WS://example.com/x", "ws:"),
+        ("WSS://example.com/x", "wss:"),
+        ("FILE://example.com/x", "file:"),
+        ("MAILTO:user@example.com", "mailto:"),
+        ("GIT+HTTPS://example.com/x", "git+https:"),
+        ("WEB+APP://Open/Thing", "web+app:"),
+    ] {
+        let source = format!(
+            "module.exports = {{ default: 'com.apple.Safari', rules: [{{ \
+             match: url => url.protocol === {}, open: 'com.google.Chrome' }}] }};",
+            serde_json::to_string(scheme).unwrap()
+        );
+        let engine = build_engine(&source);
+        assert_eq!(resolve(&engine, url).0, "com.google.Chrome", "URL {url:?}");
+    }
 }
 
 #[test]
@@ -1703,6 +1859,13 @@ fn matcher_regex_default_is_case_sensitive() {
     assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
     // Same domain, mixed case — must NOT match without /i.
     assert_eq!(resolve(&e, "https://GitHub.com/").0, "com.apple.Safari");
+    let e = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+            { match: /^https:/, open: "com.google.Chrome" }
+        ] };"#,
+    );
+    assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
+    assert_eq!(resolve(&e, "HTTPS://github.com/").0, "com.apple.Safari");
 }
 
 #[test]
@@ -1716,6 +1879,12 @@ fn matcher_regex_i_flag_makes_it_case_insensitive() {
     assert_eq!(resolve(&e, "https://github.com/").0, "com.google.Chrome");
     assert_eq!(resolve(&e, "https://GitHub.com/").0, "com.google.Chrome");
     assert_eq!(resolve(&e, "https://GITHUB.COM/").0, "com.google.Chrome");
+    let e = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+            { match: /^https:/i, open: "com.google.Chrome" }
+        ] };"#,
+    );
+    assert_eq!(resolve(&e, "HTTPS://github.com/").0, "com.google.Chrome");
 }
 
 #[test]

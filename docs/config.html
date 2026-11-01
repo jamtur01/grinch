@@ -159,6 +159,10 @@
   <p>Wildcard scheme and hostname matching ignores ASCII case; paths, queries,
     and fragments remain case-sensitive. Regexes match the URL as received and are
     case-sensitive unless you add the <code>i</code> flag.</p>
+  <p>A wildcard without a scheme accepts <code>http</code>, <code>https</code>,
+    <code>ftp</code>, <code>mailto</code>, <code>file</code>, <code>tel</code>,
+    <code>sms</code>, and <code>data</code>. Use a pattern such as
+    <code>"*://example.com/*"</code> to match other hierarchical schemes.</p>
 
   <h3 id="bare-strings"><a class="self" href="#bare-strings">Bare-string matchers</a></h3>
   <p>A bare string such as <code>"github.com"</code> matches the hostname and its

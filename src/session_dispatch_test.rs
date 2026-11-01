@@ -786,6 +786,19 @@ fn verify_ordinary_startup_delivery(mtm: MainThreadMarker) {
         assert_eq!(event["opener"]["bundleId"], "");
         assert_eq!(event["modifiers"]["shift"], false);
     }
+    std::fs::write(directory.join(".grinch.js"), "module.exports = {};").unwrap();
+    let failed = app_delegate::Delegate::new(mtm);
+    let _: () = unsafe { msg_send![&*failed, application: &*app, openURLs: &*urls] };
+    failed.reload_engine();
+    failed.finish_url_startup();
+    let mut messages = String::new();
+    for entry in std::fs::read_dir(directory.join("Library/Logs/Grinch")).unwrap() {
+        messages.push_str(&std::fs::read_to_string(entry.unwrap().path()).unwrap());
+    }
+    assert!(
+        messages
+            .contains("Cannot route URLs received during startup because the config did not load")
+    );
     unsafe {
         if let Some(home) = previous {
             std::env::set_var("HOME", home);
@@ -903,6 +916,10 @@ fn main() {
     }
     if std::env::args().any(|arg| arg == "--duplicate-probe") {
         run_duplicate_probe(mtm);
+        return;
+    }
+    if std::env::args().any(|arg| arg == "--check-duplicates") {
+        verify_simultaneous_duplicate_startup();
         return;
     }
     verify_real_reopen();

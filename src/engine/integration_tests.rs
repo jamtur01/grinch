@@ -2602,7 +2602,12 @@ fn check_profile_read_failures(tmp: &std::path::Path) {
     }
     let log = tmp.join("profile.log");
     let diagnostics = Rc::new(DiagnosticLog::at_path(log.clone()));
-    check_firefox_warning_does_not_mask_suppression(&diagnostics);
+    let engine = build_engine_with_diagnostics(
+        "module.exports = {default: 'org.mozilla.firefox:Work'};",
+        Rc::clone(&diagnostics),
+    );
+    assert!(resolve(&engine, "https://x/").0.is_empty());
+    assert!(diagnostics.profile_error().is_some());
     check_blocked_profile_routes(&diagnostics);
     let events = read_log_events(&log);
     for path in [&chrome, &firefox] {
@@ -2613,6 +2618,10 @@ fn check_profile_read_failures(tmp: &std::path::Path) {
                     .as_str()
                     .unwrap()
                     .contains("Permission denied")
+                && event["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Files & Folders")
         }));
     }
     for path in [&chrome, &firefox] {
@@ -2745,7 +2754,6 @@ fn check_blocked_profile_routes(diagnostics: &Rc<DiagnosticLog>) {
             "com.google.Chrome:Default",
             vec!["--profile-directory=Default"],
         ),
-        ("org.mozilla.firefox:Work", vec!["-P", "Work"]),
     ] {
         let source = format!(r#"module.exports = {{ default: "{target}" }};"#);
         let engine = build_engine_with_diagnostics(&source, Rc::clone(diagnostics));

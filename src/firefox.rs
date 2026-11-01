@@ -326,7 +326,7 @@ fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<S
                 bundle_id,
                 Some(&path),
                 &format!(
-                    "Cannot read {}: {error}; passing profile names through to Firefox. {}",
+                    "Cannot read {}: {error}. {}",
                     path.display(),
                     crate::engine::profile_access_advice(&error)
                 ),

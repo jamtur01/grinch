@@ -94,7 +94,13 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
     // FedRAMP / US-government tenant that uses the identical v3 format on a
     // different domain. Both dispatch to the same decoder.
     if host.as_ref() == "urldefense.com" || host.as_ref() == "urldefense.us" {
-        return unwrap_proofpoint_v3(url);
+        let authority = url.find("://")? + 3;
+        let path = url[authority..]
+            .find(['/', '?', '#'])
+            .map(|i| authority + i)?;
+        if url[path..].starts_with("/v3/__") {
+            return unwrap_proofpoint_v3(url);
+        }
     }
 
     let query_start = url.find(['?', '#'])?;
@@ -125,8 +131,13 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
         || host.as_ref() == "safelinks.protection.outlook.com";
     let is_teams_safelink = host.as_ref() == "statics.teams.cdn.office.net"
         && path.starts_with("/evergreen-assets/safelinks/");
-    let is_proofpoint_v2 =
-        host.as_ref() == "urldefense.proofpoint.com" && path.starts_with("/v2/url");
+    let is_proofpoint_v2 = [
+        "urldefense.proofpoint.com",
+        "urldefense.com",
+        "urldefense.us",
+    ]
+    .contains(&host.as_ref())
+        && path.starts_with("/v2/url");
 
     let param = if is_microsoft_safelinks || is_teams_safelink {
         "url"
@@ -137,7 +148,12 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
     };
 
     let encoded = find_query_param(query, param)?;
-    let decoded = percent_decode(encoded)?;
+    let decoded = percent_decode(encoded);
+    let decoded = match decoded {
+        Some(decoded) if looks_like_url(&decoded) => decoded,
+        _ if is_proofpoint_v2 => percent_decode(&encoded.replace('-', "%").replace('_', "/"))?,
+        _ => return None,
+    };
     if decoded.is_empty() || !looks_like_url(&decoded) {
         return None;
     }

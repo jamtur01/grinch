@@ -240,6 +240,17 @@ fn safelink_unwraps_proofpoint_v2() {
         unwrap_safelink(wrapped).as_deref(),
         Some("https://example.com/a")
     );
+    for host in [
+        "urldefense.proofpoint.com",
+        "urldefense.com",
+        "urldefense.us",
+    ] {
+        let wrapped = format!("https://{host}/v2/url?u=https-3A__example.com_hello-2Dworld&d=foo");
+        assert_eq!(
+            unwrap_safelink(&wrapped).as_deref(),
+            Some("https://example.com/hello-world")
+        );
+    }
 }
 
 #[test]

@@ -70,7 +70,12 @@ pub(crate) struct DiagnosticLog {
 
 impl Default for DiagnosticLog {
     fn default() -> Self {
-        Self::new(log_file_path())
+        let log = Self::new(log_file_path());
+        log.writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .new_launch = true;
+        log
     }
 }
 
@@ -256,6 +261,7 @@ pub(crate) struct LogWriter {
     path: std::path::PathBuf,
     format: LogFormat,
     pending_format_switch: bool,
+    new_launch: bool,
     pub(crate) file: Option<std::fs::File>,
     failed: bool,
     rotate_bytes: Option<u64>,
@@ -275,6 +281,7 @@ impl LogWriter {
             path,
             format: LogFormat::Json,
             pending_format_switch: false,
+            new_launch: false,
             file: None,
             failed: false,
             rotate_bytes,
@@ -348,7 +355,7 @@ impl LogWriter {
         if self.format == format {
             return;
         }
-        if self.file.is_none() && !self.path.exists() {
+        if self.file.is_none() && (self.new_launch || !self.path.exists()) {
             self.format = format;
             return;
         }
@@ -390,7 +397,9 @@ impl LogWriter {
         if self.file.is_some() {
             return Ok(());
         }
-        let (file, size) = if self.pending_format_switch {
+        let (file, size) = if self.new_launch {
+            self.open_launch_file()?
+        } else if self.pending_format_switch {
             self.open_next_format_file()?
         } else {
             Self::open(&self.path)?
@@ -399,6 +408,35 @@ impl LogWriter {
         self.bytes_written = size;
         self.opened_at_unix = now_unix();
         Ok(())
+    }
+
+    fn open_launch_file(&mut self) -> std::io::Result<(std::fs::File, u64)> {
+        if let Some(parent) = self.base_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        for number in 0_u64.. {
+            let path = if number == 0 {
+                self.base_path.clone()
+            } else {
+                self.base_path
+                    .with_extension(format!("launch-{number}.log"))
+            };
+            match std::fs::OpenOptions::new()
+                .create_new(true)
+                .append(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    self.base_path = path.clone();
+                    self.path = path;
+                    self.new_launch = false;
+                    return Ok((file, 0));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!()
     }
 
     /// True when writing `extra_bytes` more would push the file past
@@ -713,6 +751,25 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn simultaneous_launches_keep_formats_in_separate_files() {
+        let first = crate::engine::integration_tests::isolated_diagnostics();
+        let path = first.writer.lock().unwrap().path.clone();
+        first.writer.lock().unwrap().new_launch = true;
+        let second = super::DiagnosticLog::new(path);
+        second.writer.lock().unwrap().new_launch = true;
+        first.configure_format(super::LogFormat::Text);
+        first.record_config_error(None, "text event");
+        second.record_config_error(None, "json event");
+        let text_path = first.ensure_file().unwrap();
+        let json_path = second.ensure_file().unwrap();
+        assert_ne!(text_path, json_path);
+        let text = std::fs::read_to_string(text_path).unwrap();
+        let json = std::fs::read_to_string(json_path).unwrap();
+        assert!(text.contains("text event") && !text.contains("json event"));
+        assert!(json.contains("json event") && !json.contains("text event"));
+        assert!(serde_json::from_str::<serde_json::Value>(json.trim()).is_ok());
+    }
     use crate::engine::logging::rename_rotated_log;
 
     #[test]

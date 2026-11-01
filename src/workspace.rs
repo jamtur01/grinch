@@ -357,13 +357,17 @@ fn running_app_for_pid(pid: i32) -> Option<Retained<NSRunningApplication>> {
 /// Returns the number of duplicates that were asked to terminate (0 in the
 /// normal case) so the caller can log a one-liner when something was found.
 pub fn terminate_duplicate_instances() -> usize {
-    let Some(bundle_id) = NSBundle::mainBundle().bundleIdentifier() else {
-        return 0;
-    };
     let lock_dir = std::path::PathBuf::from(format!("/tmp/grinch-startup-{}", unsafe {
         libc::geteuid()
     }));
-    let (_lock, waited) = match lock_duplicate_cleanup(&lock_dir, std::time::Duration::from_secs(3))
+    terminate_duplicate_instances_at(&lock_dir)
+}
+
+pub(crate) fn terminate_duplicate_instances_at(lock_dir: &std::path::Path) -> usize {
+    let Some(bundle_id) = NSBundle::mainBundle().bundleIdentifier() else {
+        return 0;
+    };
+    let (_lock, waited) = match lock_duplicate_cleanup(lock_dir, std::time::Duration::from_secs(3))
     {
         Ok(lock) => lock,
         Err(error) => {

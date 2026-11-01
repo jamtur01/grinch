@@ -118,7 +118,7 @@ define_class!(
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            workspace::terminate_duplicate_instances();
+            workspace::terminate_duplicate_instances_at(&directory.join("startup-lock"));
             std::fs::write(directory.join(format!("passed-{pid}")), "passed").unwrap();
         }
     }
@@ -696,6 +696,7 @@ impl Drop for ReopenProbe {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        unregister_probe(&self.directory.join("ReopenProbe.app"));
         let _ = std::fs::remove_dir_all(&self.directory);
     }
 }
@@ -823,7 +824,23 @@ impl Drop for DuplicateProbes {
         for child in &mut self.children {
             let _ = child.wait();
         }
+        unregister_probe(&self.directory.join("Probe.app"));
         let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn unregister_probe(bundle: &Path) {
+    let result = Command::new(
+        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+    )
+    .arg("-u")
+    .arg(bundle)
+    .status();
+    if !result.is_ok_and(|status| status.success()) {
+        eprintln!(
+            "grinch: could not unregister test bundle {}",
+            bundle.display()
+        );
     }
 }
 

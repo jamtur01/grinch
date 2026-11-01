@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration · Grinch</title>
+<meta name="description" content="Rules, match types, browser targets, URL rewrites, the context object, and options.">
+<meta name="theme-color" content="#0d1117">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Configuration · Grinch">
+<meta property="og:description" content="Rules, match types, browser targets, URL rewrites, the context object, and options.">
+<meta property="og:url" content="https://jamtur01.github.io/grinch/config.html">
+<meta property="og:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Grinch: choose where links open on your Mac">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+
+<link rel="icon" href="grinch-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wide">
+    <a class="brand" href="index.html">
+      <img src="grinch-icon.svg" width="28" height="28" alt="">Grinch
+    </a>
+    <nav class="site-nav" aria-label="Documentation">
+      <ul>
+      <li><a href="start.html">Get started</a></li>
+      <li><a href="config.html" aria-current="page">Configuration</a></li>
+      <li><a href="troubleshooting.html">Troubleshooting</a></li>
+      <li><a href="integrations.html">Integrations</a></li>
+      <li><a href="finicky.html">From Finicky</a></li>
+      <li><a href="performance.html">Performance</a></li>
+      </ul>
+    </nav>
+    <a class="cta primary small header-download" href="https://github.com/jamtur01/grinch/releases/latest">Download</a>
+  </div>
+</header>
+
+<main id="main" class="container">
+
+<div class="page-head">
+  <h1>Configuration</h1>
+  <p class="lead">Your config is a JavaScript file that tells Grinch where each
+    link should open. This page covers every part of it.</p>
+  <nav class="toc" aria-labelledby="toc-title">
+    <h2 id="toc-title">On this page</h2>
+    <ul>
+      <li><a href="#how-routing-works">How routing works</a></li>
+      <li><a href="#rules">Rules</a></li>
+      <li><a href="#match-types">Match types</a></li>
+      <li><a href="#browser-targets">Browser targets</a></li>
+      <li><a href="#rewrites">URL rewrites</a></li>
+      <li><a href="#ctx">The <code>ctx</code> object</a></li>
+      <li><a href="#globals">Globals</a></li>
+      <li><a href="#options">Options</a></li>
+    </ul>
+  </nav>
+</div>
+
+<div class="page-body">
+
+<section id="how-routing-works" aria-labelledby="how-routing-works-title">
+  <h2 id="how-routing-works-title"><a class="self" href="#how-routing-works">How routing works</a></h2>
+  <p>Grinch receives a URL, applies every matching <a href="#rewrites">rewrite</a>
+    in order, and then checks <a href="#rules">rules</a> from top to bottom. The
+    first matching rule selects a <a href="#browser-targets">browser or app</a>.
+    If none matches, <code>default</code> selects the destination. A rule or the
+    default can also suppress a URL. A dynamic <code>open</code> function that
+    returns <code>null</code> or <code>undefined</code> falls through to the next
+    rule.</p>
+  <p>A config exports one object:</p>
+  <figure class="file">
+    <figcaption>~/.config/grinch.js</figcaption>
+<pre><code>module.exports = {
+  default: "com.apple.Safari", <span class="c">// required; use null to open nothing</span>
+  browsers: {},               <span class="c">// optional named browser targets</span>
+  rewrite: [],                <span class="c">// optional URL transformations</span>
+  rules: [],                  <span class="c">// optional routing rules</span>
+  options: {},                <span class="c">// optional app and logging settings</span>
+};</code></pre>
+  </figure>
+  <p><a href="https://github.com/jamtur01/grinch/blob/main/examples/grinch.example.js"><code>examples/grinch.example.js</code></a>
+    is a feature reference with more examples. Grinch looks for the config in
+    several places; see <a href="troubleshooting.html#which-config">which config
+    Grinch uses</a>.</p>
+  <p class="note"><strong>Only use configs you trust.</strong> Grinch evaluates the
+    file as JavaScript.</p>
+</section>
+
+<section id="rules" aria-labelledby="rules-title">
+  <h2 id="rules-title"><a class="self" href="#rules">Rules</a></h2>
+  <p><code>rules</code> is an array. Each rule has a <code>match</code> condition
+    and an <code>open</code> destination. Grinch checks them in order and stops at
+    the first match:</p>
+<pre><code>rules: [
+  { match: "github.com", open: "com.google.Chrome", name: "work" },
+  { match: "example.com", open: null }, <span class="c">// suppress this URL</span>
+],</code></pre>
+  <p>A rule can also specify <code>url</code> to rewrite a matching URL before
+    opening it; see <a href="#rewrites">URL rewrites</a> for the supported return
+    values. Unlike a literal <code>open: null</code>, a function that returns
+    <code>null</code> or <code>undefined</code> does not suppress the URL: Grinch
+    continues to the next rule.</p>
+  <p>The optional <code>name</code> labels a rule without changing routing. It
+    appears in <code>Grinch --list-rules</code> and in the
+    <code>matchedRule.name</code> field of diagnostic-log <code>resolve</code>
+    events, which helps when a config has several function matchers: their
+    automatic label is the first line of the function's source.</p>
+</section>
+
+<section id="match-types" aria-labelledby="match-types-title">
+  <h2 id="match-types-title"><a class="self" href="#match-types">Match types</a></h2>
+  <p>A <code>match</code> field accepts one matcher or an array of them. Any
+    matcher in the array can trigger the rule.</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Syntax</th><th scope="col">Matches</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><code>"github.com"</code></th><td>The hostname, exactly or as a subdomain. Bare strings without <code>*</code> or <code>/</code> are hostname patterns. Differs from Finicky; see <a href="#bare-strings">below</a>.</td></tr>
+      <tr><th scope="row"><code>"*.slack.com/*"</code></th><td>Wildcard against the full URL. Strings containing <code>*</code> or <code>/</code> compile to an anchored regex, as in Finicky.</td></tr>
+      <tr><th scope="row"><code>"zoom.us/j/*"</code></th><td>Wildcard with an implicit <code>https?://</code> prefix.</td></tr>
+      <tr><th scope="row"><code>"slack:*"</code></th><td>URLs with the <code>slack</code> scheme.</td></tr>
+      <tr><th scope="row"><code>domain("a.com", "b.com")</code></th><td>Any listed hostname or its subdomains. Compiled to a single byte-level check.</td></tr>
+      <tr><th scope="row"><code>finicky.matchHostnames("github.com")</code></th><td>The exact hostname only, not subdomains. Finicky-compatible. Use it when you need exact-hostname matching.</td></tr>
+      <tr><th scope="row"><code>from("com.tinyspeck.slackmacgap")</code></th><td>URLs opened by this app. Matches the caller's bundle ID, <code>ctx.opener.bundleId</code>.</td></tr>
+      <tr><th scope="row"><code>running("us.zoom.xos")</code></th><td>Any URL while this app is running. Computed once per URL, only when needed.</td></tr>
+      <tr><th scope="row"><code>/regex/</code></th><td>A regex against the full URL. Supports the <code>i</code> and <code>m</code> flags.</td></tr>
+      <tr><th scope="row"><code>(url, ctx) =&gt; bool</code></th><td>Your own condition. See <a href="#ctx">the <code>ctx</code> object</a>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3 id="bare-strings"><a class="self" href="#bare-strings">Bare-string matchers</a></h3>
+  <p>A bare string such as <code>"github.com"</code> matches the hostname and its
+    subdomains: <code>https://github.com/</code>, <code>https://api.github.com/</code>,
+    and <code>https://gist.github.com/</code> alike.</p>
+  <p>Finicky v4 matches the same syntax with <code>===</code> against the full
+    URL, so <code>match: "github.com"</code> never fires there. For an exact
+    hostname in Grinch, use <code>finicky.matchHostnames("github.com")</code> or a
+    function such as <code>(url) =&gt; url.hostname === "github.com"</code>. A
+    regular expression is tested against the full URL, not just the hostname.
+    To match several hosts and their subdomains at once, use
+    <code>domain("github.com", "gitlab.com")</code>.</p>
+  <p>Helpers such as <code>domain()</code>, <code>from()</code>,
+    <code>running()</code>, and <code>strip()</code> return data, not functions.
+    Grinch recognises them when it loads the config and compiles them to native
+    matchers and rewriters. Only your own <code>(url, ctx) =&gt; …</code>
+    functions run JavaScript for each link.</p>
+</section>
+
+<section id="browser-targets" aria-labelledby="browser-targets-title">
+  <h2 id="browser-targets-title"><a class="self" href="#browser-targets">Browser targets</a></h2>
+  <p>A browser target tells Grinch where to open a link. Most of the time, use
+    the app's name or bundle ID in <code>default</code> or a rule's
+    <code>open</code>:</p>
+<pre><code>{ match: "github.com", open: "Google Chrome" },
+{ match: "zoom.us", open: "us.zoom.xos" },</code></pre>
+  <p>The first rule opens GitHub in Chrome; the second sends Zoom links to the
+    Zoom app. <code>Grinch --list-browsers</code> lists the bundle IDs of apps
+    registered to open web links.</p>
+
+  <h3 id="profiles"><a class="self" href="#profiles">Choose a profile</a></h3>
+  <p>To use separate work and personal profiles, name the profile:</p>
+<pre><code>{ match: "github.com", open: { name: "Google Chrome", profile: "Work" } },</code></pre>
+  <p>Grinch supports profiles in Chromium-based browsers, including Chrome,
+    Brave, Edge, Arc, Vivaldi, and Chromium, and in Firefox-based browsers,
+    including Firefox, LibreWolf, Waterfox, and Zen. <code>"Google Chrome:Work"</code>
+    is a shorter form for a literal target. For Chrome, <code>"Default"</code> and
+    <code>"Profile N"</code> also identify a profile by its directory name.
+    Dynamic functions returning strings don't use the <code>Name:Profile</code>
+    shorthand.</p>
+  <p>If a Chrome profile can't be found, Grinch doesn't open the link rather than
+    risk the wrong profile. Check the profile name and
+    <strong>Open Diagnostic Log</strong>, then choose <strong>Reload Config</strong>
+    after fixing the name or the browser's profile data. To find the directory
+    name, open <code>chrome://version</code> in that profile and look at
+    <strong>Profile Path</strong>. Firefox profile names are passed to Firefox
+    even if Grinch can't verify them; Grinch doesn't resolve Firefox's newer
+    profile-group names.</p>
+  <details>
+    <summary>How Grinch resolves browser profiles</summary>
+    <p>Chrome display names are looked up in the browser's <code>Local State</code>
+      file. <code>Default</code> and <code>Profile N</code> (ASCII digits) are
+      explicit directory names and need no profile-file access. Other values must
+      match a display name or directory key in <code>Local State</code>. An
+      unreadable file or unknown name records a <code>profile_error</code> and
+      suppresses the launch, including for dynamic targets; Grinch does not try a
+      later rule or the default. Reloading the config clears cached profile data
+      and read failures. Check file permissions if access is denied; Full Disk
+      Access is a broader workaround, not a requirement for every profile
+      problem.</p>
+    <p>Firefox profiles use names from <code>profiles.ini</code>. Grinch logs
+      unreadable files and unknown names when an inventory is available, but
+      still passes the name to Firefox. Other browsers ignore
+      <code>profile</code> with a warning. The full supported browser-family
+      lists are in
+      <a href="https://github.com/jamtur01/grinch/blob/main/src/chromium.rs"><code>src/chromium.rs</code></a> and
+      <a href="https://github.com/jamtur01/grinch/blob/main/src/firefox.rs"><code>src/firefox.rs</code></a>.</p>
+  </details>
+
+  <h3 id="launch-options"><a class="self" href="#launch-options">Change how a link opens</a></h3>
+  <p>Use an object when a link needs a profile or another launch option:</p>
+<pre><code>{ match: "private.example.org", open: { name: "Google Chrome", incognito: true } },
+{ match: "news.example.com", open: { name: "org.mozilla.firefox", openInNewWindow: true } },</code></pre>
+  <p><code>incognito</code> and <code>openInNewWindow</code> work with supported
+    Chromium and Firefox browsers; Safari doesn't support them. Set
+    <code>openInBackground: true</code> to open a link without activating the
+    target app. Pass browser command-line flags with
+    <code>args: ["--incognito"]</code>.</p>
+  <p>To open a particular app bundle, use its path, for example
+    <code>"/Applications/Foo.app"</code> or
+    <code>{ name: "~/Apps/Foo.app", appType: "path" }</code>. Use
+    <code>{ name: "com.example.Browser", appType: "bundleId" }</code> to treat a
+    name as a bundle ID without an app-name lookup. A target of <code>null</code>
+    or <code>{ appType: "none" }</code> opens nothing. A function can choose a
+    target dynamically; a rule's function returning <code>null</code> or
+    <code>undefined</code> tries the next rule.</p>
+
+  <h3 id="named-targets"><a class="self" href="#named-targets">Reuse a target</a></h3>
+  <p>Name targets that several rules share:</p>
+<pre><code>const browsers = {
+  personal: "com.apple.Safari",
+  work: { name: "com.google.Chrome", profile: "Default" },
+};
+
+module.exports = {
+  default: "personal",
+  browsers,
+  rules: [{ match: "github.com", open: "work" }],
+};</code></pre>
+  <p>The exported <code>browsers</code> map makes <code>"personal"</code> and
+    <code>"work"</code> available by name. The JavaScript reference
+    <code>browsers.work</code> works too.</p>
+</section>
+
+<section id="rewrites" aria-labelledby="rewrites-title">
+  <h2 id="rewrites-title"><a class="self" href="#rewrites">URL rewrites</a></h2>
+  <p><code>rewrite</code> is an array of transformations applied before routing.
+    Every matching rewriter applies, in order. This removes common tracking
+    parameters before the rules see the URL:</p>
+<pre><code>rewrite: [strip("utm_*", "fbclid")],</code></pre>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Form</th><th scope="col">Effect</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><code>strip("utm_*", "fbclid")</code></th><td>Remove these query parameters. A trailing <code>*</code> matches a prefix.</td></tr>
+      <tr><th scope="row"><code>safelinks()</code></th><td>Unwrap corporate SafeLinks and URL Defense wrappers.</td></tr>
+      <tr><th scope="row"><code>teams_launcher()</code></th><td>Turn Microsoft Teams launcher URLs into <code>msteams:</code> links.</td></tr>
+      <tr><th scope="row"><code>{ match: …, url: "https://…" }</code></th><td>Replace the URL when <code>match</code> hits.</td></tr>
+      <tr><th scope="row"><code>{ match: …, url: (url, ctx) =&gt; … }</code></th><td>Transform the URL with JavaScript.</td></tr>
+      <tr><th scope="row"><code>{ match: …, url: () =&gt; null }</code></th><td>Drop the URL and open nothing.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3 id="safelinks"><a class="self" href="#safelinks">Unwrap corporate links</a></h3>
+  <p><code>safelinks()</code> is a top-level entry with no <code>match</code>. It
+    recognises the most common corporate URL wrappers and extracts the real
+    destination:</p>
+  <ul>
+    <li><strong>Microsoft 365 Defender SafeLinks</strong>:
+      <code>*.safelinks.protection.outlook.com/?url=…</code></li>
+    <li><strong>Microsoft Teams external-link interstitial</strong>:
+      <code>statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…</code></li>
+    <li><strong>Proofpoint URL Defense v2</strong>:
+      <code>urldefense.proofpoint.com/v2/url?u=…</code></li>
+    <li><strong>Proofpoint URL Defense v3</strong>:
+      <code>urldefense.com/v3/__&lt;encoded&gt;__;&lt;marker&gt;!!…</code>, plus the
+      FedRAMP <code>urldefense.us</code> tenant</li>
+  </ul>
+  <p>Other hosts pass through unchanged, so it's safe at the top of the rewrite
+    chain. <code>[safelinks(), strip("utm_*")]</code> unwraps a Defender-tracked
+    Outlook link, then strips <code>utm_*</code> from the inner URL. Links wrapped
+    twice, such as Defender then Proofpoint, are unwrapped up to two levels
+    deep.</p>
+  <p><code>teams_launcher()</code> handles the Teams launcher page that calendar
+    invites and shared links often use:</p>
+<pre><code>https://teams.microsoft.com/dl/launcher/launcher.html?url=%2F_%23%2Fl%2Fmeetup-join%2F19%3A…</code></pre>
+  <p>Its <code>url</code> parameter decodes to a relative path
+    (<code>/_#/l/meetup-join/19:…</code>), so <code>safelinks()</code> can't use
+    it. <code>teams_launcher()</code> removes the web-app prefix and rebuilds the
+    link as <code>msteams:/l/meetup-join/19:…</code>, which opens in the Teams
+    app. Other hosts and paths pass through. Use it alongside
+    <code>safelinks()</code>:</p>
+<pre><code>rewrite: [ safelinks(), teams_launcher(), strip("utm_*") ]</code></pre>
+
+  <h3 id="rewrite-functions"><a class="self" href="#rewrite-functions">Rewrite functions</a></h3>
+  <p>A <code>url</code> rewrite function receives a URL instance as its first
+    argument. If it declares a second argument, it also receives
+    <a href="#ctx">context</a>. It can return:</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Return</th><th scope="col">Effect</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><code>string</code></th><td>Use as the new URL.</td></tr>
+      <tr><th scope="row"><code>URL</code> instance, including the mutated input</th><td>Use its <code>.href</code>.</td></tr>
+      <tr><th scope="row"><code>{protocol, host, pathname, search, hash, …}</code></th><td>Join the fields into a URL.</td></tr>
+      <tr><th scope="row"><code>null</code></th><td>Drop the URL and open nothing.</td></tr>
+      <tr><th scope="row"><code>undefined</code> or <code>return;</code></th><td>Leave the URL unchanged, as in Finicky v4.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p><code>new URL(href)</code> works in your code. The URL object is mutable:
+    <code>url.protocol = "https:"</code>, <code>url.hostname = "…"</code>, and
+    <code>url.searchParams.set("k", "v")</code> are all reflected in later reads
+    of <code>.href</code>.</p>
+  <p>Shortened links such as <code>bit.ly</code> can't be expanded inside a
+    rewrite; see <a href="integrations.html#url-shorteners">URL shorteners</a>.</p>
+</section>
+
+<section id="ctx" aria-labelledby="ctx-title">
+  <h2 id="ctx-title"><a class="self" href="#ctx">The <code>ctx</code> object</a></h2>
+  <p>Your matcher, rewrite, and browser functions receive the current URL as
+    their first argument. To receive <code>ctx</code> as the second argument,
+    declare two parameters, such as <code>(url, ctx) =&gt; …</code>. A default
+    parameter such as <code>(url, ctx = {}) =&gt; …</code> does not request
+    context, because JavaScript reports that function's length as one.</p>
+  <p>This rule opens links from Mail in Safari:</p>
+<pre><code>{ match: (url, ctx) =&gt; ctx.opener?.bundleId === "com.apple.mail",
+  open: "com.apple.Safari" },</code></pre>
+  <p><code>ctx</code> contains:</p>
+<pre><code>{
+  url: "https://...",            <span class="c">// the URL passed to resolve (the "originalUrl")</span>
+  originalUrl: "https://...",    <span class="c">// alias of ctx.url</span>
+  opener: {                      <span class="c">// or null; see below</span>
+    bundleId: "com.microsoft.Outlook",
+    name: "Microsoft Outlook",
+    path: "/Applications/Microsoft Outlook.app/Contents/MacOS/Microsoft Outlook",
+    windowTitle: "...",          <span class="c">// lazy: requires Accessibility permission</span>
+  },
+  modifiers: {
+    shift: false, option: false, command: false, control: false,
+  },
+}</code></pre>
+  <p><code>ctx.url</code> is the URL Grinch received; it doesn't reflect
+    rewrites. The first argument, a URL instance, is the current URL and is
+    rebuilt for each function call.</p>
+  <p>Grinch identifies <code>ctx.opener</code> from the Apple Event's sender
+    when it can. Otherwise it falls back to the frontmost app, which may not be
+    the original sender; if that also fails, <code>ctx.opener</code> is
+    <code>null</code>. Guard with <code>if (ctx.opener) { … }</code> or optional
+    chaining (<code>ctx.opener?.bundleId</code>) in functions that read it. This
+    matches Finicky v4's <code>options.opener</code>.</p>
+  <p><code>opener.windowTitle</code> is read only when a rule uses it. The first
+    read fetches the focused window title through the Accessibility API, which
+    takes about 5 ms. Configs that never read <code>windowTitle</code> pay
+    nothing. Grinch asks for Accessibility permission when it launches; until
+    you grant it in <strong>System Settings → Privacy &amp; Security →
+    Accessibility</strong>, <code>windowTitle</code> is <code>""</code>.</p>
+</section>
+
+<section id="globals" aria-labelledby="globals-title">
+  <h2 id="globals-title"><a class="self" href="#globals">Globals</a></h2>
+  <p>Grinch installs the helpers <code>domain()</code>, <code>from()</code>,
+    <code>running()</code>, and <code>strip()</code>, a <code>URL</code> polyfill,
+    and the Finicky-compatible <code>finicky.*</code> namespace
+    (<a href="finicky.html#finicky-namespace">full list</a>). For most decisions
+    you can use either form:</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Want</th><th scope="col">Grinch</th><th scope="col">Finicky style</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Hostname or subdomain</th><td><code>domain("github.com", …)</code> or <code>"github.com"</code></td><td>Not available; use a bare string</td></tr>
+      <tr><th scope="row">Exact hostname only</th><td><code>(url) =&gt; url.hostname === "github.com"</code></td><td><code>finicky.matchHostnames("github.com")</code></td></tr>
+      <tr><th scope="row">Opener bundle ID</th><td><code>from("com.microsoft.Outlook")</code></td><td><code>(url, ctx) =&gt; ctx.opener?.bundleId === "…"</code></td></tr>
+      <tr><th scope="row">App is running</th><td><code>running("us.zoom.xos")</code></td><td><code>finicky.isAppRunning("Zoom")</code></td></tr>
+      <tr><th scope="row">Modifier keys</th><td><code>(url, ctx) =&gt; ctx.modifiers.shift</code></td><td><code>finicky.getModifierKeys()</code></td></tr>
+      <tr><th scope="row">Opener details</th><td><code>ctx.opener.{bundleId, name, path, windowTitle}</code></td><td>The same <code>ctx.opener</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p><code>console.log</code>, <code>warn</code>, <code>error</code>,
+    <code>info</code>, and <code>debug</code> write to stderr with a
+    <code>grinch [level]:</code> prefix. Objects are printed as JSON. Use them
+    to trace why a rule did or didn't fire.</p>
+</section>
+
+<section id="options" aria-labelledby="options-title">
+  <h2 id="options-title"><a class="self" href="#options">Options</a></h2>
+  <p>The <code>options</code> block accepts Finicky v4's keys plus Grinch's log
+    settings:</p>
+  <dl class="options">
+    <dt><code>hideIcon: true</code></dt>
+    <dd>Don't show the menu-bar icon. Restart Grinch to apply; reloads don't
+      change it. Automatic update checks still run. Reopen the running app from
+      Spotlight or Finder for a window with config, log, and update actions.</dd>
+    <dt><code>checkForUpdates: false</code></dt>
+    <dd>Turn off the daily update check (<code>true</code> turns it on). While
+      the key is set, it overrides the <strong>Check for Updates
+      Automatically</strong> menu item, which is greyed out. Without the key,
+      the menu item decides. Grinch saves the value as its own preference, so
+      after you remove the key the menu item starts from the last value the
+      config set.</dd>
+    <dt><code>logRequests: true</code></dt>
+    <dd>Add a <code>resolve</code> event for every routed URL to the
+      <a href="troubleshooting.html#diagnostic-log">diagnostic log</a>.</dd>
+    <dt><code>logRotateBytes: &lt;n&gt;</code>, <code>logRotateDays: &lt;n&gt;</code></dt>
+    <dd>Cap the diagnostic log's growth. Rotation renames the current file to
+      <code>&lt;original-name&gt;.log.&lt;iso-timestamp&gt;</code> and starts an
+      empty one; same-second collisions add <code>.1</code>, <code>.2</code>,
+      and so on. Combine both and whichever fires first wins. By default the
+      file grows until you delete it.</dd>
+    <dt><code>logFormat: "text"</code></dt>
+    <dd>Write readable diagnostic events. The default, <code>"json"</code>,
+      writes one JSON object per line. An omitted, <code>null</code>, or
+      <code>undefined</code> value selects JSON. An invalid value keeps the
+      current format, records a config error, and prints a warning; routing
+      continues, and <code>Grinch --validate</code> still exits 0.</dd>
+  </dl>
+  <p>The Finicky options <code>urlShorteners</code> and <code>keepRunning</code>
+    are accepted but have no effect: shortened links need
+    <a href="integrations.html#url-shorteners">expanding outside Grinch</a>, and
+    Grinch always stays running. Unknown keys log a one-line warning.</p>
+</section>
+
+<nav class="next-page" aria-label="Previous and next pages">
+  <a href="start.html">← Get started</a>
+  <a class="later" href="troubleshooting.html">Next: Troubleshooting →</a>
+</nav>
+
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wide">
+    <div>
+      <p>Grinch is MIT licensed and inspired by
+        <a href="https://github.com/johnste/finicky">Finicky</a> and
+        <a href="https://github.com/expelledboy/finch">Finch</a>.</p>
+      <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest release</a> is supported.</p>
+    </div>
+    <ul>
+      <li><a href="https://github.com/jamtur01/grinch">Source</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/releases">Releases</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/issues">Issues</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">Contributing</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">Security policy</a></li>
+    </ul>
+  </div>
+</footer>
+
+</body>
+</html>

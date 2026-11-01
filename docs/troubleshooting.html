@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting · Grinch</title>
+<meta name="description" content="Find out why a link opened where it did: --test, --list-rules, the diagnostic log, and the menu bar.">
+<meta name="theme-color" content="#0d1117">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Troubleshooting · Grinch">
+<meta property="og:description" content="Find out why a link opened where it did: --test, --list-rules, the diagnostic log, and the menu bar.">
+<meta property="og:url" content="https://jamtur01.github.io/grinch/troubleshooting.html">
+<meta property="og:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Grinch: choose where links open on your Mac">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+
+<link rel="icon" href="grinch-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wide">
+    <a class="brand" href="index.html">
+      <img src="grinch-icon.svg" width="28" height="28" alt="">Grinch
+    </a>
+    <nav class="site-nav" aria-label="Documentation">
+      <ul>
+      <li><a href="start.html">Get started</a></li>
+      <li><a href="config.html">Configuration</a></li>
+      <li><a href="troubleshooting.html" aria-current="page">Troubleshooting</a></li>
+      <li><a href="integrations.html">Integrations</a></li>
+      <li><a href="finicky.html">From Finicky</a></li>
+      <li><a href="performance.html">Performance</a></li>
+      </ul>
+    </nav>
+    <a class="cta primary small header-download" href="https://github.com/jamtur01/grinch/releases/latest">Download</a>
+  </div>
+</header>
+
+<main id="main" class="container">
+
+<div class="page-head">
+  <h1>Troubleshooting</h1>
+  <p class="lead">When a link opens in the wrong place, Grinch can tell you which
+    rule sent it there and why.</p>
+  <nav class="toc" aria-labelledby="toc-title">
+    <h2 id="toc-title">On this page</h2>
+    <ul>
+      <li><a href="#wrong-place">A link opened in the wrong place</a></li>
+      <li><a href="#which-config">Edits don't take effect</a></li>
+      <li><a href="#menu-bar">Menu bar</a></li>
+      <li><a href="#diagnostic-log">Diagnostic log</a></li>
+      <li><a href="#chrome-new-window">Chrome opens a new window</a></li>
+      <li><a href="#commands">Command-line reference</a></li>
+    </ul>
+  </nav>
+</div>
+
+<div class="page-body">
+
+<section id="wrong-place" aria-labelledby="wrong-place-title">
+  <h2 id="wrong-place-title"><a class="self" href="#wrong-place">A link opened in the wrong place</a></h2>
+  <p>Work through these in order. The commands assume the <code>Grinch</code>
+    alias from <a href="start.html#first-rule">Get started</a>.</p>
+
+  <h3 id="test-the-url"><a class="self" href="#test-the-url">1. Test the URL</a></h3>
+  <p><code>--test</code> runs a URL through your rules without opening a browser
+    and prints the rewritten URL, the target, and any launch arguments:</p>
+  <figure class="term">
+    <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">Grinch --test "https://github.com/jamtur01/grinch?utm_source=slack"</span>
+<span class="out">URL:     https://github.com/jamtur01/grinch?utm_source=slack
+Final:   https://github.com/jamtur01/grinch
+Browser: <b>com.google.Chrome</b>
+Args:    --profile-directory=Default</span></code></pre>
+  </figure>
+  <p>If the answer is wrong, the rules are the problem. If it is right but the
+    click still goes elsewhere, check that Grinch is the
+    <a href="start.html#default-browser">default browser</a> and that the rule
+    doesn't depend on the opener or modifier keys, which <code>--test</code>
+    can't reproduce.</p>
+
+  <h3 id="list-the-rules"><a class="self" href="#list-the-rules">2. List the loaded rules</a></h3>
+  <p><code>--list-rules</code> prints each rule's index, label, and target as
+    Grinch loaded them:</p>
+  <figure class="term">
+    <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">Grinch --list-rules</span>
+<span class="out">0: github.com → com.google.Chrome --profile-directory=Default
+1: zoom.us/j/* → us.zoom.xos</span></code></pre>
+  </figure>
+  <p>Rules run top to bottom and the first match wins, so a broad rule above a
+    narrow one hides it. Give rules a <a href="config.html#rules"><code>name</code></a>
+    to make the list easier to read.</p>
+
+  <h3 id="log-real-clicks"><a class="self" href="#log-real-clicks">3. Log real clicks</a></h3>
+  <p>Set <code>options: { logRequests: true }</code>, reload the config, click
+    the link again, and choose <strong>Open Diagnostic Log</strong>. Each
+    <code>resolve</code> event records the opener app, the modifier keys, the
+    final URL, the target, and the rule that matched. Match
+    <code>matchedRule.index</code> against <code>--list-rules</code>.
+    <a href="#diagnostic-log">Diagnostic log</a> explains every field.</p>
+  <p>For a full trace on stderr, run the binary with
+    <code>GRINCH_DEBUG=1</code>. <code>console.log</code> calls in your config
+    also print to stderr.</p>
+</section>
+
+<section id="which-config" aria-labelledby="which-config-title">
+  <h2 id="which-config-title"><a class="self" href="#which-config">Edits don't take effect</a></h2>
+  <p>Grinch may be reading a different file. Choose <strong>Open Config</strong>
+    from the menu to see which one it loaded. It uses the first file that exists
+    in this order:</p>
+  <ol>
+    <li><code>~/.grinch.js</code></li>
+    <li><code>~/.config/grinch.js</code></li>
+    <li><code>~/.config/grinch/grinch.js</code></li>
+    <li><code>/Library/Application Support/Grinch/grinch.js</code>, a system-wide fallback</li>
+  </ol>
+  <p>Edit the active file, then choose <strong>Reload Config</strong>. If the
+    reload fails, the menu shows the error and Grinch keeps the last config that
+    loaded. <code>--validate</code> reports the same errors and warnings in a
+    terminal and exits 1 when the config doesn't load:</p>
+  <figure class="term">
+    <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">Grinch --validate</span>
+<span class="out">grinch: config OK — /Users/alex/.config/grinch.js
+rules:  12</span>
+<span class="cmd">Grinch --validate</span>
+<span class="out">grinch: config invalid — SyntaxError: Unexpected identifier 'rules'. (line 4)
+path:   /Users/alex/.config/grinch.js</span>
+<span class="cmd">echo $?</span>
+<span class="out">1</span></code></pre>
+  </figure>
+</section>
+
+<section id="menu-bar" aria-labelledby="menu-bar-title">
+  <h2 id="menu-bar-title"><a class="self" href="#menu-bar">Menu bar</a></h2>
+  <p>Click the Grinch eyes in the menu bar:</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Item</th><th scope="col">Action</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><strong>Grinch X.Y.Z</strong></th><td>The running version, as a disabled label. Matches <code>Grinch --version</code>.</td></tr>
+      <tr><th scope="row"><strong>Open Config</strong> (⌘O)</th><td>Opens the active config in your default editor for <code>.js</code> files.</td></tr>
+      <tr><th scope="row"><strong>Reload Config</strong> (⌘R)</th><td>Re-evaluates the config without relaunching.</td></tr>
+      <tr><th scope="row"><strong>Open Diagnostic Log</strong></th><td>Opens the current diagnostic log.</td></tr>
+      <tr><th scope="row"><strong>Start at Login</strong></th><td>Starts Grinch when you log in. Off by default; the entry also appears in System Settings → General → Login Items.</td></tr>
+      <tr><th scope="row"><strong>Check for Updates…</strong></th><td>Checks for a newer release now and shows the result.</td></tr>
+      <tr><th scope="row"><strong>Check for Updates Automatically</strong></th><td>Turns the daily update check on or off. Greyed out while <code>options.checkForUpdates</code> is set.</td></tr>
+      <tr><th scope="row"><strong>Quit Grinch</strong> (⌘Q)</th><td>Quits.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>If a reload fails (a syntax error, an unreadable file, or a missing
+    <code>default</code>), the icon changes to <strong>⚠️</strong> and the top
+    of the menu shows <strong>Config error:</strong> with the first line of the
+    failure. Routing keeps using the previous config until the next successful
+    reload restores the icon. The full error is written to the diagnostic log as
+    a <code>config_error</code> event.</p>
+  <p>At launch, Grinch quits any other running copy of itself before adding its
+    menu-bar item, so only one instance runs.</p>
+  <p>With <a href="config.html#options"><code>hideIcon: true</code></a>, reopen
+    the running app from Spotlight or Finder to get <strong>Open Config</strong>,
+    <strong>Reload Config</strong>, <strong>Open Diagnostic Log</strong>, and
+    <strong>Check for Updates…</strong> in a window. The window also shows config
+    and profile errors. The update button is disabled when the updater is
+    unavailable or can't check right now. Closing the window leaves Grinch
+    running.</p>
+</section>
+
+<section id="diagnostic-log" aria-labelledby="diagnostic-log-title">
+  <h2 id="diagnostic-log-title"><a class="self" href="#diagnostic-log">Diagnostic log</a></h2>
+  <p>Grinch writes one diagnostic log per launch, at:</p>
+<pre><code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code></pre>
+  <p>It always records config-load errors, JavaScript exceptions at runtime,
+    profile errors, and launch failures. <code>logRequests</code> adds a
+    <code>resolve</code> event for each routed link. The file is created on the
+    first event or when you choose <strong>Open Diagnostic Log</strong>.</p>
+  <p class="note"><strong>Logs can contain complete URLs</strong>, including
+    authentication tokens and personal data. Redact them before sharing. Report
+    suspected vulnerabilities through the
+    <a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">security policy</a>.</p>
+
+  <h3 id="log-formats"><a class="self" href="#log-formats">Formats</a></h3>
+  <p>The default is JSON, one object per line. Set
+    <code>options: { logFormat: "text" }</code> for readable text. A
+    <code>resolve</code> event in text format:</p>
+<pre><code>2026-05-11T12:57:25-0400  resolve
+  args: ["--profile-directory=Profile 10"]
+  browser: com.google.Chrome
+  final: https://example.com/
+  matchedRule:
+    index: 11
+    name: shift-override
+  modifiers:
+    command: false
+    control: false
+    option: false
+    shift: true
+  opener:
+    bundleId: com.tinyspeck.slackmacgap
+    name: Slack
+    pid: 731
+  rewritten: false
+  strategy: launch_new_instance
+  url: https://example.com/</code></pre>
+  <p>The same event in JSON, which also carries a Unix timestamp:</p>
+<pre><code>{
+  "date": "2026-05-11T12:57:25-0400",
+  "event": "resolve",
+  "ts": 1778518645.634,
+  "url": "https://example.com/",
+  "final": "https://example.com/",
+  "rewritten": false,
+  "browser": "com.google.Chrome",
+  "args": ["--profile-directory=Profile 10"],
+  "strategy": "launch_new_instance",
+  "opener": {
+    "bundleId": "com.tinyspeck.slackmacgap",
+    "name": "Slack",
+    "pid": 731
+  },
+  "modifiers": {
+    "shift": true,
+    "option": false,
+    "command": false,
+    "control": false
+  },
+  "matchedRule": {"index": 11, "name": "shift-override"}
+}</code></pre>
+
+  <h3 id="log-fields"><a class="self" href="#log-fields">Fields</a></h3>
+  <dl class="options">
+    <dt><code>date</code>, <code>ts</code></dt>
+    <dd>Local date and time with UTC offset; <code>ts</code> is Unix seconds.</dd>
+    <dt><code>event</code></dt>
+    <dd><code>resolve</code>, <code>config_error</code>, <code>runtime_js_error</code>,
+      <code>profile_error</code>, or <code>launch_error</code>.</dd>
+    <dt><code>rewritten</code></dt>
+    <dd>True when <code>final</code> differs from <code>url</code>, meaning a
+      rewrite fired.</dd>
+    <dt><code>opener</code></dt>
+    <dd>The app that sent the URL, identified from the Apple Event's sender. An
+      empty <code>bundleId</code> means neither the sender nor the frontmost-app
+      fallback identified one.</dd>
+    <dt><code>matchedRule</code></dt>
+    <dd><code>{index, name}</code> of the rule that matched, or <code>null</code>
+      when the URL fell through to <code>default</code>. <code>name</code> is
+      the rule's own <code>name</code>, or an automatic label: the string
+      pattern, <code>domain:foo,bar</code>, or the first line of a function's
+      source.</dd>
+  </dl>
+  <p>A <code>resolve</code> event records the routing decision; it does not
+    confirm the browser opened. <code>launch_error</code> events record invalid
+    URLs, missing browsers, and failures macOS reports after a launch request,
+    with <code>url</code>, <code>browser</code>, <code>strategy</code>, and
+    <code>message</code>; native errors also include <code>errorDomain</code>
+    and <code>errorCode</code>.</p>
+  <p>Config and JavaScript errors include the config path, when one was found,
+    and the JavaScript message:</p>
+<pre><code>{"date":"2026-05-11T12:57:25-0400","event":"config_error","message":"SyntaxError (line 4)","path":"/Users/alex/.grinch.js","ts":1778518645.634}</code></pre>
+<pre><code>2026-05-11T12:57:25-0400  config_error
+  message: SyntaxError (line 4)
+  path: /Users/alex/.grinch.js</code></pre>
+
+  <details>
+    <summary>Profile errors</summary>
+    <p><code>profile_error</code> events include the browser bundle ID, the
+      profile-data file path when available, and a message saying what to fix.
+      They report unreadable profile files and profile names Grinch couldn't
+      resolve.</p>
+    <p>Only Chromium errors that stop a launch affect the menu bar; Firefox
+      warnings stay in the log. The first such error after a config load changes
+      the icon to <strong>⚠️</strong> and shows <strong>Profile error:</strong>
+      in the menu, including errors found when a dynamic target runs on a click.
+      Hover over it for the full message. A config error takes precedence in the
+      menu, and a successful reload clears the profile warning unless the error
+      happens again.</p>
+  </details>
+
+  <details>
+    <summary>Rotation, format changes, and early errors</summary>
+    <p>Rotation (<a href="config.html#options"><code>logRotateBytes</code>,
+      <code>logRotateDays</code></a>) and <code>logFormat</code> take effect
+      once the config's JavaScript has run and its options are parsed, even if
+      Grinch later fails to build the routing engine. Errors before the first
+      config's options are parsed are written as JSON.</p>
+    <p>Changing <code>logFormat</code> starts a new file and leaves earlier
+      events in the previous one. Files created by format changes use suffixes
+      such as <code>.1.log</code> and <code>.2.log</code> in place of
+      <code>.log</code>. <strong>Open Diagnostic Log</strong> always opens the
+      current file. Launch errors use the same file and rotation settings,
+      including after config reloads.</p>
+    <p><code>console</code> output stays on stderr with its
+      <code>grinch [level]:</code> prefix and is not copied into the log.</p>
+  </details>
+</section>
+
+<section id="chrome-new-window" aria-labelledby="chrome-new-window-title">
+  <h2 id="chrome-new-window-title"><a class="self" href="#chrome-new-window">Chrome opens a link in a new window</a></h2>
+  <p>When a rule selects a Chrome profile, Chrome can open a new window even if
+    that profile already has a normal window. This can happen if you most
+    recently used a Chrome web app, popup, or DevTools window for that
+    profile.</p>
+  <p>To reuse an existing window, activate an ordinary Chrome window for that
+    profile before opening the link. This is tracked in a
+    <a href="https://issues.chromium.org/issues/541287632">Chromium issue</a>.</p>
+</section>
+
+<section id="commands" aria-labelledby="commands-title">
+  <h2 id="commands-title"><a class="self" href="#commands">Command-line reference</a></h2>
+  <p>The binary is <code>/Applications/Grinch.app/Contents/MacOS/Grinch</code>.
+    It accepts:</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Flag</th><th scope="col">Effect</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><code>--version</code></th><td>Print the version.</td></tr>
+      <tr><th scope="row"><code>--test &lt;url&gt;</code></th><td>Run a URL through the rules without opening it. <code>grinch:</code> URLs are unwrapped, so <code>--test grinch:tel:+15551234567</code> tests routing for <code>tel:+15551234567</code>.</td></tr>
+      <tr><th scope="row"><code>--list-rules</code></th><td>Print rule indices, labels, and targets.</td></tr>
+      <tr><th scope="row"><code>--list-browsers</code></th><td>List every app registered to open <code>https://</code> URLs: bundle ID and display name.</td></tr>
+      <tr><th scope="row"><code>--validate</code></th><td>Load the config and report whether it parses. Exits 0 on success and 1 on a load error, printing the message and the path it read. Use it in editor save hooks and CI.</td></tr>
+      <tr><th scope="row"><code>--bench N &lt;url&gt;</code></th><td>Resolve a URL N times in-process and report timing.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<nav class="next-page" aria-label="Previous and next pages">
+  <a href="config.html">← Configuration</a>
+  <a class="later" href="integrations.html">Next: Integrations →</a>
+</nav>
+
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wide">
+    <div>
+      <p>Grinch is MIT licensed and inspired by
+        <a href="https://github.com/johnste/finicky">Finicky</a> and
+        <a href="https://github.com/expelledboy/finch">Finch</a>.</p>
+      <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest release</a> is supported.</p>
+    </div>
+    <ul>
+      <li><a href="https://github.com/jamtur01/grinch">Source</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/releases">Releases</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/issues">Issues</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">Contributing</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">Security policy</a></li>
+    </ul>
+  </div>
+</footer>
+
+</body>
+</html>

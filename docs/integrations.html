@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrations · Grinch</title>
+<meta name="description" content="Sign-in popups, the grinch: URL scheme, browser add-ons, and URL shorteners.">
+<meta name="theme-color" content="#0d1117">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Integrations · Grinch">
+<meta property="og:description" content="Sign-in popups, the grinch: URL scheme, browser add-ons, and URL shorteners.">
+<meta property="og:url" content="https://jamtur01.github.io/grinch/integrations.html">
+<meta property="og:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Grinch: choose where links open on your Mac">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+
+<link rel="icon" href="grinch-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wide">
+    <a class="brand" href="index.html">
+      <img src="grinch-icon.svg" width="28" height="28" alt="">Grinch
+    </a>
+    <nav class="site-nav" aria-label="Documentation">
+      <ul>
+      <li><a href="start.html">Get started</a></li>
+      <li><a href="config.html">Configuration</a></li>
+      <li><a href="troubleshooting.html">Troubleshooting</a></li>
+      <li><a href="integrations.html" aria-current="page">Integrations</a></li>
+      <li><a href="finicky.html">From Finicky</a></li>
+      <li><a href="performance.html">Performance</a></li>
+      </ul>
+    </nav>
+    <a class="cta primary small header-download" href="https://github.com/jamtur01/grinch/releases/latest">Download</a>
+  </div>
+</header>
+
+<main id="main" class="container">
+
+<div class="page-head">
+  <h1>Integrations</h1>
+  <p class="lead">Links don't only arrive from clicks. This page covers sign-in
+    popups, other URL schemes, scripts and browser add-ons, and shortened
+    links.</p>
+  <nav class="toc" aria-labelledby="toc-title">
+    <h2 id="toc-title">On this page</h2>
+    <ul>
+      <li><a href="#sign-in">Sign-in popups</a></li>
+      <li><a href="#url-schemes">Other URL schemes</a></li>
+      <li><a href="#grinch-scheme">The <code>grinch:</code> scheme</a></li>
+      <li><a href="#browser-add-ons">Browser add-ons</a></li>
+      <li><a href="#url-shorteners">URL shorteners</a></li>
+    </ul>
+  </nav>
+</div>
+
+<div class="page-body">
+
+<section id="sign-in" aria-labelledby="sign-in-title">
+  <h2 id="sign-in-title"><a class="self" href="#sign-in">Sign-in popups</a></h2>
+  <p>Apps that sign in with <code>ASWebAuthenticationSession</code> send their
+    URLs through AuthenticationServices rather than ordinary URL delivery.
+    Grinch routes these requests with the same rules as other links, and opens
+    the sign-in page in the selected browser as a normal tab. It does not move
+    the authentication session into that browser or watch what the page does
+    next.</p>
+  <p>Requests that arrive while Grinch is starting wait for the first config
+    load. If no config is available, a rule suppresses the URL, or the browser
+    can't be opened, Grinch ends the sign-in request with an error. Requests
+    cancelled during startup don't open a browser.</p>
+  <p class="note"><strong>Finishing the sign-in is best effort.</strong> The
+    callback has to come back to Grinch to complete the pending session. Grinch
+    matches incoming callback URLs against pending requests and returns matching
+    ones to the app that asked. Registering a callback with
+    <code>ASWebAuthenticationSession</code> doesn't make Chrome send it to
+    Grinch, so apps that rely only on the session callback can keep waiting
+    after the sign-in page has done its job.</p>
+  <p>On macOS 13 through 14.3, callbacks are matched with the older custom-scheme
+    API. HTTPS host-and-path callbacks need macOS 14.4 or later.</p>
+  <details>
+    <summary>Startup timing and private sessions</summary>
+    <p>Grinch installs its sign-in handler before it starts accepting events, so
+      a request made while Grinch is still launching doesn't fall through to
+      Safari. Grinch also declares <code>CallbackURLMatchingIsSupported</code>,
+      because some apps, notably Slack, only use browsers that advertise it.</p>
+    <p>Grinch declares <code>IsSupported</code> but not
+      <code>EphemeralBrowserSessionIsSupported</code>. It opens your regular
+      browser tab, with your existing cookies and profile, so it can't provide
+      the isolation a private (ephemeral) session asks for. macOS may handle
+      those requests in Safari instead, and they bypass your rules.</p>
+  </details>
+</section>
+
+<section id="url-schemes" aria-labelledby="url-schemes-title">
+  <h2 id="url-schemes-title"><a class="self" href="#url-schemes">Other URL schemes</a></h2>
+  <p>Besides <code>http</code>, <code>https</code>, and <code>mailto</code>,
+    Grinch registers <code>tel:</code>, <code>webcal:</code>, and
+    <code>feed:</code>, so those links go through the same rules. Match them
+    with a scheme pattern such as <code>"webcal:*"</code>.</p>
+</section>
+
+<section id="grinch-scheme" aria-labelledby="grinch-scheme-title">
+  <h2 id="grinch-scheme-title"><a class="self" href="#grinch-scheme">The <code>grinch:</code> scheme</a></h2>
+  <p>Put <code>grinch:</code> in front of any URL to route it through your rules,
+    even when Grinch isn't the default browser. This works from Shortcuts,
+    AppleScript, and <code>open</code> in a shell:</p>
+  <figure class="term">
+    <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">open grinch:https://example.com/path</span>
+<span class="cmd">open 'grinch:tel:+15551234567'</span></code></pre>
+  </figure>
+  <p>Grinch removes the <code>grinch:</code> prefix first, so your rules match
+    the inner URL. <code>Grinch --test grinch:…</code> tests the same way.</p>
+</section>
+
+<section id="browser-add-ons" aria-labelledby="browser-add-ons-title">
+  <h2 id="browser-add-ons-title"><a class="self" href="#browser-add-ons">Browser add-ons</a></h2>
+  <p>Grinch also accepts <code>grinch://open/&lt;base64-url&gt;</code>, where
+    the inner URL is encoded with <code>btoa()</code>. This is the format
+    Finicky's Chrome and Firefox add-ons send. Point those add-ons at
+    <code>grinch://open/…</code> instead of <code>finicky://open/…</code> and
+    their "Open with Finicky" menu item routes through Grinch, whether or not it
+    is the default browser. Standard (<code>+</code>, <code>/</code>) and
+    URL-safe (<code>-</code>, <code>_</code>) base64 both work, with or without
+    <code>=</code> padding.</p>
+</section>
+
+<section id="url-shorteners" aria-labelledby="url-shorteners-title">
+  <h2 id="url-shorteners-title"><a class="self" href="#url-shorteners">URL shorteners</a></h2>
+  <p>Grinch decides synchronously, so a rule can't follow a short link's
+    redirects; <code>await fetch()</code> doesn't run. For hosts such as
+    <code>bit.ly</code>, <code>t.co</code>, <code>lnkd.in</code>, and
+    <code>ow.ly</code>, choose one of two approaches.</p>
+
+  <h3 id="shorteners-default"><a class="self" href="#shorteners-default">Send them to your usual browser</a></h3>
+  <p>Your rules won't see the final host, but the browser opens normally with no
+    added delay:</p>
+<pre><code>{
+  match: domain("bit.ly", "t.co", "lnkd.in", "ow.ly", "buff.ly", "tinyurl.com"),
+  open: browsers.personal,
+}</code></pre>
+
+  <h3 id="shorteners-expand"><a class="self" href="#shorteners-expand">Expand them before Grinch</a></h3>
+  <p><a href="https://github.com/jamtur01/grinch/blob/main/examples/expand-shortener.sh"><code>examples/expand-shortener.sh</code></a>
+    follows redirects from bit.ly, t.co, goo.gl, lnkd.in, ow.ly, buff.ly, and
+    tinyurl.com, including their <code>www.</code> forms, making at most ten
+    requests in five seconds. It opens the first destination outside those
+    hosts with <code>open</code>, leaving login redirects and cookies to your
+    browser, and Grinch routes that destination normally. Other hosts pass
+    through, and if expansion fails the original URL opens.</p>
+  <figure class="term">
+    <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">chmod +x examples/expand-shortener.sh</span>
+<span class="cmd">examples/expand-shortener.sh "https://bit.ly/3GyNJpL"</span></code></pre>
+  </figure>
+  <p>Run it from a launcher you already use:</p>
+  <ul>
+    <li><strong>Raycast or Alfred</strong>: bind it to a hotkey that passes the
+      URL on the clipboard.</li>
+    <li><strong>Hammerspoon</strong>: register an <code>hs.urlevent</code>
+      handler that calls the script with the URL.</li>
+    <li><strong>Shortcuts</strong>: wrap it in a Quick Action that takes URLs
+      from the share sheet and runs <code>expand-shortener.sh "$1"</code>.</li>
+    <li><strong>Terminal</strong>: copy the link, then run
+      <code>examples/expand-shortener.sh "$(pbpaste)"</code>.</li>
+  </ul>
+  <p>Shortened links then wait for a network round trip, typically 50 to 500
+    ms, but that happens outside Grinch, so every other link still routes
+    without it.</p>
+</section>
+
+<nav class="next-page" aria-label="Previous and next pages">
+  <a href="troubleshooting.html">← Troubleshooting</a>
+  <a class="later" href="finicky.html">Next: Moving from Finicky →</a>
+</nav>
+
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wide">
+    <div>
+      <p>Grinch is MIT licensed and inspired by
+        <a href="https://github.com/johnste/finicky">Finicky</a> and
+        <a href="https://github.com/expelledboy/finch">Finch</a>.</p>
+      <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest release</a> is supported.</p>
+    </div>
+    <ul>
+      <li><a href="https://github.com/jamtur01/grinch">Source</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/releases">Releases</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/issues">Issues</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">Contributing</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">Security policy</a></li>
+    </ul>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get started · Grinch</title>
+<meta name="description" content="Install Grinch, write a first rule, and make it your default browser.">
+<meta name="theme-color" content="#0d1117">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Get started · Grinch">
+<meta property="og:description" content="Install Grinch, write a first rule, and make it your default browser.">
+<meta property="og:url" content="https://jamtur01.github.io/grinch/start.html">
+<meta property="og:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Grinch: choose where links open on your Mac">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+
+<link rel="icon" href="grinch-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wide">
+    <a class="brand" href="index.html">
+      <img src="grinch-icon.svg" width="28" height="28" alt="">Grinch
+    </a>
+    <nav class="site-nav" aria-label="Documentation">
+      <ul>
+      <li><a href="start.html" aria-current="page">Get started</a></li>
+      <li><a href="config.html">Configuration</a></li>
+      <li><a href="troubleshooting.html">Troubleshooting</a></li>
+      <li><a href="integrations.html">Integrations</a></li>
+      <li><a href="finicky.html">From Finicky</a></li>
+      <li><a href="performance.html">Performance</a></li>
+      </ul>
+    </nav>
+    <a class="cta primary small header-download" href="https://github.com/jamtur01/grinch/releases/latest">Download</a>
+  </div>
+</header>
+
+<main id="main" class="container">
+
+<div class="page-head">
+  <h1>Get started</h1>
+  <p class="lead">Install Grinch, write one rule, and make it your default browser.
+    Every step can be undone.</p>
+  <nav class="toc" aria-labelledby="toc-title">
+    <h2 id="toc-title">On this page</h2>
+    <ul>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#first-rule">First rule</a></li>
+      <li><a href="#launch">Launch</a></li>
+      <li><a href="#default-browser">Default browser</a></li>
+      <li><a href="#check">Check a link</a></li>
+      <li><a href="#change">Change your config</a></li>
+      <li><a href="#updates">Updates</a></li>
+      <li><a href="#undo">Undo or uninstall</a></li>
+      <li><a href="#help">Getting help</a></li>
+    </ul>
+  </nav>
+</div>
+
+<div class="page-body">
+
+<ol class="steps">
+  <li>
+    <h2 id="install"><a class="self" href="#install">Install Grinch</a></h2>
+    <p>Grinch needs macOS 13 or later. Releases are universal binaries for Apple
+      silicon and Intel Macs, signed with a Developer ID and notarized by Apple.</p>
+    <p>Download the latest <code>Grinch-vX.Y.Z.dmg</code> from the
+      <a href="https://github.com/jamtur01/grinch/releases/latest">releases page</a>,
+      open it, and drag <code>Grinch.app</code> onto the <code>Applications</code>
+      shortcut in the DMG window.</p>
+    <p class="note"><strong>Install to <code>/Applications</code> directly.</strong>
+      Running <code>Grinch.app</code> from <code>~/Downloads</code> or anywhere else
+      triggers Gatekeeper translocation, which makes the same app appear several
+      times in the default-browser picker.</p>
+
+    <h3 id="install-terminal"><a class="self" href="#install-terminal">From the terminal</a></h3>
+    <p>This script finds the latest DMG through the GitHub API, downloads it,
+      copies <code>Grinch.app</code> into <code>/Applications</code>, and opens it:</p>
+    <figure class="term">
+      <figcaption>Terminal</figcaption>
+<pre><code>DMG=$(curl -fsSL https://api.github.com/repos/jamtur01/grinch/releases/latest \
+  | grep -oE '"browser_download_url": "[^"]*\.dmg"' | cut -d'"' -f4)
+curl -fsSL "$DMG" -o /tmp/grinch.dmg
+hdiutil attach -nobrowse -quiet /tmp/grinch.dmg
+ditto "/Volumes/Grinch "*/Grinch.app /Applications/Grinch.app
+hdiutil detach "/Volumes/Grinch "* -quiet
+open /Applications/Grinch.app</code></pre>
+    </figure>
+
+    <h3 id="install-homebrew"><a class="self" href="#install-homebrew">With Homebrew</a></h3>
+    <p>A community-maintained cask is available from
+      <a href="https://github.com/bric3/homebrew-tap/blob/main/Casks/grinch.rb"><code>bric3/tap</code></a>.
+      It is maintained outside the Grinch project.</p>
+    <figure class="term">
+      <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">brew tap bric3/tap</span>
+<span class="cmd">brew install --cask grinch</span></code></pre>
+    </figure>
+
+    <h3 id="install-source"><a class="self" href="#install-source">From source</a></h3>
+    <p>Building needs Rust stable through rustup; the
+      <a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md#prerequisites">contributor prerequisites</a>
+      list the tools. Source builds don't include automatic updates.</p>
+    <figure class="term">
+      <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">git clone https://github.com/jamtur01/grinch</span>
+<span class="cmd">cd grinch</span>
+<span class="cmd">make run</span></code></pre>
+    </figure>
+  </li>
+
+  <li>
+    <h2 id="first-rule"><a class="self" href="#first-rule">Write your first rule</a></h2>
+    <p>Grinch reads its rules from a JavaScript file. Create
+      <code>~/.config/grinch.js</code> with this content:</p>
+    <figure class="file">
+      <figcaption>~/.config/grinch.js</figcaption>
+<pre><code>module.exports = {
+  default: "com.apple.Safari",
+  rules: [
+    { match: "github.com", open: "com.google.Chrome" },
+  ],
+};</code></pre>
+    </figure>
+    <p>This sends <code>github.com</code> and its subdomains to Chrome, and every
+      other link to Safari. Use apps you have installed: a target can be any app
+      that can open the URL, such as Zoom or Slack. If <code>~/.config</code>
+      doesn't exist, create it first with <code>mkdir -p ~/.config</code>.</p>
+    <p class="note"><strong>Only use configs you trust.</strong> Grinch runs the
+      config file as JavaScript.</p>
+    <p>The commands on this site call the binary inside the app. Add this alias
+      to your shell, or use the full path each time:</p>
+    <figure class="term">
+      <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">alias Grinch='/Applications/Grinch.app/Contents/MacOS/Grinch'</span></code></pre>
+    </figure>
+    <p>To find the bundle ID of a browser or app, list every app registered to
+      open web links:</p>
+    <figure class="term">
+      <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">Grinch --list-browsers</span>
+<span class="out">com.apple.Safari               Safari
+com.google.Chrome              Google Chrome
+com.brave.Browser              Brave Browser
+com.microsoft.edgemac          Microsoft Edge
+app.zen-browser.zen            Zen
+...</span></code></pre>
+    </figure>
+    <p>App names such as <code>"Google Chrome"</code> work too. The
+      <a href="config.html">configuration reference</a> covers profiles, other
+      match types, and rewrites.</p>
+  </li>
+
+  <li>
+    <h2 id="launch"><a class="self" href="#launch">Launch Grinch</a></h2>
+    <p>Open Grinch from Applications. Its eyes appear in the menu bar. Click
+      them for <strong>Open Config</strong>, <strong>Reload Config</strong>,
+      <strong>Open Diagnostic Log</strong>, and update checks. The
+      <a href="troubleshooting.html#menu-bar">menu bar reference</a> lists
+      every item.</p>
+    <p>macOS also asks whether Grinch may use Accessibility. Grinch only needs
+      it for rules that read the title of the window a link came from. You can
+      decline now and allow it later under <strong>System Settings → Privacy
+      &amp; Security → Accessibility</strong>.</p>
+  </li>
+
+  <li>
+    <h2 id="default-browser"><a class="self" href="#default-browser">Make Grinch your default browser</a></h2>
+    <p>Open <strong>System Settings → Desktop &amp; Dock → Default web browser</strong>
+      and choose <strong>Grinch</strong>. Links you open in other apps now go
+      through your rules.</p>
+  </li>
+
+  <li>
+    <h2 id="check"><a class="self" href="#check">Check a link</a></h2>
+    <p>Ask Grinch where a link would go, without opening a browser:</p>
+    <figure class="term">
+      <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">Grinch --test "https://github.com/jamtur01/grinch"</span>
+<span class="out">URL:     https://github.com/jamtur01/grinch
+Final:   https://github.com/jamtur01/grinch
+Browser: <b>com.google.Chrome</b></span>
+<span class="cmd">Grinch --test "https://example.com/"</span>
+<span class="out">URL:     https://example.com/
+Final:   https://example.com/
+Browser: <b>com.apple.Safari</b></span></code></pre>
+    </figure>
+    <p>Then click a GitHub link in Slack or Mail. It opens in Chrome. If it
+      doesn't, <a href="troubleshooting.html">Troubleshooting</a> shows how to
+      find out why.</p>
+  </li>
+</ol>
+
+<section id="change" aria-labelledby="change-title">
+  <h2 id="change-title"><a class="self" href="#change">Change your config</a></h2>
+  <p>Edit the file, then choose <strong>Reload Config</strong> (⌘R) from the
+    menu. If the reload fails, the menu-bar icon changes to a warning sign and
+    the menu shows the error. Grinch keeps routing with the last config that
+    loaded until you fix it.</p>
+  <p>To check a config from a terminal or an editor save hook, run
+    <code>Grinch --validate</code>. If your edits don't take effect, Grinch may be
+    reading <a href="troubleshooting.html#which-config">a different config file</a>.</p>
+</section>
+
+<section id="updates" aria-labelledby="updates-title">
+  <h2 id="updates-title"><a class="self" href="#updates">Updates</a></h2>
+  <p>Grinch checks for updates once a day. To check now, choose
+    <strong>Check for Updates…</strong> from the menu bar. Turn off
+    <strong>Check for Updates Automatically</strong> in the same menu, or set
+    <a href="config.html#options"><code>checkForUpdates: false</code></a> in
+    your config, to stop the daily check.</p>
+</section>
+
+<section id="undo" aria-labelledby="undo-title">
+  <h2 id="undo-title"><a class="self" href="#undo">Undo or uninstall</a></h2>
+  <p>To stop routing links through Grinch, choose another browser under
+    <strong>System Settings → Desktop &amp; Dock → Default web browser</strong>.</p>
+  <p>To remove Grinch:</p>
+  <ol>
+    <li>If you turned on <strong>Start at Login</strong>, turn it off in the
+      Grinch menu.</li>
+    <li>Choose <strong>Quit Grinch</strong> (⌘Q).</li>
+    <li>Move <code>/Applications/Grinch.app</code> to the Trash.</li>
+  </ol>
+  <p>Your config file and the logs in <code>~/Library/Logs/Grinch/</code> stay
+    until you delete them.</p>
+</section>
+
+<section id="help" aria-labelledby="help-title">
+  <h2 id="help-title"><a class="self" href="#help">Getting help</a></h2>
+  <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest
+    published release</a> is supported for issues and security fixes. Upgrade
+    and reproduce the problem before filing a bug; older releases don't receive
+    backported fixes.</p>
+  <p>For bug reports and feature requests, follow the
+    <a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">contributor guide</a>.
+    Report suspected vulnerabilities through
+    <a href="https://github.com/jamtur01/grinch/security/advisories/new">private reporting</a>,
+    not a public issue. The
+    <a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">security policy</a>
+    explains what to include and how to redact diagnostics.</p>
+</section>
+
+<nav class="next-page" aria-label="Next page">
+  <a class="later" href="config.html">Next: Configuration →</a>
+</nav>
+
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wide">
+    <div>
+      <p>Grinch is MIT licensed and inspired by
+        <a href="https://github.com/johnste/finicky">Finicky</a> and
+        <a href="https://github.com/expelledboy/finch">Finch</a>.</p>
+      <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest release</a> is supported.</p>
+    </div>
+    <ul>
+      <li><a href="https://github.com/jamtur01/grinch">Source</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/releases">Releases</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/issues">Issues</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">Contributing</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">Security policy</a></li>
+    </ul>
+  </div>
+</footer>
+
+</body>
+</html>

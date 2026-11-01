@@ -3,21 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Grinch — a tiny, fast macOS browser router</title>
-<meta
-  name="description"
-  content="A tiny, fast native macOS browser router with JavaScript rules and Finicky v4 compatibility.">
+<title>Grinch: choose where links open on your Mac</title>
+<meta name="description" content="Grinch is a macOS menu-bar app that sends each link to the browser, profile, or app your JavaScript rules choose. Most Finicky v4 configs work with it.">
+<meta name="theme-color" content="#0d1117">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="Grinch — a tiny, fast macOS browser router">
-<meta
-  property="og:description"
-  content="Routes each URL to the right browser. Native Rust, JavaScriptCore, and one universal DMG.">
+<meta property="og:title" content="Grinch: choose where links open on your Mac">
+<meta property="og:description" content="Grinch is a macOS menu-bar app that sends each link to the browser, profile, or app your JavaScript rules choose. Most Finicky v4 configs work with it.">
 <meta property="og:url" content="https://jamtur01.github.io/grinch/">
 <meta property="og:image" content="https://jamtur01.github.io/grinch/social-preview.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
-<meta property="og:image:alt" content="Grinch — a tiny, fast macOS browser router">
+<meta property="og:image:alt" content="Grinch: choose where links open on your Mac">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://jamtur01.github.io/grinch/social-preview.png">
 
@@ -26,312 +23,160 @@
 </head>
 <body>
 
-<header class="hero">
-  <div class="container">
-    <img class="hero-logo" src="grinch-icon.svg" width="128" height="128" alt="">
-    <h1>Grinch</h1>
-    <p class="tagline">
-      Choose where links open on your Mac. Grinch uses your JavaScript rules to
-      send each link to a browser, profile, or app.
-    </p>
-    <div class="ctas">
-      <a class="cta primary" href="https://github.com/jamtur01/grinch/releases/latest">Download&nbsp;DMG</a>
-      <a class="cta" href="https://github.com/jamtur01/grinch">View on GitHub</a>
-    </div>
-    <p class="meta">macOS 13+ &middot; Universal binary</p>
-    <p class="meta">
-      <a href="https://github.com/jamtur01/grinch/releases/latest">Release notes</a>
-      &middot; <a href="#support">Latest release only supported</a>
-    </p>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wide">
+    <a class="brand" href="index.html">
+      <img src="grinch-icon.svg" width="28" height="28" alt="">Grinch
+    </a>
+    <nav class="site-nav" aria-label="Documentation">
+      <ul>
+      <li><a href="start.html">Get started</a></li>
+      <li><a href="config.html">Configuration</a></li>
+      <li><a href="troubleshooting.html">Troubleshooting</a></li>
+      <li><a href="integrations.html">Integrations</a></li>
+      <li><a href="finicky.html">From Finicky</a></li>
+      <li><a href="performance.html">Performance</a></li>
+      </ul>
+    </nav>
+    <a class="cta primary small header-download" href="https://github.com/jamtur01/grinch/releases/latest">Download</a>
   </div>
 </header>
 
-<main class="container">
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wide">
+    <div>
+      <img class="hero-logo" src="grinch-icon.svg" width="72" height="72" alt="">
+      <h1 id="hero-title">Choose where every link on your Mac opens.</h1>
+      <p class="lead">Grinch is a menu-bar app you set as your default browser.
+        Your JavaScript rules send each link from Slack, Mail, or any other app
+        to the right browser, profile, or app.</p>
+      <div class="ctas">
+        <a class="cta primary" href="https://github.com/jamtur01/grinch/releases/latest">Download the latest release</a>
+        <a class="cta" href="start.html">Get started</a>
+      </div>
+      <p class="meta">macOS 13 or later &middot; Universal binary &middot; Signed and notarized &middot; MIT licensed</p>
+    </div>
 
-<section id="features">
-  <h2>What it is</h2>
-  <ul class="features">
-    <li><strong>Send links where you want them.</strong> Open work links in one
-      browser, personal links in another, and meeting links in an app.</li>
-    <li><strong>Use your browser profiles.</strong> Send links to a work profile,
-      open a private window, or choose a new window in supported Chrome and Firefox browsers.</li>
-    <li><strong>Clean up links.</strong> Remove tracking parameters or unwrap
-      links before your rules choose where they open.</li>
-    <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar. Parse errors surface as <code>⚠️</code> with the failing line inline. With <code>hideIcon: true</code>, reopen Grinch from Spotlight or Finder to access config, log, and update actions in a window. The update button is disabled when the updater cannot check for updates.</li>
-    <li><strong>Automatic updates.</strong> Grinch checks for updates automatically.
-      You can check manually or turn automatic checks off from the menu bar.</li>
-    <li><strong>Debuggable.</strong> Every resolve can be logged as JSON or text with the matched rule, opener, and modifier state. <code>--list-rules</code> prints the loaded rule table for cross-reference.</li>
-    <li><strong>SSO / OAuth popups route through your rules.</strong> Sign-in requests
-      from apps using <code>ASWebAuthenticationSession</code> use the same browser
-      routing rules as other links.</li>
-    <li><strong>Moving from Finicky?</strong> Most Finicky v4 configs work with
-      Grinch. See the <a href="https://github.com/jamtur01/grinch#differences-from-finicky">compatibility notes</a>.</li>
+    <div class="hero-demo">
+      <figure class="file">
+        <figcaption>~/.config/grinch.js</figcaption>
+<pre><code>module.exports = {
+  default: "com.apple.Safari",
+  rewrite: [strip("utm_*")],
+  rules: [
+    { match: "github.com", open: "Google Chrome:Default" },
+    { match: "zoom.us/j/*", open: "us.zoom.xos" },
+  ],
+};</code></pre>
+      </figure>
+      <figure class="term">
+        <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">Grinch --test "https://github.com/?utm_source=slack"</span>
+<span class="out">URL:     https://github.com/?utm_source=slack
+Final:   <b>https://github.com/</b>
+Browser: <b>com.google.Chrome</b>
+Args:    <b>--profile-directory=Default</b></span>
+<span class="cmd">Grinch --test "https://zoom.us/j/123456789"</span>
+<span class="out">URL:     https://zoom.us/j/123456789
+Final:   https://zoom.us/j/123456789
+Browser: <b>us.zoom.xos</b></span>
+<span class="cmd">Grinch --test "https://example.com/"</span>
+<span class="out">URL:     https://example.com/
+Final:   https://example.com/
+Browser: <b>com.apple.Safari</b></span></code></pre>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<main id="main" class="container">
+
+<section id="what" aria-labelledby="what-title">
+  <h2 id="what-title"><a class="self" href="#what">What Grinch does</a></h2>
+  <ul class="capabilities">
+    <li>
+      <h3>Rules you can read</h3>
+      <p>Match a link by host, wildcard, or regular expression, by the app it
+        came from, by an app that is running, or by the modifier keys you held.
+        The first matching rule wins; everything else goes to your default.</p>
+    </li>
+    <li>
+      <h3>Your browser profiles</h3>
+      <p>Open a link in a named profile, a private window, or a new window in
+        supported Chrome and Firefox browsers, or hand it to an app such as Zoom.</p>
+    </li>
+    <li>
+      <h3>Cleaner links</h3>
+      <p>Strip tracking parameters, and unwrap Microsoft SafeLinks, Proofpoint
+        URL Defense, and Teams launcher links before your rules see them.</p>
+    </li>
+    <li>
+      <h3>Sign-in pages too</h3>
+      <p>Apps that sign in through <code>ASWebAuthenticationSession</code>, such
+        as Slack, send their sign-in pages through the same rules.</p>
+    </li>
   </ul>
 </section>
 
-<section id="install">
-  <h2>Install</h2>
-  <p>Grab the DMG and drag <code>Grinch.app</code> to <code>/Applications</code>.
-    Create a config as shown below, launch Grinch, then select it under
-    <strong>System Settings → Desktop &amp; Dock → Default web browser</strong>.</p>
-<pre><code>DMG=$(curl -fsSL https://api.github.com/repos/jamtur01/grinch/releases/latest \
-  | grep -oE '"browser_download_url": "[^"]*\.dmg"' | cut -d'"' -f4)
-curl -fsSL "$DMG" -o /tmp/grinch.dmg
-hdiutil attach -nobrowse -quiet /tmp/grinch.dmg
-ditto "/Volumes/Grinch "*/Grinch.app /Applications/Grinch.app
-hdiutil detach "/Volumes/Grinch "* -quiet
-open /Applications/Grinch.app</code></pre>
-  <p class="note">Always install to <code>/Applications</code> directly — running out of <code>~/Downloads</code> triggers Gatekeeper translocation, which makes the same app appear multiple times in the default-browser picker.</p>
-  <p>Or install the community-maintained
-    <a href="https://github.com/bric3/homebrew-tap/blob/main/Casks/grinch.rb">Homebrew cask</a>:
-  </p>
-<pre><code>brew tap bric3/tap
-brew install --cask grinch</code></pre>
-  <p class="note">The cask is maintained outside the Grinch project.</p>
-  <p>Or build from source:</p>
-<pre><code>git clone https://github.com/jamtur01/grinch
-cd grinch
-make run</code></pre>
+<section id="native" aria-labelledby="native-title">
+  <h2 id="native-title"><a class="self" href="#native">Small, native, and checkable</a></h2>
+  <p>Grinch is one native binary. It evaluates your config with the system's
+    JavaScriptCore and compiles declarative rules to native matchers, so a
+    hostname rule resolves in about 40 nanoseconds on Apple Silicon. See the
+    <a href="performance.html">benchmarks</a> and how to reproduce them.</p>
+  <p>A config that fails to reload never takes routing down: Grinch keeps the
+    last config that loaded and shows the error in the menu bar.
+    <code>Grinch --test</code> shows a decision without opening a browser, and
+    the <a href="troubleshooting.html">diagnostic log</a> records which rule
+    sent each link where.</p>
 </section>
 
-<section id="config">
-  <h2>Configure</h2>
-  <p>Edit your existing Grinch config, or create <code>~/.config/grinch.js</code>
-    with the example below. Create <code>~/.config</code> first if needed, and
-    replace the browser targets if you use different apps. If your edits don't
-    take effect, see <a href="https://github.com/jamtur01/grinch#if-grinch-uses-a-different-config">which config Grinch uses</a>.</p>
-<pre><code>module.exports = {
-  default: "com.apple.Safari",
-  rules: [
-    { match: "github.com", open: "com.google.Chrome" },
-  ],
-};</code></pre>
-  <p>Links to GitHub or its subdomains open in Chrome; other links open in Safari.
-    A target can also be another app, such as Zoom. Choose <em>Reload Config</em>
-    in the menu after editing.</p>
-  <p>Grinch applies matching URL rewrites in order, then checks rules from top to
-    bottom. The first match chooses the app; <code>default</code> handles the rest.
-    An <code>open</code> function returning <code>null</code> or <code>undefined</code>
-    continues to the next rule.
-    See the <a href="https://github.com/jamtur01/grinch#configuration">configuration guide</a>
-    for browser profiles, match types, rewrites, and options.</p>
-  <p>For the terminal commands below, use the installed binary or define this
-    alias in your shell:</p>
-<pre><code>alias Grinch='/Applications/Grinch.app/Contents/MacOS/Grinch'
-Grinch --test "https://github.com/"</code></pre>
-  <p>The test prints the routing decision without opening a browser.</p>
+<section id="finicky" aria-labelledby="finicky-title">
+  <h2 id="finicky-title"><a class="self" href="#finicky">Coming from Finicky?</a></h2>
+  <p>Grinch is inspired by <a href="https://github.com/johnste/finicky">Finicky</a>
+    and <a href="https://github.com/expelledboy/finch">Finch</a>. Most Finicky v4
+    configs work with Grinch, including <code>export default</code> and Finicky's
+    key names. <a href="finicky.html">Moving from Finicky</a> covers the
+    differences.</p>
 </section>
 
-<section id="diagnostics">
-  <h2>When a click goes the wrong way</h2>
-
-  <p>A handful of CLI flags and a diagnostic log answer "why did <em>that</em> click go <em>there</em>?":</p>
-
-  <h3>List the loaded rules</h3>
-  <p><code>Grinch --list-rules</code> prints every rule with its index, label, and target — pair with the diagnostic log to map a <code>matchedRule.index</code> back to the actual entry in your config.</p>
-<pre><code>0: github.com → com.google.Chrome</code></pre>
-
-  <h3>Open the diagnostic log</h3>
-  <p>Grinch records config-load, runtime JavaScript, profile, and browser launch errors
-    in a diagnostic file per app
-    launch at <code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code>. Set
-    <code>options: { logRequests: true }</code> to add one <code>resolve</code> event per
-    routed URL. Use <em>Open Diagnostic Log</em> in the menu bar to open the active file:
-  </p>
-  <p>JSON is the default; set <code>options: { logFormat: "text" }</code>
-    for readable text. Omitting the setting, or setting it to <code>null</code> or
-    <code>undefined</code>, selects JSON. An invalid value keeps the current format,
-    records a config error, and prints a warning without stopping routing.
-    <code>Grinch --validate</code> shows the warning but still exits 0 if the config
-    loads. Changing formats starts a new file, preserving the previous log;
-    switched files use suffixes such as <code>.1.log</code> and <code>.2.log</code>.</p>
-  <p>Logging options take effect after the config's JavaScript is evaluated and its
-    options are parsed, even if later engine construction fails. Errors before the
-    first config's options are parsed use JSON. The menu opens the current file.</p>
-  <p>For example, a configuration error in JSON:</p>
-<pre><code>{"date":"2026-05-11T12:57:25-0400","event":"config_error","message":"SyntaxError (line 4)","path":"/Users/alex/.grinch.js","ts":1778518645.634}</code></pre>
-  <p>The same event in text format:</p>
-<pre><code>2026-05-11T12:57:25-0400  config_error
-  message: SyntaxError (line 4)
-  path: /Users/alex/.grinch.js</code></pre>
-  <p>For a different configuration, a resolve event might contain these routing details:</p>
-<pre><code>{
-  "date": "2026-05-11T12:57:25-0400",
-  "event": "resolve",
-  "ts": 1778518645.634,
-  "url": "https://github.com/foo",
-  "final": "https://github.com/foo",
-  "rewritten": false,
-  "browser": "com.google.Chrome",
-  "args": ["--profile-directory=Profile 1"],
-  "strategy": "launch_new_instance",
-  "opener": {
-    "bundleId": "com.tinyspeck.slackmacgap",
-    "name": "Slack",
-    "pid": 731
-  },
-  "modifiers": {
-    "shift": false,
-    "option": false,
-    "command": false,
-    "control": false
-  },
-  "matchedRule": { "index": 2, "name": "github.com" }
-}</code></pre>
-  <p><code>launch_error</code> records invalid URLs, missing browsers, and native launch
-    failures even when request logging is disabled. It includes <code>url</code>,
-    <code>browser</code>, <code>strategy</code>, and <code>message</code>; native errors
-    also include <code>errorDomain</code> and <code>errorCode</code>. These events share
-    the same log and rotation settings across config reloads. A <code>resolve</code>
-    event records the routing decision; it does not confirm launch success.</p>
-  <p class="note">Logs can contain complete URLs, including authentication tokens and
-    personal data. Redact them before sharing. Report vulnerabilities privately using
-    the <a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">security policy</a>.</p>
-  <p><code>console.log/warn/error/info/debug</code> remain on stderr and are not copied
-    into the diagnostic log.</p>
-  <p>Profile failures produce <code>profile_error</code> events with the browser,
-    file path, and message, even with request logging disabled. Unresolved Chromium
-    display names suppress the launch; explicit <code>Default</code> and
-    <code>Profile N</code> directory values need no file access. Firefox still receives
-    <code>-P &lt;name&gt;</code> when validation fails. Reload Config refreshes both
-    profile caches after file access or browser profiles change. Firefox warnings
-    stay in the log without changing the status item. The first launch-suppressing
-    Chromium error shows a warning icon and a <strong>Profile error:</strong> menu item,
-    with the full message in its tooltip. This includes errors discovered on a
-    click; a successful reload clears the warning unless the error recurs.</p>
-  <p class="note">Grinch identifies the opener from the Apple Event's sender when
-    available. Otherwise it falls back to the frontmost app, which may not be the
-    original sender.</p>
-
-  <h3>Headless checks</h3>
-  <p><code>Grinch --validate</code> loads the config and exits 0 (with the resolved path and rule count) or 1 (with the captured load error). Designed for editor save-hooks and CI:</p>
-<pre><code>$ Grinch --validate
-grinch: config OK — /Users/james/.config/grinch.js
-rules:  12
-
-$ Grinch --validate
-grinch: config invalid — SyntaxError: Unexpected identifier 'rules'. (line 4)
-path:   /Users/james/.config/grinch.js
-$ echo $?
-1</code></pre>
-
-  <h3>Discovering browser bundle IDs</h3>
-  <p><code>Grinch --list-browsers</code> prints every app registered with LaunchServices to handle <code>https://</code> URLs, with the bundle ID you'd write in a config alongside the display name the OS shows:</p>
-<pre><code>com.apple.Safari               Safari
-com.google.Chrome              Google Chrome
-com.brave.Browser              Brave Browser
-com.microsoft.edgemac          Microsoft Edge
-app.zen-browser.zen            Zen
-...</code></pre>
-
-  <h3>Routing arbitrary URLs from scripts</h3>
-  <p>Grinch registers a <code>grinch:</code> URL scheme so external tools (Shortcuts, AppleScript, shell scripts) can ask it to route a URL through the user's rules without setting it as the system default:</p>
-<pre><code>open grinch:https://example.com/path
-open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</code></pre>
-  <p>A third shape, <code>grinch://open/&lt;base64-url&gt;</code>, accepts a <code>btoa()</code>-encoded inner URL. This is the envelope shape Finicky's published Chrome and Firefox addons emit, so pointing those addons at <code>grinch://open/…</code> instead of <code>finicky://open/…</code> makes "Open with Finicky" route through Grinch.</p>
-</section>
-
-<section id="authentication">
-  <h2>Sign-in links</h2>
-  <p>Apps using <code>ASWebAuthenticationSession</code> send sign-in links through
-    Grinch's normal routing rules.</p>
-  <p>Authentication requests received during startup wait for the initial configuration
-    load attempt. Grinch returns an error if configuration is unavailable, routing
-    suppresses the URL, or the browser cannot be opened. Requests canceled during
-    startup do not launch a browser.</p>
-  <p>Authentication callbacks must return to Grinch to complete the pending session.
-    Grinch forwards the initial URL as a normal browser tab and cannot observe later
-    navigation. Apps that rely solely on the authentication-session callback can
-    remain waiting after sign-in.
-    Custom-scheme callbacks work on macOS 13 and later; HTTPS host/path callbacks
-    require macOS 14.4 or later.</p>
-  <p>Grinch does not advertise ephemeral-session support. macOS may handle those
-    requests in Safari instead, bypassing Grinch's routing rules.</p>
-</section>
-
-<section id="performance">
-  <h2>Performance</h2>
-
-  <p>Release builds on Apple Silicon, median of ten runs. These benchmarks measure
-    URL routing, excluding browser launch and page loading.</p>
-  <p>Run <code>bench/run.sh</code> to reproduce. Workloads are in
-    <code>bench/configs/</code>; setup and full results are in the
-    <a href="https://github.com/jamtur01/grinch/blob/main/bench/README.md">benchmark notes</a>.</p>
-
-  <h3>Hot path (declarative-only configs)</h3>
-  <table>
-    <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
-    <tbody>
-      <tr><td>Floor: empty rules, no rewrite</td><td>6.6</td></tr>
-      <tr><td>Default fallback, no query</td><td>64.2</td></tr>
-      <tr><td>Default fallback, strip removes a param</td><td>179.5</td></tr>
-      <tr><td>Bare-hostname match (<code>"github.com"</code>)</td><td>39.6</td></tr>
-      <tr><td><code>domain()</code> match</td><td>46.1</td></tr>
-      <tr><td>Regex match</td><td>23.1</td></tr>
-      <tr><td>Wildcard match (<code>"zoom.us/j/*"</code>)</td><td>31.6</td></tr>
-      <tr><td>50 bare-hostname rules, last one wins</td><td>268.1</td></tr>
-    </tbody>
-  </table>
-
-  <h3>Slow path (<code>(url, ctx) =&gt; …</code> fn matchers)</h3>
-  <table>
-    <thead><tr><th>Workload</th><th>ns/op</th></tr></thead>
-    <tbody>
-      <tr><td>Native rule wins early (no fn fires)</td><td>40.1</td></tr>
-      <tr><td>Drop URL via <code>() =&gt; null</code></td><td>2,422.9</td></tr>
-      <tr><td>HTTP→HTTPS via URL mutation</td><td>3,955.6</td></tr>
-      <tr><td><code>?browser=</code> dynamic open fn</td><td>4,539.8</td></tr>
-      <tr><td>4 fn matchers reading <code>ctx.opener</code></td><td>5,454</td></tr>
-      <tr><td>Full Slack-web → <code>slack://</code> rewrite</td><td>5,839.3</td></tr>
-    </tbody>
-  </table>
-
-  <h3>Footprint</h3>
-  <p>These are historical measurements, not a comparison of the latest releases.
-    Memory use varies with configuration and workload.</p>
-  <table>
-    <thead><tr><th></th><th>Grinch</th><th>Finch</th><th>Finicky</th></tr></thead>
-    <tbody>
-      <tr><td>Resident memory</td><td>15.5 MB</td><td>14.6 MB</td><td>142.5 MB</td></tr>
-      <tr><td>Peak memory</td><td>16.6 MB</td><td>15.5 MB</td><td>391.2 MB</td></tr>
-      <tr><td>JS engine</td><td>system JSC</td><td>system JSC</td><td>bundled goja</td></tr>
-      <tr><td>Bundled UI</td><td>menu bar or actions window</td><td>menu bar only</td><td>WebView app</td></tr>
-    </tbody>
-  </table>
-</section>
-
-<section id="support">
-  <h2>Support and security</h2>
-  <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest published
-    release</a> is supported for issues and security fixes. Upgrade and reproduce the
-    problem before filing a bug. Older releases do not receive backported fixes.</p>
-  <p>For bug reports and feature requests, follow the
-    <a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">contributor guide</a>.
-    Report suspected vulnerabilities through
-    <a href="https://github.com/jamtur01/grinch/security/advisories/new">private reporting</a>,
-    not a public issue. See the
-    <a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">security policy</a>
-    for what to include and how to redact diagnostics.</p>
-</section>
-
-<section id="links">
-  <h2>More</h2>
-  <ul>
-    <li><a href="https://github.com/jamtur01/grinch#readme">Full README</a> — every matcher, rewriter, browser-spec form, and helper</li>
-    <li><a href="https://github.com/jamtur01/grinch/blob/main/examples/grinch.example.js">Exhaustive example config</a></li>
-    <li><a href="https://github.com/jamtur01/grinch/releases">Releases &amp; changelog</a></li>
-    <li><a href="https://github.com/jamtur01/grinch/issues">Issues</a></li>
-    <li><a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">Contributing</a></li>
-    <li><a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">Security policy</a></li>
+<section id="docs" aria-labelledby="docs-title">
+  <h2 id="docs-title"><a class="self" href="#docs">Documentation</a></h2>
+  <ul class="doc-index">
+    <li><a href="start.html"><span class="doc-name">Get started</span>
+      <span class="doc-desc">Install, write a first rule, make Grinch your default browser, and undo it.</span></a></li>
+    <li><a href="config.html"><span class="doc-name">Configuration</span>
+      <span class="doc-desc">Rules, match types, browser targets and profiles, URL rewrites, and options.</span></a></li>
+    <li><a href="troubleshooting.html"><span class="doc-name">Troubleshooting</span>
+      <span class="doc-desc">Why a link opened where it did: commands, the menu bar, and the diagnostic log.</span></a></li>
+    <li><a href="integrations.html"><span class="doc-name">Integrations</span>
+      <span class="doc-desc">Sign-in popups, the <code>grinch:</code> URL scheme, browser add-ons, and URL shorteners.</span></a></li>
+    <li><a href="finicky.html"><span class="doc-name">Moving from Finicky</span>
+      <span class="doc-desc">Bring a Finicky v4 config across and adjust what differs.</span></a></li>
+    <li><a href="performance.html"><span class="doc-name">Performance</span>
+      <span class="doc-desc">Routing benchmarks, memory measurements, and how to reproduce them.</span></a></li>
   </ul>
 </section>
 
 </main>
 
-<footer>
-  <div class="container">
-    <p>MIT licensed. Inspired by <a href="https://github.com/johnste/finicky">Finicky</a> and <a href="https://github.com/expelledboy/finch">Finch</a>.</p>
-    <p><a href="https://github.com/jamtur01/grinch">github.com/jamtur01/grinch</a></p>
+<footer class="site-footer">
+  <div class="wide">
+    <div>
+      <p>Grinch is MIT licensed and inspired by
+        <a href="https://github.com/johnste/finicky">Finicky</a> and
+        <a href="https://github.com/expelledboy/finch">Finch</a>.</p>
+      <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest release</a> is supported.</p>
+    </div>
+    <ul>
+      <li><a href="https://github.com/jamtur01/grinch">Source</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/releases">Releases</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/issues">Issues</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">Contributing</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">Security policy</a></li>
+    </ul>
   </div>
 </footer>
 

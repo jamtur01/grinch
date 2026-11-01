@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moving from Finicky · Grinch</title>
+<meta name="description" content="Move a Finicky v4 config to Grinch and what to change.">
+<meta name="theme-color" content="#0d1117">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Moving from Finicky · Grinch">
+<meta property="og:description" content="Move a Finicky v4 config to Grinch and what to change.">
+<meta property="og:url" content="https://jamtur01.github.io/grinch/finicky.html">
+<meta property="og:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Grinch: choose where links open on your Mac">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://jamtur01.github.io/grinch/social-preview.png">
+
+<link rel="icon" href="grinch-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wide">
+    <a class="brand" href="index.html">
+      <img src="grinch-icon.svg" width="28" height="28" alt="">Grinch
+    </a>
+    <nav class="site-nav" aria-label="Documentation">
+      <ul>
+      <li><a href="start.html">Get started</a></li>
+      <li><a href="config.html">Configuration</a></li>
+      <li><a href="troubleshooting.html">Troubleshooting</a></li>
+      <li><a href="integrations.html">Integrations</a></li>
+      <li><a href="finicky.html" aria-current="page">From Finicky</a></li>
+      <li><a href="performance.html">Performance</a></li>
+      </ul>
+    </nav>
+    <a class="cta primary small header-download" href="https://github.com/jamtur01/grinch/releases/latest">Download</a>
+  </div>
+</header>
+
+<main id="main" class="container">
+
+<div class="page-head">
+  <h1>Moving from Finicky</h1>
+  <p class="lead">Grinch is inspired by <a href="https://github.com/johnste/finicky">Finicky</a>
+    and supports many Finicky v4 configs. Copy yours across, validate it, and
+    adjust the few places listed below.</p>
+  <nav class="toc" aria-labelledby="toc-title">
+    <h2 id="toc-title">On this page</h2>
+    <ul>
+      <li><a href="#move">Move your config</a></li>
+      <li><a href="#what-works">What works as-is</a></li>
+      <li><a href="#what-to-change">What to change</a></li>
+      <li><a href="#finicky-namespace">The <code>finicky</code> namespace</a></li>
+      <li><a href="#v3">Finicky v3 configs</a></li>
+    </ul>
+  </nav>
+</div>
+
+<div class="page-body">
+
+<section id="move" aria-labelledby="move-title">
+  <h2 id="move-title"><a class="self" href="#move">Move your config</a></h2>
+  <ol>
+    <li><a href="start.html#install">Install Grinch</a> and add the
+      <a href="start.html#first-rule"><code>Grinch</code> alias</a>.</li>
+    <li>Copy your Finicky config to a location Grinch reads. If yours lives
+      somewhere other than <code>~/.finicky.js</code>, copy that file instead:
+      <figure class="term">
+        <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">mkdir -p ~/.config</span>
+<span class="cmd">cp ~/.finicky.js ~/.config/grinch.js</span></code></pre>
+      </figure>
+    </li>
+    <li>Run <code>Grinch --validate</code>. If it reports an error, check
+      <a href="#what-to-change">what to change</a>.</li>
+    <li>Quit Finicky, open Grinch, and choose Grinch under
+      <strong>System Settings → Desktop &amp; Dock → Default web browser</strong>.</li>
+    <li>Check a few links with <code>Grinch --test &lt;url&gt;</code>. Bare-string
+      matchers behave differently; see the first item under
+      <a href="#what-to-change">what to change</a>.</li>
+  </ol>
+  <p>If you use Finicky's Chrome or Firefox add-on, point it at
+    <a href="integrations.html#browser-add-ons"><code>grinch://open/…</code></a>.</p>
+</section>
+
+<section id="what-works" aria-labelledby="what-works-title">
+  <h2 id="what-works-title"><a class="self" href="#what-works">What works as-is</a></h2>
+  <ul>
+    <li><code>export default { … }</code> as well as <code>module.exports</code>.</li>
+    <li>Finicky's key names: <code>defaultBrowser</code>, <code>handlers</code>,
+      and a rule's <code>browser</code> are aliases for <code>default</code>,
+      <code>rules</code>, and <code>open</code>.</li>
+    <li>Wildcard and regex matchers, arrays of matchers, <code>null</code> to
+      open nothing, and combined <code>{match, url, browser}</code> entries.</li>
+    <li>Rewrite functions, including the legacy URL-object return shape, and
+      <code>undefined</code> as "leave unchanged".</li>
+    <li><code>ctx.opener</code> with the same meaning as Finicky v4's
+      <code>options.opener</code>.</li>
+    <li><code>appType</code>: <code>"appName"</code>, <code>"bundleId"</code>,
+      <code>"path"</code>, and <code>"none"</code>. When you leave it out, a
+      reverse-DNS string is treated as a bundle ID and anything else as an app
+      name.</li>
+    <li>Option keys such as <code>hideIcon</code> and <code>logRequests</code>.
+      <code>urlShorteners</code> and <code>keepRunning</code> are accepted but
+      have no effect.</li>
+  </ul>
+</section>
+
+<section id="what-to-change" aria-labelledby="what-to-change-title">
+  <h2 id="what-to-change-title"><a class="self" href="#what-to-change">What to change</a></h2>
+
+  <h3 id="bare-strings"><a class="self" href="#bare-strings">Bare-string matchers match hostnames</a></h3>
+  <p>In Grinch, <code>match: "github.com"</code> matches the host and its
+    subdomains. In Finicky v4, the same string is compared with
+    <code>===</code> against the full URL, so it rarely fires. If your config
+    relied on exact hostnames, use <code>finicky.matchHostnames("github.com")</code>.
+    See <a href="config.html#bare-strings">bare-string matchers</a>.</p>
+
+  <h3 id="imports"><a class="self" href="#imports">No <code>import</code> or named exports</a></h3>
+  <p>Grinch turns <code>export default &lt;expr&gt;</code> into
+    <code>module.exports = &lt;expr&gt;</code> when it loads the config, so
+    pasting a v4 config works. <code>import</code> lines and named exports such
+    as <code>export const</code> or <code>export function</code> fail with a
+    load error that points at <code>module.exports</code>: JavaScriptCore runs
+    the file as a script, so an import has nothing to resolve against. Inline
+    what you need, or pre-process the file.</p>
+
+  <h3 id="fetch"><a class="self" href="#fetch">No <code>await fetch()</code></a></h3>
+  <p>Grinch decides synchronously, so Finicky's <code>shortenerExpander</code>
+    pattern can't run. Expand shortened links outside Grinch instead; see
+    <a href="integrations.html#url-shorteners">URL shorteners</a>.</p>
+
+  <h3 id="missing-methods"><a class="self" href="#missing-methods">Three <code>finicky</code> methods are missing</a></h3>
+  <p><code>finicky.notify</code>, <code>finicky.getPowerInfo</code>, and
+    <code>finicky.getBattery</code> don't exist. Calling one throws a
+    <code>TypeError</code>. At the top level of the config, the load fails;
+    inside a matcher or <code>open</code> function, the rule is skipped and a
+    <code>runtime_js_error</code> event is logged.</p>
+
+  <h3 id="window-title"><a class="self" href="#window-title"><code>windowTitle</code> needs Accessibility permission</a></h3>
+  <p>Grinch asks for Accessibility permission when it launches. Until you grant
+    it, <code>opener.windowTitle</code> is <code>""</code> and rules that depend
+    on it don't match.</p>
+</section>
+
+<section id="finicky-namespace" aria-labelledby="finicky-namespace-title">
+  <h2 id="finicky-namespace-title"><a class="self" href="#finicky-namespace">The <code>finicky</code> namespace</a></h2>
+  <p>Five Finicky v4 methods are present, plus one Grinch helper:</p>
+  <dl class="options">
+    <dt><code>finicky.matchHostnames(matchers)</code></dt>
+    <dd>An exact-hostname matcher, compatible with Finicky. For subdomains, use
+      Grinch's <code>domain(…)</code>.</dd>
+    <dt><code>finicky.matchDomains(matchers)</code></dt>
+    <dd>A deprecated alias. It warns and calls <code>matchHostnames</code>.</dd>
+    <dt><code>finicky.getModifierKeys()</code></dt>
+    <dd>The real state of shift, option, command, control, caps lock, and fn.</dd>
+    <dt><code>finicky.isAppRunning(id)</code></dt>
+    <dd>Matches a bundle ID or a localized app name.</dd>
+    <dt><code>finicky.getSystemInfo()</code></dt>
+    <dd><code>{localizedName, name}</code> for this Mac.</dd>
+    <dt><code>finicky.getRunningBrowsers()</code> (Grinch only)</dt>
+    <dd>The bundle IDs of known browsers that are running, in family-table
+      order. Combine it with <code>Array.prototype.find</code> to prefer the
+      first running browser:
+      <code>prefs.find(b =&gt; running.includes(b)) || "com.apple.Safari"</code>.</dd>
+  </dl>
+</section>
+
+<section id="v3" aria-labelledby="v3-title">
+  <h2 id="v3-title"><a class="self" href="#v3">Finicky v3 configs</a></h2>
+  <p>Port v3 configs with
+    <a href="https://github.com/johnste/finicky/wiki/Migration-guide">Finicky's migration guide</a>
+    first. Grinch handles the most common v3 leftovers:</p>
+  <ul>
+    <li><code>url.urlString</code>, <code>url.url</code>, and
+      <code>url.opener</code> still return usable values and log a one-line
+      warning naming the v4 equivalent. <code>urlString</code> returns
+      <code>url.href</code>, <code>url.url</code> returns the legacy
+      <code>{protocol, hostname, …}</code> object, and <code>url.opener</code>
+      returns the same opener object as <code>ctx.opener</code>, or
+      <code>null</code>.</li>
+    <li><code>url.keys</code> throws, with a message pointing at
+      <code>ctx.modifiers</code> and <code>finicky.getModifierKeys()</code>. Its
+      v3 shape differs from v4's, and returning the wrong shape silently would
+      send links to the wrong place.</li>
+  </ul>
+</section>
+
+<section id="compare" aria-labelledby="compare-title">
+  <h2 id="compare-title"><a class="self" href="#compare">Memory</a></h2>
+  <p>Finicky bundles a WebKit instance for its config window. In a historical
+    measurement, Grinch used about 15.5 MB of resident memory and Finicky about
+    142.5 MB. The <a href="performance.html#footprint">footprint table</a> has
+    the full comparison.</p>
+</section>
+
+<nav class="next-page" aria-label="Previous and next pages">
+  <a href="integrations.html">← Integrations</a>
+  <a class="later" href="performance.html">Next: Performance →</a>
+</nav>
+
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wide">
+    <div>
+      <p>Grinch is MIT licensed and inspired by
+        <a href="https://github.com/johnste/finicky">Finicky</a> and
+        <a href="https://github.com/expelledboy/finch">Finch</a>.</p>
+      <p>Only the <a href="https://github.com/jamtur01/grinch/releases/latest">latest release</a> is supported.</p>
+    </div>
+    <ul>
+      <li><a href="https://github.com/jamtur01/grinch">Source</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/releases">Releases</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/issues">Issues</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/CONTRIBUTING.md">Contributing</a></li>
+      <li><a href="https://github.com/jamtur01/grinch/blob/main/SECURITY.md">Security policy</a></li>
+    </ul>
+  </div>
+</footer>
+
+</body>
+</html>

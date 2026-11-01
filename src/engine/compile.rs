@@ -422,7 +422,8 @@ fn compile_strip(
 }
 
 /// Port of Finicky's `matchWildcard`. Compiles a glob-style pattern to a
-/// case-insensitive regex anchored at both ends. `*` is non-greedy `.*?`;
+/// case-sensitive regex anchored at both ends; URL hostnames are normalized
+/// separately. `*` is non-greedy `.*?`;
 /// `\*` is a literal asterisk; patterns without a leading protocol/asterisk
 /// get an optional `(?:https?:|...)?(?://)?` prefix so e.g. `"zoom.us/j/*"`
 /// matches both bare and protocol-prefixed URLs.

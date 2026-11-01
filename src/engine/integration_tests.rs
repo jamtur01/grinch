@@ -868,6 +868,14 @@ fn dead_rules_and_unsupported_options_produce_config_warnings() {
             "neither `open` nor `url`",
         ),
         (
+            r#"module.exports={default:"com.apple.Safari",rewrite:[{url:"https://example.com/"}]}"#,
+            "rewrite[0] has no match",
+        ),
+        (
+            r#"module.exports={default:"com.apple.Safari",rewrite:[{match:"example.com"}]}"#,
+            "rewrite[0] has no `url`",
+        ),
+        (
             r#"module.exports={default:{name:"com.apple.Safari",incognito:true}}"#,
             "incognito",
         ),

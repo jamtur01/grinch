@@ -291,6 +291,9 @@ module.exports = {
     Every matching rewriter applies, in order. This removes common tracking
     parameters before the rules see the URL:</p>
 <pre><code>rewrite: [strip("utm_*", "fbclid")],</code></pre>
+  <p>Object entries need both a <code>match</code> and a <code>url</code>;
+    missing fields or an empty match produce a config warning. The standalone
+    helpers below run without a <code>match</code>.</p>
   <div class="table-wrap">
   <table class="stack">
     <thead><tr><th scope="col">Form</th><th scope="col">Effect</th></tr></thead>

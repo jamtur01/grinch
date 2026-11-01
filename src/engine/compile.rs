@@ -254,7 +254,17 @@ pub(crate) fn parse_rewrite_array(
             function_ctor,
             diagnostics,
         )?;
-        let Some(uv) = url_val else { continue };
+        if matchers.is_empty() {
+            diagnostics.record_config_warning(&format!(
+                "rewrite[{i}] has no match; this rewrite will not run"
+            ));
+        }
+        let Some(uv) = url_val else {
+            diagnostics.record_config_warning(&format!(
+                "rewrite[{i}] has no `url`; this rewrite will not run"
+            ));
+            continue;
+        };
         let Some(rewriter) = compile_rewriter(&uv, function_ctor) else {
             continue;
         };

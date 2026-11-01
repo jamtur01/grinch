@@ -242,11 +242,11 @@ pub(crate) fn parse_browser_jsval(
             // Chromium/Firefox tables (path-form specs, less-common
             // forks, typos). Naming the bundle in the message makes
             // it actionable for the typo case.
-            eprintln!(
-                "grinch: ignoring `incognito: true` for {bundle_id} — no \
+            diagnostics.record_config_warning(&format!(
+                "ignoring `incognito: true` for {bundle_id} — no \
                      CLI private-mode flag known for this browser family \
                      (supported: Chromium, Firefox)"
-            );
+            ));
         }
     }
 
@@ -261,11 +261,11 @@ pub(crate) fn parse_browser_jsval(
             args.push(flag.to_string());
             creates_new_instance = true;
         } else {
-            eprintln!(
-                "grinch: ignoring `openInNewWindow: true` for {bundle_id} — \
+            diagnostics.record_config_warning(&format!(
+                "ignoring `openInNewWindow: true` for {bundle_id} — \
                      no CLI new-window flag known for this browser family \
                      (supported: Chromium, Firefox)"
-            );
+            ));
         }
     }
 

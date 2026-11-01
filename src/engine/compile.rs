@@ -47,7 +47,19 @@ pub(crate) fn parse_rule_array(
         // `open` (Grinch) and `browser` (Finicky) are aliases.
         let open_val = key(&item, "open").or_else(|| key(&item, "browser"));
         let url_val = key(&item, "url");
-        let matchers = compile_matchers(match_val.as_deref(), regexp_ctor, function_ctor);
+        let matchers = compile_matchers(
+            match_val.as_deref(),
+            regexp_ctor,
+            function_ctor,
+            diagnostics,
+        );
+        if match_val
+            .as_ref()
+            .is_none_or(|value| is_undef_or_null(value))
+        {
+            diagnostics
+                .record_config_warning(&format!("rules[{i}] has no match and will never fire"));
+        }
 
         // Optional per-rule rewriter (combined entry).
         let rewriter = url_val
@@ -69,22 +81,17 @@ pub(crate) fn parse_rule_array(
                 Some(b) if b.bundle_id.is_empty() => Target::Suppress,
                 Some(b) => Target::Browser(b),
                 None => {
-                    eprintln!(
-                        "grinch: rules[{i}] has unresolvable `open` (not a string, \
-                         object, or browser key) — entry ignored"
-                    );
+                    diagnostics.record_config_warning(&format!("rules[{i}] has unresolvable `open` (not a string, object, or browser key) — entry ignored"));
                     continue;
                 }
             },
             None => {
                 if rewriter.is_some() {
-                    eprintln!(
-                        "grinch: rules[{i}] has `url:` but no `open:` — move it \
-                         to the top-level `rewrite:` array if you want it to \
-                         apply globally; rules entries need an `open` to route"
-                    );
+                    diagnostics.record_config_warning(&format!("rules[{i}] has `url:` but no `open:` — move it to the top-level `rewrite:` array if it should apply globally"));
                 } else {
-                    eprintln!("grinch: rules[{i}] has neither `open` nor `url` — entry ignored");
+                    diagnostics.record_config_warning(&format!(
+                        "rules[{i}] has neither `open` nor `url` — entry ignored"
+                    ));
                 }
                 continue;
             }
@@ -106,13 +113,14 @@ pub(crate) fn parse_rule_array(
 
 /// Build a human-readable label for a rule's `match:` value at parse time.
 /// String / array matchers turn into themselves; `domain()`/`from()`/`running()`
-/// objects render as `kind:items`; fn matchers fall back to the first line of
-/// their source. Returns `"*"` for `match: () => true` shorthand (no match key).
+/// objects render as `kind:items`; fn matchers fall back to their source.
 fn derive_match_label(v: Option<&JSValue>) -> String {
     const MAX: usize = 80;
-    let Some(v) = v else { return "*".to_string() };
+    let Some(v) = v else {
+        return "(no match)".to_string();
+    };
     if is_undef_or_null(v) {
-        return "*".to_string();
+        return "(no match)".to_string();
     }
     if unsafe { v.isString() } {
         return js_to_string(v).unwrap_or_default();
@@ -189,6 +197,7 @@ pub(crate) fn parse_rewrite_array(
     arr: &JSValue,
     regexp_ctor: &JSValue,
     function_ctor: &JSValue,
+    diagnostics: &DiagnosticLog,
 ) -> Vec<RewriteRule> {
     if is_undef_or_null(arr) {
         return vec![];
@@ -202,7 +211,7 @@ pub(crate) fn parse_rewrite_array(
 
         // Bare strip(...) marker (no match field) — treat as "always run".
         if is_marker(&item, "strip") {
-            if let Some(r) = compile_strip(&item) {
+            if let Some(r) = compile_strip(&item, diagnostics) {
                 out.push(RewriteRule {
                     matchers: vec![Matcher::Always],
                     rewriter: r,
@@ -235,7 +244,12 @@ pub(crate) fn parse_rewrite_array(
 
         let match_val = key(&item, "match");
         let url_val = key(&item, "url");
-        let matchers = compile_matchers(match_val.as_deref(), regexp_ctor, function_ctor);
+        let matchers = compile_matchers(
+            match_val.as_deref(),
+            regexp_ctor,
+            function_ctor,
+            diagnostics,
+        );
         let Some(uv) = url_val else { continue };
         let Some(rewriter) = compile_rewriter(&uv, function_ctor) else {
             continue;
@@ -262,6 +276,7 @@ fn compile_matchers(
     v: Option<&JSValue>,
     regexp_ctor: &JSValue,
     function_ctor: &JSValue,
+    diagnostics: &DiagnosticLog,
 ) -> Vec<Matcher> {
     let Some(v) = v else { return vec![] };
     if is_undef_or_null(v) {
@@ -272,14 +287,14 @@ fn compile_matchers(
         let mut ms = Vec::with_capacity(count);
         for i in 0..count {
             if let Some(item) = js_array_at(v, i)
-                && let Some(m) = compile_matcher(&item, regexp_ctor, function_ctor)
+                && let Some(m) = compile_matcher(&item, regexp_ctor, function_ctor, diagnostics)
             {
                 ms.push(m);
             }
         }
         return ms;
     }
-    compile_matcher(v, regexp_ctor, function_ctor)
+    compile_matcher(v, regexp_ctor, function_ctor, diagnostics)
         .map(|m| vec![m])
         .unwrap_or_default()
 }
@@ -288,6 +303,7 @@ pub(crate) fn compile_matcher(
     v: &JSValue,
     regexp_ctor: &JSValue,
     function_ctor: &JSValue,
+    diagnostics: &DiagnosticLog,
 ) -> Option<Matcher> {
     // String → either a wildcard pattern (if it contains * or /) or a bare
     // hostname shorthand for a domain-and-subdomain match.
@@ -359,11 +375,7 @@ pub(crate) fn compile_matcher(
                     // no diagnostic. Surface the failure at load time
                     // so users can port the pattern to a supported
                     // form (e.g. wildcards, fn matchers).
-                    eprintln!(
-                        "grinch: rule matcher regex /{pattern}/ failed to compile: \
-                             {e}. The rule will never match — replace with a wildcard, \
-                             a `domain()` helper, or a `(url, ctx) => …` fn matcher."
-                    );
+                    diagnostics.record_config_warning(&format!("regex /{pattern}/ failed to compile: {e}. This matcher will not fire; use a wildcard, domain(), or function matcher"));
                 }
             }
         }
@@ -374,11 +386,13 @@ pub(crate) fn compile_matcher(
     None
 }
 
-fn compile_strip(v: &JSValue) -> Option<Rewriter> {
+fn compile_strip(v: &JSValue, diagnostics: &DiagnosticLog) -> Option<Rewriter> {
     let arr = key(v, "params")?;
     let params = js_array_to_strings(&arr);
     if params.is_empty() {
-        eprintln!("grinch: strip() called with no arguments — rewriter will never strip anything");
+        diagnostics.record_config_warning(
+            "strip() called with no arguments — rewriter will never strip anything",
+        );
     }
     let mut exact = HashSet::new();
     let mut prefixes = Vec::new();

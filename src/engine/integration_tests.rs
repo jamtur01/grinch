@@ -437,6 +437,35 @@ fn config_warnings_include_options_and_prioritize_suppressed_rules() {
 }
 
 #[test]
+fn dead_rules_and_unsupported_options_produce_config_warnings() {
+    for (source, expected) in [
+        (
+            r#"module.exports={default:"com.apple.Safari",rules:[{match:/(?<=a)b/,open:"com.apple.Safari"}]}"#,
+            "failed to compile",
+        ),
+        (
+            r#"module.exports={default:"com.apple.Safari",rules:[{open:"com.apple.Safari"}]}"#,
+            "no match",
+        ),
+        (
+            r#"module.exports={default:"com.apple.Safari",rules:[{match:"example.com"}]}"#,
+            "neither `open` nor `url`",
+        ),
+        (
+            r#"module.exports={default:{name:"com.apple.Safari",incognito:true}}"#,
+            "incognito",
+        ),
+    ] {
+        let diagnostics = Rc::new(isolated_diagnostics());
+        let engine = build_engine_with_diagnostics(source, Rc::clone(&diagnostics));
+        assert!(diagnostics.config_warning().unwrap().contains(expected));
+        if expected == "no match" {
+            assert!(engine.rule_listing()[0].contains("(no match)"));
+        }
+    }
+}
+
+#[test]
 fn top_level_warning_scan_does_not_evaluate_properties() {
     let diagnostics = Rc::new(isolated_diagnostics());
     let engine = build_engine_with_diagnostics(

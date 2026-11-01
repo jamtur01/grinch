@@ -978,8 +978,15 @@ impl Delegate {
             let _ = engine.resolve(url, &opener, ModifierFlags::default());
         }
         let start = std::time::Instant::now();
-        for _ in 0..n {
-            let _ = engine.resolve(url, &opener, ModifierFlags::default());
+        let mut remaining = n;
+        while remaining > 0 {
+            let batch = remaining.min(1_000);
+            objc2::rc::autoreleasepool(|_| {
+                for _ in 0..batch {
+                    let _ = engine.resolve(url, &opener, ModifierFlags::default());
+                }
+            });
+            remaining -= batch;
         }
         let elapsed = start.elapsed();
         let ns_per_op = elapsed.as_secs_f64() * 1_000_000_000.0 / n.max(1) as f64;

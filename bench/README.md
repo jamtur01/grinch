@@ -18,7 +18,8 @@ bench/run.sh init      # config loading
 
 The runner stages each config under a temporary HOME, keeping your config and
 logs untouched. It runs each workload ten times and reports the fifth sorted
-sample, the lower median. Routing times use nanoseconds per operation (`ns/op`);
+sample, the lower median. Routing benchmarks drain an autorelease pool every 1,000 operations.
+Routing times use nanoseconds per operation (`ns/op`);
 config-loading times use microseconds per operation (`µs/op`).
 
 ## Workloads
@@ -77,32 +78,32 @@ Representative release-build measurements on Apple Silicon:
 
 | Routing workload | ns/op |
 |---|---:|
-| floor | 6.6 |
-| default | 64.2 |
-| strip | 179.5 |
-| bare | 39.6 |
-| domain | 46.1 |
-| regex | 23.1 |
-| wildcard | 31.6 |
-| many-rules | 268.1 |
-| rewrite-then-domain | 239.2 |
-| slow-native | 5454 |
-| slow-dynopen | 4539.8 |
-| slow-early | 40.1 |
-| slow-drop | 2422.9 |
-| slow-proto | 3955.6 |
-| slow-slack | 5839.3 |
-| slow-urlonly | 2669.3 |
-| dynamic-default | 2251 |
-| dynamic-object | 7554.2 |
-| rewrite-chain | 14615 |
-| from | 8.5 |
-| logged | 5066.7 |
+| floor | 6.3 |
+| default | 62.8 |
+| strip | 182.2 |
+| bare | 38.4 |
+| domain | 45.5 |
+| regex | 23.2 |
+| wildcard | 31.4 |
+| many-rules | 263.3 |
+| rewrite-then-domain | 242.9 |
+| slow-native | 4717.1 |
+| slow-dynopen | 3855.3 |
+| slow-early | 39.2 |
+| slow-drop | 2143.9 |
+| slow-proto | 3395.6 |
+| slow-slack | 4194.8 |
+| slow-urlonly | 2363.0 |
+| dynamic-default | 1959.4 |
+| dynamic-object | 6480.2 |
+| rewrite-chain | 10095.9 |
+| from | 8.4 |
+| logged | 6304.1 |
 
 | Config loading | µs/op |
 |---|---:|
-| floor | 466.23 |
-| many-rules | 624.19 |
+| floor | 448.65 |
+| many-rules | 714.60 |
 | Firefox selectable profile | 560.11 |
 
 ## Including macOS lookups

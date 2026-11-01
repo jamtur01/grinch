@@ -49,7 +49,7 @@
 <div class="page-head">
   <h1>Performance</h1>
   <p class="lead">How long Grinch takes to decide where a link goes, and how much
-    memory it uses. Every number here can be reproduced.</p>
+    memory it uses. The routing workloads can be run on your Mac.</p>
   <nav class="toc" aria-labelledby="toc-title">
     <h2 id="toc-title">On this page</h2>
     <ul class="toc-list">
@@ -70,7 +70,8 @@
   <p>Run <code>bench/run.sh</code> to reproduce them. The workloads are in
     <code>bench/configs/</code>; setup and full results are in the
     <a href="https://github.com/jamtur01/grinch/blob/main/bench/README.md">benchmark notes</a>.
-    To time your own config, run <code>Grinch --bench N &lt;url&gt;</code>.</p>
+    To time your own config, run <code>Grinch --bench N &lt;url&gt;</code>.
+    <code>Grinch --bench-init N</code> measures config loading.</p>
 </section>
 
 <section id="declarative" aria-labelledby="declarative-title">
@@ -82,14 +83,14 @@
   <table>
     <thead><tr><th scope="col">Workload</th><th scope="col" class="num">ns per URL</th></tr></thead>
     <tbody>
-      <tr><th scope="row">Floor: no rules, no rewrite</th><td class="num">6.6</td></tr>
-      <tr><th scope="row">Default fallback, no query</th><td class="num">64.2</td></tr>
-      <tr><th scope="row">Default fallback, <code>strip</code> removes a parameter</th><td class="num">179.5</td></tr>
-      <tr><th scope="row">Bare-hostname match (<code>"github.com"</code>)</th><td class="num">39.6</td></tr>
-      <tr><th scope="row"><code>domain()</code> match</th><td class="num">46.1</td></tr>
-      <tr><th scope="row">Regex match</th><td class="num">23.1</td></tr>
-      <tr><th scope="row">Wildcard match (<code>"zoom.us/j/*"</code>)</th><td class="num">31.6</td></tr>
-      <tr><th scope="row">50 bare-hostname rules, the last one matches</th><td class="num">268.1</td></tr>
+      <tr><th scope="row">Floor: no rules, no rewrite</th><td class="num">6.3</td></tr>
+      <tr><th scope="row">Default fallback, no query</th><td class="num">62.8</td></tr>
+      <tr><th scope="row">Default fallback, <code>strip</code> removes a parameter</th><td class="num">182.2</td></tr>
+      <tr><th scope="row">Bare-hostname match (<code>"github.com"</code>)</th><td class="num">38.4</td></tr>
+      <tr><th scope="row"><code>domain()</code> match</th><td class="num">45.5</td></tr>
+      <tr><th scope="row">Regex match</th><td class="num">23.2</td></tr>
+      <tr><th scope="row">Wildcard match (<code>"zoom.us/j/*"</code>)</th><td class="num">31.4</td></tr>
+      <tr><th scope="row">50 bare-hostname rules, the last one matches</th><td class="num">263.3</td></tr>
     </tbody>
   </table>
   </div>
@@ -106,12 +107,12 @@
   <table>
     <thead><tr><th scope="col">Workload</th><th scope="col" class="num">ns per URL</th></tr></thead>
     <tbody>
-      <tr><th scope="row">A native rule matches first; no function runs</th><td class="num">40.1</td></tr>
-      <tr><th scope="row">Drop the URL with <code>() =&gt; null</code> (URL only)</th><td class="num">2,422.9</td></tr>
-      <tr><th scope="row">HTTP to HTTPS by changing the URL (URL only)</th><td class="num">3,955.6</td></tr>
-      <tr><th scope="row"><code>?browser=</code> dynamic <code>open</code> function (URL-only matcher)</th><td class="num">4,539.8</td></tr>
-      <tr><th scope="row">4 function matchers reading <code>ctx.opener</code></th><td class="num">5,454</td></tr>
-      <tr><th scope="row">Full Slack web to <code>slack://</code> rewrite</th><td class="num">5,839.3</td></tr>
+      <tr><th scope="row">A native rule matches first; no function runs</th><td class="num">39.2</td></tr>
+      <tr><th scope="row">Drop the URL with <code>() =&gt; null</code> (URL only)</th><td class="num">2,143.9</td></tr>
+      <tr><th scope="row">HTTP to HTTPS by changing the URL (URL only)</th><td class="num">3,395.6</td></tr>
+      <tr><th scope="row"><code>?browser=</code> dynamic <code>open</code> function (URL-only matcher)</th><td class="num">3,855.3</td></tr>
+      <tr><th scope="row">4 function matchers reading <code>ctx.opener</code></th><td class="num">4,717.1</td></tr>
+      <tr><th scope="row">Full Slack web to <code>slack://</code> rewrite</th><td class="num">4,194.8</td></tr>
     </tbody>
   </table>
   </div>

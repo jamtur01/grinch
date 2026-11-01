@@ -114,6 +114,20 @@
     <code>matchedRule.name</code> field of diagnostic-log <code>resolve</code>
     events, which helps when a config has several function matchers: their
     automatic label is the first line of the function's source.</p>
+  <p>A rule's own fields are <code>match</code>, <code>open</code> (or
+    Finicky's <code>browser</code>), <code>url</code>, and <code>name</code>.
+    Launch options belong inside the <a href="#browser-targets">browser
+    target</a>:</p>
+<pre><code><span class="c">// Wrong: links that match this rule open nothing</span>
+{ match: "github.com", open: "Google Chrome", profile: "Work" },
+<span class="c">// Right</span>
+{ match: "github.com", open: { name: "Google Chrome", profile: "Work" } },</code></pre>
+  <p>If <code>profile</code>, <code>args</code>, <code>incognito</code>,
+    <code>openInNewWindow</code>, or <code>openInBackground</code> sits directly
+    on a rule, Grinch suppresses that rule and records a
+    <a href="troubleshooting.html#config-warnings">config warning</a>. Other
+    unknown fields on a rule or in a browser target object are ignored with a
+    config warning.</p>
 </section>
 
 <section id="match-types" aria-labelledby="match-types-title">
@@ -428,11 +442,8 @@ module.exports = {
   <p>The Finicky options <code>urlShorteners</code> and <code>keepRunning</code>
     are accepted but have no effect: shortened links need
     <a href="integrations.html#url-shorteners">expanding outside Grinch</a>, and
-    Grinch always stays running. Unknown keys produce a warning in the menu,
-    diagnostic log, and <code>--validate</code> output.</p>
-  <p>Put browser options such as <code>profile</code> and <code>args</code>
-    inside the rule's <code>open</code> object. If these options are placed
-    directly on a rule, Grinch warns and won't open links matching that rule.</p>
+    Grinch always stays running. An unknown key prints a warning to stderr,
+    which <code>Grinch --validate</code> shows.</p>
 </section>
 
 <nav class="next-page" aria-label="Previous and next pages">

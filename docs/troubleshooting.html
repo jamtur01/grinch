@@ -138,6 +138,16 @@ path:   /Users/alex/.config/grinch.js</span>
 <span class="cmd">echo $?</span>
 <span class="out">1</span></code></pre>
   </figure>
+  <p>Warnings don't fail validation. They print before the result, which
+    changes to <code>config OK with warnings</code>, and the exit status stays
+    0:</p>
+  <figure class="term">
+    <figcaption>Terminal</figcaption>
+<pre><code><span class="cmd">Grinch --validate</span>
+<span class="out">grinch: rules[0].profile is ignored; move it inside the browser target; this rule is suppressed
+grinch: config OK with warnings — /Users/alex/.config/grinch.js
+rules:  1</span></code></pre>
+  </figure>
 </section>
 
 <section id="menu-bar" aria-labelledby="menu-bar-title">
@@ -164,6 +174,14 @@ path:   /Users/alex/.config/grinch.js</span>
     failure. Routing keeps using the previous config until the next successful
     reload restores the icon. The full error is written to the diagnostic log as
     a <code>config_error</code> event.</p>
+  <p id="config-warnings">A config can also load with warnings, for example a
+    launch option placed directly on a rule instead of in its
+    <a href="config.html#rules">browser target</a>, or a field Grinch doesn't
+    recognise in a rule or target. The icon changes to <strong>⚠️</strong> and
+    the menu shows <strong>Config warning:</strong> with the first warning.
+    Config and profile errors take precedence. Each warning is printed to stderr
+    and written to the diagnostic log as a <code>config_warning</code> event.
+    Reloading a fixed config clears them.</p>
   <p>At launch, Grinch quits any other running copy of itself before adding its
     menu-bar item, so only one instance runs.</p>
   <p>With <a href="config.html#options"><code>hideIcon: true</code></a>, reopen
@@ -327,7 +345,7 @@ path:   /Users/alex/.config/grinch.js</span>
       <tr><th scope="row"><code>--test &lt;url&gt;</code></th><td>Run a URL through the rules without opening it. <code>grinch:</code> URLs are unwrapped, so <code>--test grinch:tel:+15551234567</code> tests routing for <code>tel:+15551234567</code>.</td></tr>
       <tr><th scope="row"><code>--list-rules</code></th><td>Print rule indices, labels, and targets.</td></tr>
       <tr><th scope="row"><code>--list-browsers</code></th><td>List every app registered to open <code>https://</code> URLs: bundle ID and display name.</td></tr>
-      <tr><th scope="row"><code>--validate</code></th><td>Load the config and report whether it parses. Exits 0 on success and 1 on a load error, printing the message and the path it read. Use it in editor save hooks and CI.</td></tr>
+      <tr><th scope="row"><code>--validate</code></th><td>Load the config and report whether it parses. Exits 0 on success, including when it prints warnings, and 1 on a load error, printing the message and the path it read. Use it in editor save hooks and CI.</td></tr>
       <tr><th scope="row"><code>--bench N &lt;url&gt;</code></th><td>Resolve a URL N times in-process and report timing.</td></tr>
     </tbody>
   </table>

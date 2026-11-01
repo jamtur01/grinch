@@ -60,8 +60,7 @@ fn profiles_ini_path(bundle_id: &str) -> Option<PathBuf> {
 /// repeated lookups for the same browser cheap.
 /// Read failures are cached as empty sets too, including for dynamic targets.
 /// ponytail: validation retries on Reload Config, not on each click after a transient failure.
-static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, HashSet<String>>>> =
-    OnceLock::new();
+static CACHE: OnceLock<std::sync::Mutex<HashMap<String, HashMap<String, usize>>>> = OnceLock::new();
 #[derive(Default)]
 struct GroupProfiles {
     profiles: HashMap<String, Vec<PathBuf>>,
@@ -221,7 +220,17 @@ pub fn resolve_profile_args(
     let legacy = cache
         .entry(bundle_id.to_string())
         .or_insert_with(|| load_profile_names(bundle_id, diagnostics));
-    if legacy.contains(profile) {
+    if let Some(count) = legacy.get(profile) {
+        if *count > 1 {
+            diagnostics.record_profile_error(
+                bundle_id,
+                profiles_ini_path(bundle_id).as_deref(),
+                &format!(
+                    "Firefox profile {profile:?} matches multiple profiles; use its full path"
+                ),
+            );
+            return Err(());
+        }
         return Ok(vec!["-P".to_string(), profile.to_string()]);
     }
     drop(cache);
@@ -270,14 +279,14 @@ fn profile_path_args(
     ])
 }
 
-fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<String> {
+fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashMap<String, usize> {
     let Some(path) = profiles_ini_path(bundle_id) else {
         diagnostics.record_profile_warning(
             bundle_id,
             None,
             "Cannot locate profiles.ini; check HOME.",
         );
-        return HashSet::new();
+        return HashMap::new();
     };
     match std::fs::read_to_string(&path) {
         Ok(content) => parse_profile_names(&content),
@@ -291,7 +300,7 @@ fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<S
                     crate::engine::profile_access_advice(&error)
                 ),
             );
-            HashSet::new()
+            HashMap::new()
         }
     }
 }
@@ -303,15 +312,19 @@ fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<S
 /// We deliberately skip `[Install...]` and `[General]` sections — they
 /// don't list profiles, and an `Install` section's `Default=Profiles/...`
 /// value is a relative directory path, not a profile name.
-fn parse_profile_names(content: &str) -> HashSet<String> {
-    let mut out = HashSet::new();
+fn parse_profile_names(content: &str) -> HashMap<String, usize> {
+    let mut out = HashMap::new();
     let mut in_profile_section = false;
+    let mut name = None;
     for raw_line in content.lines() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
+            if let Some(name) = name.take() {
+                *out.entry(name).or_insert(0) += 1;
+            }
             // Section headers like [Profile0], [Profile1], [General], [InstallXXX].
             in_profile_section = line.starts_with("[Profile");
             continue;
@@ -329,8 +342,11 @@ fn parse_profile_names(content: &str) -> HashSet<String> {
         if let Some((key, value)) = line.split_once('=')
             && key.trim() == "Name"
         {
-            out.insert(value.trim().to_string());
+            name = Some(value.trim().to_string());
         }
+    }
+    if let Some(name) = name {
+        *out.entry(name).or_insert(0) += 1;
     }
     out
 }
@@ -349,11 +365,11 @@ pub fn resolve_profile_name(bundle_id: &str, profile: &str, diagnostics: &Diagno
         .entry(bundle_id.to_string())
         .or_insert_with(|| load_profile_names(bundle_id, diagnostics));
 
-    if names.is_empty() || names.contains(profile) {
+    if names.is_empty() || names.contains_key(profile) {
         return profile.to_string();
     }
 
-    let known: Vec<&str> = names.iter().map(String::as_str).collect();
+    let known: Vec<&str> = names.keys().map(String::as_str).collect();
     diagnostics.record_profile_warning(
         bundle_id,
         profiles_ini_path(bundle_id).as_deref(),
@@ -400,9 +416,9 @@ Version=2
     fn parse_profile_names_extracts_all_profile_sections() {
         let names = parse_profile_names(SAMPLE_PROFILES_INI);
         assert_eq!(names.len(), 3);
-        assert!(names.contains("default-release"));
-        assert!(names.contains("Work"));
-        assert!(names.contains("dev-edition-default"));
+        assert!(names.contains_key("default-release"));
+        assert!(names.contains_key("Work"));
+        assert!(names.contains_key("dev-edition-default"));
     }
 
     #[test]
@@ -410,8 +426,8 @@ Version=2
         // Install section has Default=Profiles/... which is NOT a Name=
         // line and shouldn't be picked up. General has Version=2 etc.
         let names = parse_profile_names(SAMPLE_PROFILES_INI);
-        assert!(!names.contains("Profiles/abcd1234.default-release"));
-        assert!(!names.contains("2"));
+        assert!(!names.contains_key("Profiles/abcd1234.default-release"));
+        assert!(!names.contains_key("2"));
     }
 
     #[test]
@@ -433,9 +449,9 @@ Version=2
                        [Profile2]\n\
                        Name\t=\ttab-padded\n";
         let names = parse_profile_names(content);
-        assert!(names.contains("no-space-before"));
-        assert!(names.contains("no-space-after"));
-        assert!(names.contains("tab-padded"));
+        assert!(names.contains_key("no-space-before"));
+        assert!(names.contains_key("no-space-after"));
+        assert!(names.contains_key("tab-padded"));
         assert_eq!(names.len(), 3);
     }
 
@@ -449,7 +465,7 @@ Name=My Profile
 "#;
         let names = parse_profile_names(content);
         assert_eq!(names.len(), 1);
-        assert!(names.contains("My Profile"));
+        assert!(names.contains_key("My Profile"));
     }
 
     #[test]

@@ -2811,6 +2811,13 @@ fn firefox_selectable_profile_routing() {
             let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
             assert!(result.browser.bundle_id.is_empty(), "{profile}");
         }
+        std::fs::write(
+            root.join("profiles.ini"),
+            "[Profile0]\nName=Work\n[Profile1]\nName=Work\n",
+        )
+        .unwrap();
+        let engine = build_engine("module.exports = {default: 'org.mozilla.firefox:Work'};");
+        assert!(resolve(&engine, "https://example.com/").0.is_empty());
         for ini in [
             "[Profile0]\nName=Legacy\nStoreID=Group1\n[Profile1]\nStoreID=Missing\n",
             "[Profile0]\nName=Legacy\nStoreID=../Group1\n",

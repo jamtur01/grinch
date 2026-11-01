@@ -122,8 +122,8 @@ launches.
 
 | Workload | µs/op |
 |---|---:|
-| URL-only dynamic default | 1.62 |
-| Declarative `from()` with a Finder sender PID | 60.07 |
+| URL-only dynamic default | 2.15 |
+| Declarative `from()` with a Finder sender PID | 1.64 |
 
 For comparisons, use the same machine, compiler, configs, and iteration counts.
 Alternate builds between runs to reduce the effect of changing system load.

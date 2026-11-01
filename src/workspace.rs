@@ -294,7 +294,7 @@ pub fn opener_from_pid(pid: i32) -> Option<Opener> {
     if pid <= 0 {
         return None;
     }
-    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+    let app = running_app_for_pid(pid)?;
     let bundle_id = opener_bundle_id(&app)?;
     let name = app
         .localizedName()
@@ -318,11 +318,22 @@ pub fn opener_id_from_pid(pid: i32) -> Option<Opener> {
     if pid <= 0 {
         return None;
     }
-    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+    let app = running_app_for_pid(pid)?;
     Some(Opener {
         bundle_id: opener_bundle_id(&app)?,
         ..Opener::default()
     })
+}
+
+fn running_app_for_pid(pid: i32) -> Option<Retained<NSRunningApplication>> {
+    let apps = NSWorkspace::sharedWorkspace().runningApplications();
+    for i in 0..apps.count() {
+        let app = apps.objectAtIndex(i);
+        if app.processIdentifier() == pid && !app.isTerminated() {
+            return Some(app);
+        }
+    }
+    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
 }
 
 /// Terminate any other running instances of Grinch with the same bundle

@@ -514,7 +514,7 @@ fn is_host_port_pattern(pattern: &str) -> bool {
     let Some((host, rest)) = pattern.split_once(':') else {
         return false;
     };
-    if host != "localhost" && !host.contains('.') {
+    if !host.eq_ignore_ascii_case("localhost") && !host.contains('.') {
         return false;
     }
     let port = rest.split(['/', '?', '#']).next().unwrap_or("");

@@ -303,6 +303,15 @@ fn hostname_and_port_patterns_match_urls_with_that_port() {
         resolve(&engine, "http://localhost:30001/").0,
         "com.apple.Safari"
     );
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: "LOCALHOST:3000/*", open: "com.google.Chrome" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "http://localhost:3000/path").0,
+        "com.google.Chrome"
+    );
 }
 
 #[test]

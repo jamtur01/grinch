@@ -240,6 +240,9 @@ fn unwrap_proofpoint_v3(url: &str) -> Option<String> {
             i += 1;
         }
     }
+    if replacement.next().is_some() {
+        return None;
+    }
     let result = String::from_utf8(result).ok()?;
     if looks_like_url(&result) {
         Some(result)

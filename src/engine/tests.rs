@@ -480,6 +480,11 @@ fn proofpoint_v3_empty_marker_rejects_literal_star() {
 
 #[test]
 fn proofpoint_v3_rejects_malformed_url() {
+    // Extra replacement bytes must not be silently dropped.
+    assert!(
+        unwrap_safelink("https://urldefense.com/v3/__https://example.com/x**Ay*__;w6nDqSM!!tag$")
+            .is_none()
+    );
     // Missing the `__` delimiters around the encoded payload.
     assert!(unwrap_safelink("https://urldefense.com/v3/not-a-v3-shape").is_none());
     // Missing the marker terminator (`!`).

@@ -347,7 +347,8 @@ fn running_app_for_pid(pid: i32) -> Option<Retained<NSRunningApplication>> {
 /// icons that never get reaped — see Finicky issue #515 / PR #516, where
 /// users hit 16 status items on a single machine.
 ///
-/// Mirrors Finicky's reference implementation: enumerate
+/// Serialize duplicate cleanup so simultaneous launches cannot terminate one
+/// another. Then enumerate
 /// `runningApplicationsWithBundleIdentifier:`, send `terminate` to every
 /// non-self instance, share a single deadline across the poll loop so N
 /// hung duplicates don't cost N× the wait budget, then `forceTerminate`
@@ -358,6 +359,17 @@ fn running_app_for_pid(pid: i32) -> Option<Retained<NSRunningApplication>> {
 pub fn terminate_duplicate_instances() -> usize {
     let Some(bundle_id) = NSBundle::mainBundle().bundleIdentifier() else {
         return 0;
+    };
+    let lock_dir = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map(|home| home.join("Library/Caches/Grinch"))
+        .unwrap_or_else(std::env::temp_dir);
+    let _lock = match lock_duplicate_cleanup(&lock_dir) {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("grinch: cannot coordinate duplicate cleanup: {error}");
+            return 0;
+        }
     };
     let self_pid = NSRunningApplication::currentApplication().processIdentifier();
     let instances = NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id);
@@ -423,6 +435,29 @@ pub fn terminate_duplicate_instances() -> usize {
         }
     }
     duplicates.len()
+}
+
+fn lock_duplicate_cleanup(directory: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    std::fs::create_dir_all(directory)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(directory.join("startup.lock"))?;
+    loop {
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            return Ok(file);
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
 }
 
 /// One row of `list_http_browsers()` output — the bundle ID a user would
@@ -1036,6 +1071,33 @@ fn launch_completion_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_cleanup_lock_serializes_contenders() {
+        let directory =
+            std::env::temp_dir().join(format!("grinch-startup-lock-{}", std::process::id()));
+        let first = lock_duplicate_cleanup(&directory).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let other = directory.clone();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let _lock = lock_duplicate_cleanup(&other).unwrap();
+            acquired_tx.send(()).unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(
+            acquired_rx
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .is_err()
+        );
+        drop(first);
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        worker.join().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn launch_completion_errors_are_durable() {

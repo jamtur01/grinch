@@ -360,10 +360,9 @@ pub fn terminate_duplicate_instances() -> usize {
     let Some(bundle_id) = NSBundle::mainBundle().bundleIdentifier() else {
         return 0;
     };
-    let lock_dir = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .map(|home| home.join("Library/Caches/Grinch"))
-        .unwrap_or_else(std::env::temp_dir);
+    let lock_dir = std::path::PathBuf::from(format!("/tmp/grinch-startup-{}", unsafe {
+        libc::geteuid()
+    }));
     let _lock = match lock_duplicate_cleanup(&lock_dir) {
         Ok(lock) => lock,
         Err(error) => {
@@ -439,9 +438,22 @@ pub fn terminate_duplicate_instances() -> usize {
 
 fn lock_duplicate_cleanup(directory: &std::path::Path) -> std::io::Result<std::fs::File> {
     use std::os::fd::AsRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 
-    std::fs::create_dir_all(directory)?;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(directory)?;
+    let metadata = std::fs::symlink_metadata(directory)?;
+    if !metadata.is_dir()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o077 != 0
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "unsafe startup lock directory",
+        ));
+    }
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

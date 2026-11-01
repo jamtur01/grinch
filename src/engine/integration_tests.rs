@@ -2641,6 +2641,11 @@ fn polyfill_preserves_opaque_scheme_on_rewrite() {
     );
     assert_eq!(resolve(&e, "tel:+15551234567").1, "tel:+15551234567");
     assert_eq!(resolve(&e, "javascript:void(0)").1, "javascript:void(0)");
+    assert_eq!(resolve(&e, "myapp://Open/Thing").1, "myapp://Open/Thing");
+    assert_eq!(
+        resolve(&e, "https://EXAMPLE.COM/path").1,
+        "https://example.com/path"
+    );
     // Hierarchical schemes still get the `//`.
     assert_eq!(
         resolve(&e, "https://example.com/path").1,

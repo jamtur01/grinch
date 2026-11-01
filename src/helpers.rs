@@ -36,7 +36,10 @@ pub const JS_PRELUDE: &str = r##"
     self.protocol = m[1];
     self.username = m[2] || "";
     self.password = m[3] || "";
-    self.hostname = (m[4] || "").toLowerCase();
+    self.hostname = m[4] || "";
+    if (/^(?:ftp|file|http|https|ws|wss):$/i.test(self.protocol)) {
+      self.hostname = self.hostname.toLowerCase();
+    }
     self.port     = m[5] || "";
     self.pathname = m[6] || "";
     self._search  = m[7] || "";

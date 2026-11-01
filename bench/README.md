@@ -102,8 +102,8 @@ Representative release-build measurements on Apple Silicon:
 
 | Config loading | µs/op |
 |---|---:|
-| floor | 448.65 |
-| many-rules | 714.60 |
+| floor | 458.60 |
+| many-rules | 710.82 |
 | Firefox selectable profile | 560.11 |
 
 ## Including macOS lookups

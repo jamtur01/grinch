@@ -21,16 +21,11 @@ use super::*;
 /// Idempotent: re-runs up to two unwrap passes so a double-wrapped link
 /// (Defender forwarding to Proofpoint, etc.) lands at the real target.
 pub(crate) fn unwrap_safelink(url: &str) -> Option<String> {
-    let mut current = url.to_string();
-    let mut changed = false;
-    for _ in 0..2 {
-        let Some(next) = unwrap_safelink_once(&current) else {
-            break;
-        };
+    let mut current = unwrap_safelink_once(url)?;
+    if let Some(next) = unwrap_safelink_once(&current) {
         current = next;
-        changed = true;
     }
-    changed.then_some(current)
+    Some(current)
 }
 
 /// Unwrap a Microsoft Teams launcher URL into the native `msteams:` scheme.

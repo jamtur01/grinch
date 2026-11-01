@@ -289,21 +289,14 @@ fn verify_startup_queue(mtm: MainThreadMarker) {
         take_events().is_empty(),
         "startup requests must only drain once"
     );
-    for _ in 0..2 {
-        assert!(session_handler::try_complete_callback(
-            "grinch-auth-test://done"
-        ));
-    }
+    assert!(session_handler::try_complete_callback(
+        "grinch-auth-test://done"
+    ));
     assert!(!session_handler::try_complete_callback(
         "grinch-auth-test://done"
     ));
-    assert_eq!(
-        take_events(),
-        [
-            "complete:grinch-auth-test://done",
-            "complete:grinch-auth-test://done"
-        ]
-    );
+    assert_eq!(take_events(), [canceled_event(), canceled_event()]);
+    CANCELLATIONS.lock().unwrap().clear();
 }
 
 fn canceled_event() -> String {
@@ -449,6 +442,26 @@ fn verify_late_failures_do_not_finish_twice() {
         assert_eq!(CANCELLATIONS.lock().unwrap().len(), usize::from(cancel));
         CANCELLATIONS.lock().unwrap().clear();
     }
+}
+
+fn verify_ambiguous_callback() {
+    let first = deliver_from_worker("https://example.invalid/first", false);
+    let second = deliver_from_worker("https://example.invalid/second", false);
+    wait_for_events(2);
+    take_events();
+    assert!(session_handler::try_complete_callback(
+        "grinch-auth-test://done"
+    ));
+    let events = take_events();
+    assert_eq!(events, [canceled_event(), canceled_event()]);
+    let cancellations = CANCELLATIONS.lock().unwrap();
+    assert!(cancellations.iter().any(|(uuid, _)| uuid == &first));
+    assert!(cancellations.iter().any(|(uuid, _)| uuid == &second));
+    drop(cancellations);
+    CANCELLATIONS.lock().unwrap().clear();
+    assert!(!session_handler::try_complete_callback(
+        "grinch-auth-test://done"
+    ));
 }
 
 fn verify_actions_window(mtm: MainThreadMarker) {
@@ -708,6 +721,7 @@ fn main() {
     verify_actions_window(mtm);
     session_handler::install(mtm, forwarded);
     verify_startup_queue(mtm);
+    verify_ambiguous_callback();
 
     deliver_from_worker("https://example.invalid/auth", false);
     assert!(

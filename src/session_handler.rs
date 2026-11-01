@@ -308,23 +308,33 @@ pub fn try_complete_callback(url_str: &str) -> bool {
         return false;
     };
     PENDING.with(|p| {
-        // Snapshot UUIDs before the walk so we can mutate the map
-        // while inspecting it. Obj-C enforces this via `allKeys`; Rust
-        // via the borrow checker.
-        let keys: Vec<String> = p.borrow().keys().cloned().collect();
-        for key in keys {
-            let request = match p.borrow().get(&key) {
-                Some(r) => r.clone(),
-                None => continue,
-            };
-            if !request_matches_callback(&request, &url_ns) {
-                continue;
-            }
-            p.borrow_mut().remove(&key);
-            unsafe { request.completeWithCallbackURL(&url_ns) };
-            return true;
+        let matches: Vec<String> = p
+            .borrow()
+            .iter()
+            .filter(|(_, request)| request_matches_callback(request, &url_ns))
+            .map(|(uuid, _)| uuid.clone())
+            .collect();
+        if matches.is_empty() {
+            return false;
         }
-        false
+        let ambiguous = matches.len() > 1;
+        if ambiguous {
+            eprintln!("grinch: ambiguous authentication callback; canceling matching requests");
+        }
+        for uuid in matches {
+            let request = p.borrow_mut().remove(&uuid);
+            if let Some(request) = request {
+                if ambiguous {
+                    cancel_request(
+                        &request,
+                        "Authentication callback matched multiple requests",
+                    );
+                } else {
+                    unsafe { request.completeWithCallbackURL(&url_ns) };
+                }
+            }
+        }
+        true
     })
 }
 

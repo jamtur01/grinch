@@ -271,7 +271,7 @@ module.exports = {
     // The optional `name:` field labels this rule in --list-rules output
     // and in matchedRule.name of diagnostic-log resolve events. Doesn't affect
     // routing. Especially handy for fn matchers, whose auto-derived
-    // label is just the first line of `f.toString()`.
+    // label joins `f.toString()` onto one line and truncates it after 80 characters.
     {
       match: from("com.microsoft.Outlook"),
       open: browsers.work,

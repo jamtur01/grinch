@@ -116,7 +116,8 @@
     appears in <code>Grinch --list-rules</code> and in the
     <code>matchedRule.name</code> field of diagnostic-log <code>resolve</code>
     events, which helps when a config has several function matchers: their
-    automatic label is the first line of the function's source.</p>
+    automatic label joins the function's source onto one line and truncates it
+    after 80 characters.</p>
   <p>A rule's own fields are <code>match</code>, <code>open</code> (or
     Finicky's <code>browser</code>), <code>url</code>, and <code>name</code>.
     Launch options belong inside the <a href="#browser-targets">browser

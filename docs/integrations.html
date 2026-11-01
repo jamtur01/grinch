@@ -80,6 +80,8 @@
     can't be opened, Grinch ends the sign-in request with an error. Requests
     cancelled during startup don't open a browser.</p>
   <p>Ordinary links received during startup also wait for the first config load.
+    If that load fails, Grinch drops those queued links and records their count
+    in the diagnostic log.
     For a Universal Link delivered as a web activity, Grinch cannot identify the
     originating app, so <code>ctx.opener</code> is <code>null</code>.</p>
   <p class="note"><strong>Finishing the sign-in is best effort.</strong> The

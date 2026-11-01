@@ -140,9 +140,9 @@ path:   /Users/alex/.config/grinch.js</span>
   </figure>
   <p>From a terminal, <code>kill -HUP &lt;pid&gt;</code> also reloads the running
     app's config. <code>Grinch --version</code> (or <code>-V</code>) shows its version.</p>
-  <p>Warnings don't fail validation. They print before the result, which
-    changes to <code>config OK with warnings</code>, and the exit status stays
-    0:</p>
+  <p>Warnings don't fail validation. Rule and browser-target config warnings
+    print before the result and change it to <code>config OK with warnings</code>;
+    the exit status stays 0:</p>
   <figure class="term">
     <figcaption>Terminal</figcaption>
 <pre><code><span class="cmd">Grinch --validate</span>
@@ -150,6 +150,8 @@ path:   /Users/alex/.config/grinch.js</span>
 grinch: config OK with warnings — /Users/alex/.config/grinch.js
 rules:  1</span></code></pre>
   </figure>
+  <p>Profile warnings also print during validation, but do not change the result
+    to <code>config OK with warnings</code>.</p>
 </section>
 
 <section id="menu-bar" aria-labelledby="menu-bar-title">
@@ -278,8 +280,9 @@ rules:  1</span></code></pre>
     <dd><code>{index, name}</code> of the rule that matched, or <code>null</code>
       when the URL fell through to <code>default</code>. <code>name</code> is
       the rule's own <code>name</code>, or an automatic label: the string
-      pattern, <code>domain:foo,bar</code>, <code>from:…</code>, or
-      <code>fn: …</code>. Arrays join their labels with <code> | </code>.</dd>
+      pattern, <code>domain:foo,bar</code>, <code>from:…</code>,
+      <code>running:…</code>, or <code>fn: …</code>. Regex labels also use
+      <code>fn:</code>. Arrays join their labels with <code> | </code>.</dd>
   </dl>
   <p>A <code>resolve</code> event records the routing decision; it does not
     confirm the browser opened. <code>launch_error</code> events record invalid
@@ -357,6 +360,10 @@ rules:  1</span></code></pre>
     </tbody>
   </table>
   </div>
+  <p>Except for <code>--version</code>, these commands exit 2 for non-UTF-8
+    arguments. <code>--bench</code> also exits 2 for missing arguments or a
+    non-positive iteration count; <code>--bench-init</code> exits 2 for an
+    invalid iteration count.</p>
 </section>
 
 <nav class="next-page" aria-label="Previous and next pages">

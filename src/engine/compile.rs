@@ -19,6 +19,29 @@ pub(crate) fn parse_rule_array(
         let Some(item) = js_array_at(arr, i) else {
             continue;
         };
+        let mut misplaced = false;
+        for field in object_keys(&item) {
+            if ["match", "open", "browser", "url", "name"].contains(&field.as_str()) {
+                continue;
+            }
+            if [
+                "profile",
+                "args",
+                "incognito",
+                "openInNewWindow",
+                "openInBackground",
+            ]
+            .contains(&field.as_str())
+            {
+                misplaced = true;
+                diagnostics.record_config_warning(&format!(
+                    "rules[{i}].{field} is ignored; move it inside the browser target; this rule is suppressed"
+                ));
+            } else {
+                diagnostics
+                    .record_config_warning(&format!("unknown rules[{i}].{field} is ignored"));
+            }
+        }
         let match_val = key(&item, "match");
         // `open` (Grinch) and `browser` (Finicky) are aliases.
         let open_val = key(&item, "open").or_else(|| key(&item, "browser"));
@@ -34,6 +57,7 @@ pub(crate) fn parse_rule_array(
         // If `open`/`browser` is absent but a `url` rewrite IS present, that's
         // a pure rewrite-on-match (no routing change) — treat as default-target.
         let target = match open_val.as_ref() {
+            Some(_) if misplaced => Target::Suppress,
             Some(ov) if unsafe { ov.isNull() } => Target::Suppress,
             Some(ov) if is_function(ov, function_ctor) => Target::Fn(UserFn::new(ov.clone())),
             Some(ov) => match resolve_browser(ov, browsers, true, diagnostics) {

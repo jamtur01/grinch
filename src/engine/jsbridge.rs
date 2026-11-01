@@ -586,7 +586,7 @@ pub(crate) fn is_marker(v: &JSValue, ty: &str) -> bool {
 /// own enumerable property *names* — no value walk — so circular values
 /// are safe; we re-fetch each value via subscript afterwards (one JSC
 /// bridge crossing per key, fine because this is engine-init only).
-pub(crate) fn iter_object(v: &JSValue) -> Vec<(String, Retained<JSValue>)> {
+pub(crate) fn object_keys(v: &JSValue) -> Vec<String> {
     if !unsafe { v.isObject() } {
         return vec![];
     }
@@ -616,10 +616,14 @@ pub(crate) fn iter_object(v: &JSValue) -> Vec<(String, Retained<JSValue>)> {
         let Some(name_ns) = (unsafe { name_jsv.toString() }) else {
             continue;
         };
-        let name = name_ns.to_string();
-        if let Some(val) = key(v, &name) {
-            out.push((name, val));
-        }
+        out.push(name_ns.to_string());
     }
     out
+}
+
+pub(crate) fn iter_object(v: &JSValue) -> Vec<(String, Retained<JSValue>)> {
+    object_keys(v)
+        .into_iter()
+        .filter_map(|name| key(v, &name).map(|value| (name, value)))
+        .collect()
 }

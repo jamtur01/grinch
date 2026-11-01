@@ -715,6 +715,12 @@ impl Delegate {
                     .profile_error()
                     .map(|message| format!("Profile error: {message}"))
             })
+            .or_else(|| {
+                self.ivars()
+                    .diagnostics
+                    .config_warning()
+                    .map(|message| format!("Config warning: {message}"))
+            })
     }
 
     fn open_config(&self) {

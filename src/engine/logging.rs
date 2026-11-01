@@ -64,6 +64,7 @@ pub(crate) struct DiagnosticLog {
     // Only the writer is shared with background launch completions; UI state stays local.
     writer: Arc<Mutex<LogWriter>>,
     profile_error: RefCell<Option<String>>,
+    config_warnings: RefCell<Vec<String>>,
     profile_error_handler: RefCell<Option<Box<dyn Fn()>>>,
 }
 
@@ -78,6 +79,7 @@ impl DiagnosticLog {
         Self {
             writer: Arc::new(Mutex::new(LogWriter::new(path, None, None))),
             profile_error: RefCell::new(None),
+            config_warnings: RefCell::new(Vec::new()),
             profile_error_handler: RefCell::new(None),
         }
     }
@@ -111,6 +113,28 @@ impl DiagnosticLog {
     /// Return the first launch-suppressing profile failure since the last config load.
     pub(crate) fn profile_error(&self) -> Option<String> {
         self.profile_error.borrow().clone()
+    }
+
+    pub(crate) fn config_warning(&self) -> Option<String> {
+        self.config_warnings.borrow().first().cloned()
+    }
+
+    pub(crate) fn clear_config_warnings(&self) {
+        self.config_warnings.borrow_mut().clear();
+    }
+
+    pub(crate) fn record_config_warning(&self, message: &str) {
+        let mut warnings = self.config_warnings.borrow_mut();
+        if warnings.len() >= 32 || warnings.iter().any(|warning| warning == message) {
+            return;
+        }
+        warnings.push(message.to_string());
+        drop(warnings);
+        eprintln!("grinch: {message}");
+        self.write_event(serde_json::json!({"event": "config_warning", "ts": now_unix_f64(), "message": message}));
+        if let Some(handler) = self.profile_error_handler.borrow().as_ref() {
+            handler();
+        }
     }
 
     /// Notify the app when profile warning state changes, including during resolution.

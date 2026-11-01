@@ -904,6 +904,46 @@ fn options_log_requests_off_writes_nothing() {
 }
 
 #[test]
+fn nested_configuration_warnings_show_and_misplaced_profiles_suppress() {
+    let diagnostics = Rc::new(isolated_diagnostics());
+    let engine = build_engine_with_diagnostics(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+            { match: "example.com", browser: "com.google.Chrome", profile: "Work" },
+        ] };"#,
+        Rc::clone(&diagnostics),
+    );
+    let result = engine.resolve(
+        "https://example.com/",
+        &Opener::default(),
+        ModifierFlags::default(),
+    );
+    assert!(result.browser.bundle_id.is_empty());
+    assert!(
+        diagnostics
+            .config_warning()
+            .unwrap()
+            .contains("rules[0].profile")
+    );
+    assert_eq!(
+        resolve(&engine, "https://other.example/").0,
+        "com.apple.Safari"
+    );
+
+    let engine = build_engine_with_diagnostics(
+        r#"module.exports = { default: { name: "com.google.Chrome", incognit0: true } };"#,
+        Rc::clone(&diagnostics),
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.google.Chrome"
+    );
+    assert!(diagnostics.config_warning().unwrap().contains("incognit0"));
+    let body = std::fs::read_to_string(diagnostics.ensure_file().unwrap()).unwrap();
+    assert!(body.contains("config_warning"));
+    assert!(body.contains("rules[0].profile"));
+}
+
+#[test]
 fn unknown_config_keys_do_not_error() {
     // Unknown option and top-level keys log a stderr warning but must not
     // break engine init. A root-level `hideIcon` is not honoured — it only

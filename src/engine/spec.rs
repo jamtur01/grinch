@@ -149,6 +149,26 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
         return BrowserSpec::empty();
     }
 
+    for field in object_keys(v) {
+        if ![
+            "id",
+            "bundleId",
+            "name",
+            "appType",
+            "args",
+            "profile",
+            "incognito",
+            "openInNewWindow",
+            "openInBackground",
+        ]
+        .contains(&field.as_str())
+        {
+            diagnostics.record_config_warning(&format!(
+                "unknown browser target field {field:?} is ignored"
+            ));
+        }
+    }
+
     // appType: "none" → no-op browser (same as `open: null`). Skip the
     // identifier resolution entirely.
     if let Some(t) = key(v, "appType").and_then(|x| js_to_string(&x))

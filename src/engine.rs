@@ -612,6 +612,7 @@ impl Engine {
         crate::chromium::clear_profile_cache();
         crate::firefox::clear_profile_cache();
         diagnostics.clear_profile_error();
+        diagnostics.clear_config_warnings();
 
         // Prelude lookups — turn missing / null / undefined globals into
         // config-load errors rather than letting the engine wander off

@@ -58,9 +58,11 @@ a working first config, and to serve as the reference afterward.
 
 - macOS 13 or later; universal binary (Apple Silicon and Intel).
 - Config is JavaScript the app executes; users must only load configs they trust.
-- Site is plain static HTML/CSS (`docs/index.html`, `docs/style.css`), no build
-  step. It must stay aligned with `README.md` and released behavior; README,
-  examples, and site change together.
+- Site is plain static HTML/CSS in `docs/` (seven pages sharing
+  `docs/style.css`), no build step and no JavaScript. It is the user
+  documentation; `README.md` is a short overview that links to it. Site,
+  README, and examples stay aligned with released behavior and change
+  together.
 - Public docs describe current released behavior only. Release history lives in
   release notes.
 - Only the latest published release is supported for issues and security fixes.

@@ -40,6 +40,11 @@ count in header comments:
 | `20-from` | Matching a synthetic opener's bundle ID |
 | `21-logged` | Routing with JSONL serialization and file writes |
 
+Declarative workloads never cross the JavaScript bridge. When no rewrite fires,
+the resolve borrows the input URL string (`Cow::Borrowed`) throughout;
+`quick_host` is skipped when the config has no host-using matcher and borrows
+the host slice when it is already lowercase ASCII.
+
 The config-loading benchmark uses `01-floor` and `14-many-rules`, with 300
 loads per sample. It includes JavaScriptCore setup, config evaluation, and rule
 compilation.

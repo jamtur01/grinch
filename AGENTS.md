@@ -15,8 +15,7 @@ notes.
 
 Read these in order:
 
-1. `README.md` sections **Configuration**, **Performance**, and
-   **Differences from Finicky**.
+1. `docs/config.html`, `docs/performance.html`, and `docs/finicky.html`.
 2. `examples/grinch.example.js`, the user-facing contract.
 3. `CONTRIBUTING.md` section **A few things specific to the engine**.
 
@@ -51,7 +50,7 @@ active.
 
 ### Diagnostic logging
 
-Read the diagnostic-log section of `README.md`, `src/engine/logging.rs`, and
+Read the diagnostic-log section of `docs/troubleshooting.html`, `src/engine/logging.rs`, and
 the launch completion handler in `src/workspace.rs`. Error events are enabled
 independently of `logRequests`; `resolve` records a decision, not launch success.
 Background callbacks share the app's rotating writer without carrying UI state.
@@ -62,8 +61,11 @@ Tests must use isolated temporary diagnostics, never the user's real log directo
 Read `CONTRIBUTING.md` and `SECURITY.md`. Only the latest published release is
 supported for issues and security fixes; do not promise backports. Direct
 vulnerabilities to private GitHub reports and redact sensitive logs and URLs.
-Keep `README.md` and `docs/index.html` aligned with released behavior and link
-performance claims to the workloads and results in `bench/README.md`. Document
+User documentation lives in the static site in `docs/` (plain HTML pages that
+share `docs/style.css`; the header and footer are repeated in each page).
+`README.md` is a short overview that links to it. Keep both aligned with
+released behavior, and follow `PRODUCT.md` and `DESIGN.md` when changing the
+site. Link performance claims to the workloads and results in `bench/README.md`. Document
 behavior and reproducible measurements, not review narratives or session history.
 Documentation must stand on its own for readers outside the project. Include a
 reference only when it helps them understand, verify, or reproduce the claim.
@@ -71,7 +73,7 @@ Keep release history in release notes; public documentation describes current be
 
 ### SSO, OAuth, or bundle registration
 
-Read `README.md` section **SSO / OAuth popups**, `src/session_handler.rs`, and
+Read the sign-in section of `docs/integrations.html`, `src/session_handler.rs`, and
 the explanatory comments in `Info.plist`. AuthenticationServices callbacks
 share the normal routing engine and have separate delivery timing from ordinary
 URL events.
@@ -91,7 +93,7 @@ the version source of truth. The release workflow rejects tag or built-bundle
 version mismatches before it signs, notarizes, packages, and publishes the
 universal app, then signs and uploads the Sparkle `appcast.xml` that installed
 copies read from the latest release.
-Check release references in `README.md` and `docs/index.html` when publishing.
+Check release references in `README.md` and the `docs/` pages when publishing.
 
 ## Source map
 
@@ -112,7 +114,7 @@ Check release references in `README.md` and `docs/index.html` when publishing.
 - `src/session_dispatch_test.rs`: native main-loop authentication delivery regression check.
 - `bench/`: reproducible routing benchmarks.
 - `scripts/`: release and browser-window diagnostic tooling.
-- `docs/`: static project site.
+- `docs/`: static project site and user documentation.
 - `brand/`: app, menu-bar, README, and social identity sources.
 - `deny.toml`: dependency advisory, license, ban, and source policy.
 - `SECURITY.md`: supported versions and private vulnerability reporting.

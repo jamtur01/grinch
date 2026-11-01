@@ -382,8 +382,9 @@ module.exports = {
 
     // Shorteners (bit.ly, t.co, lnkd.in, …): Grinch can't follow redirects
     // from inside resolve() — that's a network round-trip and resolve() is
-    // sync by design (see "Performance" in the README). Two practical
-    // options:
+    // sync by design. See
+    // https://jamtur01.github.io/grinch/integrations.html#url-shorteners.
+    // Two practical options:
     //
     // 1. Accept it: route shorteners to a sensible default, knowing you
     //    can't decide on the *real* destination's host until after the

@@ -6,7 +6,7 @@
 # Why this isn't built into Grinch: resolve() is synchronous on purpose so
 # every click stays in the microsecond range. Following a redirect is a
 # network round-trip (50–500 ms) and would turn click latency into network
-# latency. See the "Performance" section of README.md for the rationale.
+# latency. See https://jamtur01.github.io/grinch/integrations.html#url-shorteners.
 #
 # Usage:
 #   expand-shortener.sh "https://bit.ly/xxx"

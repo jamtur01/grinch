@@ -81,6 +81,9 @@ DMG packaging. For a quick dev cycle you usually want:
 cargo build --release           # builds target/release/Grinch (current arch)
 make build                      # same plus assembles Grinch.app
 make build UNIVERSAL=1          # universal arm64+x86_64, for releases
+make run                        # build, register, and launch
+make test URL="https://..."     # dry-run a URL through your rules
+make clean
 ```
 
 `make build` downloads Sparkle into `build/` on first use (checked against the
@@ -248,7 +251,7 @@ These are the steps to cut a release; they don't affect contributors
 but they live here for the maintainer's reference.
 
 1. Bump `version` in `Cargo.toml`. Run `cargo build --release` so the
-   lockfile picks it up. Update `README.md` and `docs/index.html` to describe
+   lockfile picks it up. Update the site in `docs/` and `README.md` to describe
    shipped behavior. Keep change summaries in release notes and support wording
    linked to the latest release.
 2. Commit + push to `main`. Wait for CI and CodeQL to go green for that commit.

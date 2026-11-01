@@ -918,6 +918,7 @@ impl Engine {
         // Borrow until a rewrite fires; then own. Saves one heap allocation
         // on every resolve that doesn't rewrite the URL.
         let mut current: Cow<'u, str> = Cow::Borrowed(url_string);
+        let mut wildcard_url = None;
         // quick_host allocates a lowercased String; skip it entirely when
         // the config has no host-using matchers (regex/wildcard/fn-only).
         let mut host = if self.needs_host {
@@ -940,10 +941,17 @@ impl Engine {
 
         // Global rewrites — apply every matching one in order.
         for rw in &self.rewrites {
-            if any_match(&rw.matchers, &current, host.as_deref(), &rc) {
+            if any_match(
+                &rw.matchers,
+                &current,
+                host.as_deref(),
+                &rc,
+                &mut wildcard_url,
+            ) {
                 match apply_rewrite(&rw.rewriter, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
                         current = Cow::Owned(s);
+                        wildcard_url = None;
                         host = if self.needs_host {
                             quick_host(&current)
                         } else {
@@ -960,13 +968,20 @@ impl Engine {
         // rewriter (Finicky-style combined entry); apply it before resolving
         // the target.
         for (idx, rule) in self.rules.iter().enumerate() {
-            if !any_match(&rule.matchers, &current, host.as_deref(), &rc) {
+            if !any_match(
+                &rule.matchers,
+                &current,
+                host.as_deref(),
+                &rc,
+                &mut wildcard_url,
+            ) {
                 continue;
             }
             if let Some(rw) = &rule.rewriter {
                 match apply_rewrite(rw, &current, &rc) {
                     RewriteOutcome::Changed(s) => {
                         current = Cow::Owned(s);
+                        wildcard_url = None;
                         host = if self.needs_host {
                             quick_host(&current)
                         } else {
@@ -1330,15 +1345,34 @@ impl<'a> ResolveCtx<'a> {
 
 // MARK: - Match dispatch
 
-fn any_match(matchers: &[Matcher], url: &str, host: Option<&str>, rc: &ResolveCtx) -> bool {
-    matchers.iter().any(|m| matches(m, url, host, rc))
+fn any_match(
+    matchers: &[Matcher],
+    url: &str,
+    host: Option<&str>,
+    rc: &ResolveCtx,
+    wildcard_url: &mut Option<Option<String>>,
+) -> bool {
+    matchers
+        .iter()
+        .any(|m| matches(m, url, host, rc, wildcard_url))
 }
 
-fn matches(m: &Matcher, url: &str, host: Option<&str>, rc: &ResolveCtx) -> bool {
+fn matches(
+    m: &Matcher,
+    url: &str,
+    host: Option<&str>,
+    rc: &ResolveCtx,
+    wildcard_url: &mut Option<Option<String>>,
+) -> bool {
     match m {
         Matcher::Always => true,
         Matcher::Regex(re) => re.is_match(url),
-        Matcher::Wildcard(re) => wildcard_matches(re, url),
+        Matcher::Wildcard(re) => re.is_match(
+            wildcard_url
+                .get_or_insert_with(|| normalize_wildcard_url(url))
+                .as_deref()
+                .unwrap_or(url),
+        ),
         Matcher::Domain(hosts) => match host {
             Some(host) => hosts.iter().any(|h| host_matches(host, h)),
             None => false,

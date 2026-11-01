@@ -3,13 +3,31 @@
 // modules' items that `engine` re-exports via `pub(crate) use`.
 use super::*;
 
-pub(crate) fn wildcard_matches(pattern: &regex::Regex, url: &str) -> bool {
+pub(crate) fn normalize_wildcard_url(url: &str) -> Option<String> {
     if !url.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        return pattern.is_match(url);
+        return None;
     }
-    let Some(rest) = url_after_scheme(url).and_then(|rest| rest.strip_prefix("//")) else {
-        return pattern.is_match(url);
+    let rest = if let Some(rest) = url.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        rest
+    } else {
+        url_after_scheme(url)?.strip_prefix("//")?
     };
+    let mut uppercase = false;
+    for byte in rest.bytes() {
+        if matches!(byte, b'/' | b'?' | b'#') {
+            break;
+        }
+        if byte == b'@' {
+            uppercase = false;
+        } else if byte.is_ascii_uppercase() {
+            uppercase = true;
+        }
+    }
+    if !uppercase {
+        return None;
+    }
     let start = url.len() - rest.len();
     let end = url[start..]
         .find(['/', '?', '#'])
@@ -26,11 +44,11 @@ pub(crate) fn wildcard_matches(pattern: &regex::Regex, url: &str) -> bool {
         .bytes()
         .any(|b| b.is_ascii_uppercase())
     {
-        return pattern.is_match(url);
+        return None;
     }
     let mut normalized = url.to_string();
     normalized[host_start..host_end].make_ascii_lowercase();
-    pattern.is_match(&normalized)
+    Some(normalized)
 }
 
 /// Return the part after an absolute URI's RFC 3986 scheme.

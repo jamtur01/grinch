@@ -355,6 +355,18 @@ fn wildcard_normalizes_hostname_but_not_path() {
         resolve(&engine, "mailto:test@example.com?body=https://GitHub.COM/").0,
         "com.google.Chrome"
     );
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari",
+        rewrite: [{ match: "first.example/*", url: () => "https://SECOND.example/Path" }],
+        rules: [
+          { match: "first.example/*", open: "com.apple.Safari" },
+          { match: "second.example/Path", open: "com.google.Chrome" }
+        ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "https://FIRST.example/start").0,
+        "com.google.Chrome"
+    );
 }
 
 #[test]

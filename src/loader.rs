@@ -59,7 +59,7 @@ impl KeyCheckers {
 pub fn find_config_path() -> Option<PathBuf> {
     config_paths().into_iter().find(|p| match p.metadata() {
         Ok(metadata) => metadata.is_file(),
-        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        Err(error) => !missing_path(&error),
     })
 }
 
@@ -246,7 +246,7 @@ fn read_first_existing(paths: &[PathBuf]) -> ReadOutcome {
         match path.metadata() {
             Ok(metadata) if !metadata.is_file() => continue,
             Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) if missing_path(&error) => continue,
             Err(error) => {
                 return ReadOutcome::Unreadable {
                     path: path.clone(),
@@ -272,6 +272,11 @@ fn read_first_existing(paths: &[PathBuf]) -> ReadOutcome {
     ReadOutcome::Missing
 }
 
+fn missing_path(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound
+        || error.kind() == std::io::ErrorKind::NotADirectory
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +292,24 @@ mod tests {
         match read_first_existing(&[first.clone(), second]) {
             ReadOutcome::Unreadable { path, .. } => assert_eq!(path, first),
             _ => panic!("expected the first config to fail"),
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn config_lookup_skips_paths_beneath_a_regular_file() {
+        let root = test_path("not-directory");
+        std::fs::create_dir_all(&root).unwrap();
+        let parent = root.join("file");
+        let fallback = root.join("fallback.js");
+        std::fs::write(&parent, "file").unwrap();
+        std::fs::write(&fallback, "fallback").unwrap();
+        match read_first_existing(&[parent.join("config.js"), fallback.clone()]) {
+            ReadOutcome::Found { path, source } => {
+                assert_eq!(path, fallback);
+                assert_eq!(source, "fallback");
+            }
+            _ => panic!("expected fallback config"),
         }
         std::fs::remove_dir_all(root).unwrap();
     }

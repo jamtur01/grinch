@@ -795,10 +795,9 @@ fn verify_ordinary_startup_delivery(mtm: MainThreadMarker) {
     for entry in std::fs::read_dir(directory.join("Library/Logs/Grinch")).unwrap() {
         messages.push_str(&std::fs::read_to_string(entry.unwrap().path()).unwrap());
     }
-    assert!(
-        messages
-            .contains("Cannot route URLs received during startup because the config did not load")
-    );
+    assert!(messages.contains(
+        "Cannot route URLs received during startup because the config did not load (2 dropped)"
+    ));
     unsafe {
         if let Some(home) = previous {
             std::env::set_var("HOME", home);

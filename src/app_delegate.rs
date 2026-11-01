@@ -509,7 +509,7 @@ impl Delegate {
             if !urls.is_empty() {
                 self.ivars().diagnostics.record_config_error(
                     None,
-                    "Cannot route URLs received during startup because the config did not load",
+                    &format!("Cannot route URLs received during startup because the config did not load ({} dropped)", urls.len()),
                 );
             }
             return;

@@ -172,7 +172,7 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
 /// left-to-right substitution order.
 ///
 /// The single-`*` form takes one char from the replacement stream; the
-/// `**X` form takes N chars, where X maps to a length via
+/// `**X` form takes N bytes, where X maps to a length via
 /// `proofpoint_v3_run_length` (A=2, B=3, …, -=64, _=65). Returns None
 /// for any structural failure (unparseable path, malformed base64,
 /// exhausted replacement stream, unknown run-length char) so the

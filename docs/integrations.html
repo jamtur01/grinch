@@ -77,6 +77,9 @@
     load. If no config is available, a rule suppresses the URL, or the browser
     can't be opened, Grinch ends the sign-in request with an error. Requests
     cancelled during startup don't open a browser.</p>
+  <p>Ordinary links received during startup also wait for the first config load.
+    For a Universal Link delivered as a web activity, Grinch cannot identify the
+    originating app, so <code>ctx.opener</code> is <code>null</code>.</p>
   <p class="note"><strong>Finishing the sign-in is best effort.</strong> The
     callback has to come back to Grinch to complete the pending session. Grinch
     matches incoming callback URLs against pending requests and returns matching

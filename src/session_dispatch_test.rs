@@ -43,7 +43,8 @@ use objc2_authentication_services::{
     ASWebAuthenticationSessionWebBrowserSessionManager,
 };
 use objc2_foundation::{
-    NSDate, NSError, NSNotification, NSObject, NSObjectProtocol, NSRunLoop, NSString, NSURL, NSUUID,
+    NSArray, NSDate, NSError, NSNotification, NSObject, NSObjectProtocol, NSRunLoop, NSString,
+    NSURL, NSUUID,
 };
 
 static EVENTS: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
@@ -714,6 +715,46 @@ fn verify_real_reopen() {
     }
 }
 
+fn verify_ordinary_startup_delivery(mtm: MainThreadMarker) {
+    let directory =
+        std::env::temp_dir().join(format!("grinch-url-startup-{}", NSUUID::new().UUIDString()));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".grinch.js"),
+        "module.exports = { default: null, options: { logRequests: true } };",
+    )
+    .unwrap();
+    let previous = std::env::var_os("HOME");
+    unsafe { std::env::set_var("HOME", &directory) };
+    let app = NSApplication::sharedApplication(mtm);
+    let delegate = app_delegate::Delegate::new(mtm);
+    let first = NSURL::URLWithString(&NSString::from_str("https://first.example/")).unwrap();
+    let second = NSURL::URLWithString(&NSString::from_str("https://second.example/")).unwrap();
+    let urls = NSArray::from_retained_slice(&[first, second]);
+    let _: () = unsafe { msg_send![&*delegate, application: &*app, openURLs: &*urls] };
+    assert!(!directory.join("Library/Logs/Grinch").exists());
+    delegate.reload_engine();
+    delegate.finish_url_startup();
+    delegate.finish_url_startup();
+    let logs = directory.join("Library/Logs/Grinch");
+    let entries: Vec<_> = std::fs::read_dir(logs)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(entries.len(), 1);
+    let body = std::fs::read_to_string(&entries[0]).unwrap();
+    assert_eq!(body.lines().count(), 2, "{body}");
+    assert!(body.contains("https://first.example/") && body.contains("https://second.example/"));
+    unsafe {
+        if let Some(home) = previous {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 fn main() {
     let mtm = MainThreadMarker::new().expect("harness must own the main thread");
     if std::env::args().any(|arg| arg == "--reopen-probe") {
@@ -721,6 +762,7 @@ fn main() {
         return;
     }
     verify_real_reopen();
+    verify_ordinary_startup_delivery(mtm);
     verify_update_button_binding(mtm);
     verify_actions_window(mtm);
     session_handler::install(mtm, forwarded);

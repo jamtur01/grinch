@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -72,9 +72,17 @@ const KEY_DIRECT_OBJECT: u32 = fourcc(b"----");
 // Constant value from CarbonCore/AEDataModel.h; not exposed by objc2 yet.
 const KEY_SENDER_PID_ATTR: u32 = fourcc(b"spid");
 
+struct PendingUrl {
+    url: String,
+    opener: Opener,
+    modifiers: ModifierFlags,
+}
+
 #[derive(Default)]
 pub struct DelegateIvars {
     engine: RefCell<Option<Engine>>,
+    startup_complete: Cell<bool>,
+    startup_urls: RefCell<Vec<PendingUrl>>,
     status_item: RefCell<Option<Retained<NSStatusItem>>>,
     // Retain the bundle's template image for the lifetime of the status
     // item. AppKit applies the current menu-bar appearance automatically.
@@ -143,7 +151,6 @@ define_class!(
                 return;
             }
             let engine_ref = self.ivars().engine.borrow();
-            let Some(engine) = engine_ref.as_ref() else { return };
             // Opener and modifiers are read once per batch, not per-URL.
             // openURLs: groups URLs from the same originating event (one
             // click, one drop, one open-with), so they share an opener and
@@ -152,28 +159,25 @@ define_class!(
             let sender_pid = NSAppleEventManager::sharedAppleEventManager()
                 .currentAppleEvent()
                 .and_then(|e| sender_pid_from_event(&e));
+            let Some(engine) = engine_ref.as_ref() else {
+                if !self.ivars().startup_complete.get() {
+                    let opener = sender_pid.and_then(opener_from_pid).unwrap_or_else(frontmost_opener);
+                    let modifiers = current_modifier_flags();
+                    for i in 0..count {
+                        if let Some(raw) = urls.objectAtIndex(i).absoluteString() {
+                            self.queue_startup_url(raw.to_string(), opener.clone(), modifiers);
+                        }
+                    }
+                }
+                return;
+            };
             let opener = resolve_opener(engine, sender_pid);
             let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
             for i in 0..count {
                 let url = urls.objectAtIndex(i);
                 let Some(raw) = url.absoluteString() else { continue };
                 let raw = raw.to_string();
-                let inner = unwrap_grinch_scheme(&raw);
-                // If this URL is an auth-session callback that matches
-                // a pending ASWebAuthenticationSession request, complete
-                // the session and stop — don't also route the callback
-                // URL through the rules. (A custom-scheme callback like
-                // `slack://oauth-callback?token=…` would otherwise hit
-                // the engine and either get dropped or open the wrong
-                // browser.)
-                if crate::session_handler::try_complete_callback(&inner) {
-                    continue;
-                }
-                let result = engine.resolve(&inner, &opener, modifiers);
-                if result.browser.bundle_id.is_empty() {
-                    continue;
-                }
-                open_url(&result.url, &result.browser, engine.diagnostics(), self.mtm(), |_| {});
+                self.route_url(engine, &raw, &opener, modifiers);
             }
         }
 
@@ -227,9 +231,14 @@ define_class!(
             // Not an auth callback — route as a regular click.
             let engine_ref = self.ivars().engine.borrow();
             let Some(engine) = engine_ref.as_ref() else {
+                if !self.ivars().startup_complete.get() {
+                    self.queue_startup_url(href, Opener::default(), current_modifier_flags());
+                    return Bool::YES;
+                }
                 return Bool::NO;
             };
-            crate::session_handler::forward_through_engine(&href, engine, None, self.mtm());
+            let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
+            self.route_url(engine, &href, &Opener::default(), modifiers);
             Bool::YES
         }
 
@@ -368,6 +377,7 @@ define_class!(
             crate::workspace::terminate_duplicate_instances();
             self.reload_engine();
             crate::session_handler::finish_startup(self.mtm());
+            self.finish_url_startup();
             self.start_updater();
             self.setup_menu_bar();
             install_sighup_handler(self);
@@ -396,8 +406,14 @@ define_class!(
             let Some(raw) = raw else { return };
 
             let engine_ref = self.ivars().engine.borrow();
-            let Some(engine) = engine_ref.as_ref() else { return };
             let sender_pid = sender_pid_from_event(event);
+            let Some(engine) = engine_ref.as_ref() else {
+                if !self.ivars().startup_complete.get() {
+                    let opener = sender_pid.and_then(opener_from_pid).unwrap_or_else(frontmost_opener);
+                    self.queue_startup_url(raw, opener, current_modifier_flags());
+                }
+                return;
+            };
             let opener = resolve_opener(engine, sender_pid);
             let modifiers = if engine.needs_modifiers() { current_modifier_flags() } else { ModifierFlags::default() };
 
@@ -412,28 +428,7 @@ define_class!(
                 );
             }
 
-            let inner = unwrap_grinch_scheme(&raw);
-            // Same pending-session check the openURLs: path does — see
-            // there for the rationale. The two URL ingress points need
-            // it independently because macOS dispatches GURL events
-            // to handle_url:withReplyEvent: directly without going
-            // through application:openURLs: for legacy URL handlers.
-            if crate::session_handler::try_complete_callback(&inner) {
-                return;
-            }
-            let result = engine.resolve(&inner, &opener, modifiers);
-
-            if debug_enabled() {
-                eprintln!(
-                    "grinch: → browser={} args={:?} url={:?}",
-                    result.browser.bundle_id, result.browser.args, result.url,
-                );
-            }
-
-            if result.browser.bundle_id.is_empty() {
-                return; // suppressed (open: null)
-            }
-            open_url(&result.url, &result.browser, engine.diagnostics(), self.mtm(), |_| {});
+            self.route_url(engine, &raw, &opener, modifiers);
         }
 
         // Menu bar action: Reload Config.
@@ -498,6 +493,55 @@ define_class!(
 );
 
 impl Delegate {
+    fn queue_startup_url(&self, url: String, opener: Opener, modifiers: ModifierFlags) {
+        self.ivars().startup_urls.borrow_mut().push(PendingUrl {
+            url,
+            opener,
+            modifiers,
+        });
+    }
+
+    pub(crate) fn finish_url_startup(&self) {
+        self.ivars().startup_complete.set(true);
+        let urls = std::mem::take(&mut *self.ivars().startup_urls.borrow_mut());
+        let engine = self.ivars().engine.borrow();
+        let Some(engine) = engine.as_ref() else {
+            if !urls.is_empty() {
+                self.ivars().diagnostics.record_config_error(
+                    None,
+                    "Cannot route URLs received during startup because the config did not load",
+                );
+            }
+            return;
+        };
+        for pending in urls {
+            self.route_url(engine, &pending.url, &pending.opener, pending.modifiers);
+        }
+    }
+
+    fn route_url(&self, engine: &Engine, raw: &str, opener: &Opener, modifiers: ModifierFlags) {
+        let inner = unwrap_grinch_scheme(raw);
+        if crate::session_handler::try_complete_callback(&inner) {
+            return;
+        }
+        let result = engine.resolve(&inner, opener, modifiers);
+        if debug_enabled() {
+            eprintln!(
+                "grinch: → browser={} args={:?} url={:?}",
+                result.browser.bundle_id, result.browser.args, result.url
+            );
+        }
+        if !result.browser.bundle_id.is_empty() {
+            open_url(
+                &result.url,
+                &result.browser,
+                engine.diagnostics(),
+                self.mtm(),
+                |_| {},
+            );
+        }
+    }
+
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(DelegateIvars::default());
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };

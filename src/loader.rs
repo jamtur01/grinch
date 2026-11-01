@@ -215,8 +215,12 @@ fn eval(ctx: &JSContext, script: &str) -> Option<Retained<JSValue>> {
 const SYSTEM_CONFIG_PATH: &str = "/Library/Application Support/Grinch/grinch.js";
 
 fn config_paths() -> Vec<PathBuf> {
+    config_paths_for(std::env::var("HOME").ok().as_deref())
+}
+
+fn config_paths_for(home: Option<&str>) -> Vec<PathBuf> {
     let mut paths = Vec::with_capacity(4);
-    if let Ok(home) = std::env::var("HOME") {
+    if let Some(home) = home {
         let home = PathBuf::from(home);
         paths.push(home.join(".grinch.js"));
         paths.push(home.join(".config/grinch.js"));
@@ -350,16 +354,7 @@ mod tests {
 
     #[test]
     fn config_paths_search_order() {
-        // HOME is process-global, so the two-state assertion (with HOME
-        // set vs unset) runs in one test to avoid Rust's parallel-test
-        // runner racing on the env var.
-        let prev = std::env::var_os("HOME");
-
-        // With HOME set: four paths, system last.
-        unsafe {
-            std::env::set_var("HOME", "/Users/testuser");
-        }
-        let with_home = config_paths();
+        let with_home = config_paths_for(Some("/Users/testuser"));
         assert_eq!(with_home.len(), 4);
         assert_eq!(with_home[0], PathBuf::from("/Users/testuser/.grinch.js"));
         assert_eq!(
@@ -376,23 +371,11 @@ mod tests {
             "system path must be last so user paths win"
         );
 
-        // Without HOME: the system path is still searched. Covers sandboxed
-        // test runners and some launchd jobs that strip HOME.
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-        let without_home = config_paths();
+        let without_home = config_paths_for(None);
         assert_eq!(without_home.len(), 1);
         assert_eq!(
             without_home[0],
             PathBuf::from("/Library/Application Support/Grinch/grinch.js")
         );
-
-        // Restore.
-        unsafe {
-            if let Some(h) = prev {
-                std::env::set_var("HOME", h);
-            }
-        }
     }
 }

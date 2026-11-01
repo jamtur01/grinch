@@ -121,7 +121,7 @@
   <p>A <code>match</code> field accepts one matcher or an array of them. Any
     matcher in the array can trigger the rule.</p>
   <div class="table-wrap">
-  <table>
+  <table class="stack">
     <thead><tr><th scope="col">Syntax</th><th scope="col">Matches</th></tr></thead>
     <tbody>
       <tr><th scope="row"><code>"github.com"</code></th><td>The hostname, exactly or as a subdomain. Bare strings without <code>*</code> or <code>/</code> are hostname patterns. Differs from Finicky; see <a href="#bare-strings">below</a>.</td></tr>
@@ -217,8 +217,8 @@
     <code>args: ["--incognito"]</code>.</p>
   <p>To open a particular app bundle, use its path, for example
     <code>"/Applications/Foo.app"</code> or
-    <code>{ name: "~/Apps/Foo.app", appType: "path" }</code>. Use
-    <code>{ name: "com.example.Browser", appType: "bundleId" }</code> to treat a
+    <code class="long">{ name: "~/Apps/Foo.app", appType: "path" }</code>. Use
+    <code class="long">{ name: "com.example.Browser", appType: "bundleId" }</code> to treat a
     name as a bundle ID without an app-name lookup. A target of <code>null</code>
     or <code>{ appType: "none" }</code> opens nothing. A function can choose a
     target dynamically; a rule's function returning <code>null</code> or
@@ -248,7 +248,7 @@ module.exports = {
     parameters before the rules see the URL:</p>
 <pre><code>rewrite: [strip("utm_*", "fbclid")],</code></pre>
   <div class="table-wrap">
-  <table>
+  <table class="stack">
     <thead><tr><th scope="col">Form</th><th scope="col">Effect</th></tr></thead>
     <tbody>
       <tr><th scope="row"><code>strip("utm_*", "fbclid")</code></th><td>Remove these query parameters. A trailing <code>*</code> matches a prefix.</td></tr>
@@ -267,13 +267,13 @@ module.exports = {
     destination:</p>
   <ul>
     <li><strong>Microsoft 365 Defender SafeLinks</strong>:
-      <code>*.safelinks.protection.outlook.com/?url=…</code></li>
+      <code class="long">*.safelinks.protection.outlook.com/?url=…</code></li>
     <li><strong>Microsoft Teams external-link interstitial</strong>:
-      <code>statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…</code></li>
+      <code class="long">statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…</code></li>
     <li><strong>Proofpoint URL Defense v2</strong>:
       <code>urldefense.proofpoint.com/v2/url?u=…</code></li>
     <li><strong>Proofpoint URL Defense v3</strong>:
-      <code>urldefense.com/v3/__&lt;encoded&gt;__;&lt;marker&gt;!!…</code>, plus the
+      <code class="long">urldefense.com/v3/__&lt;encoded&gt;__;&lt;marker&gt;!!…</code>, plus the
       FedRAMP <code>urldefense.us</code> tenant</li>
   </ul>
   <p>Other hosts pass through unchanged, so it's safe at the top of the rewrite
@@ -297,12 +297,12 @@ module.exports = {
     argument. If it declares a second argument, it also receives
     <a href="#ctx">context</a>. It can return:</p>
   <div class="table-wrap">
-  <table>
+  <table class="stack">
     <thead><tr><th scope="col">Return</th><th scope="col">Effect</th></tr></thead>
     <tbody>
       <tr><th scope="row"><code>string</code></th><td>Use as the new URL.</td></tr>
       <tr><th scope="row"><code>URL</code> instance, including the mutated input</th><td>Use its <code>.href</code>.</td></tr>
-      <tr><th scope="row"><code>{protocol, host, pathname, search, hash, …}</code></th><td>Join the fields into a URL.</td></tr>
+      <tr><th scope="row"><code class="long">{protocol, host, pathname, search, hash, …}</code></th><td>Join the fields into a URL.</td></tr>
       <tr><th scope="row"><code>null</code></th><td>Drop the URL and open nothing.</td></tr>
       <tr><th scope="row"><code>undefined</code> or <code>return;</code></th><td>Leave the URL unchanged, as in Finicky v4.</td></tr>
     </tbody>
@@ -365,15 +365,15 @@ module.exports = {
     (<a href="finicky.html#finicky-namespace">full list</a>). For most decisions
     you can use either form:</p>
   <div class="table-wrap">
-  <table>
+  <table class="stack">
     <thead><tr><th scope="col">Want</th><th scope="col">Grinch</th><th scope="col">Finicky style</th></tr></thead>
     <tbody>
-      <tr><th scope="row">Hostname or subdomain</th><td><code>domain("github.com", …)</code> or <code>"github.com"</code></td><td>Not available; use a bare string</td></tr>
-      <tr><th scope="row">Exact hostname only</th><td><code>(url) =&gt; url.hostname === "github.com"</code></td><td><code>finicky.matchHostnames("github.com")</code></td></tr>
-      <tr><th scope="row">Opener bundle ID</th><td><code>from("com.microsoft.Outlook")</code></td><td><code>(url, ctx) =&gt; ctx.opener?.bundleId === "…"</code></td></tr>
-      <tr><th scope="row">App is running</th><td><code>running("us.zoom.xos")</code></td><td><code>finicky.isAppRunning("Zoom")</code></td></tr>
-      <tr><th scope="row">Modifier keys</th><td><code>(url, ctx) =&gt; ctx.modifiers.shift</code></td><td><code>finicky.getModifierKeys()</code></td></tr>
-      <tr><th scope="row">Opener details</th><td><code>ctx.opener.{bundleId, name, path, windowTitle}</code></td><td>The same <code>ctx.opener</code></td></tr>
+      <tr><th scope="row">Hostname or subdomain</th><td data-label="Grinch"><code>domain("github.com", …)</code> or <code>"github.com"</code></td><td data-label="Finicky style">Not available; use a bare string</td></tr>
+      <tr><th scope="row">Exact hostname only</th><td data-label="Grinch"><code>(url) =&gt; url.hostname === "github.com"</code></td><td data-label="Finicky style"><code>finicky.matchHostnames("github.com")</code></td></tr>
+      <tr><th scope="row">Opener bundle ID</th><td data-label="Grinch"><code>from("com.microsoft.Outlook")</code></td><td data-label="Finicky style"><code class="long">(url, ctx) =&gt; ctx.opener?.bundleId === "…"</code></td></tr>
+      <tr><th scope="row">App is running</th><td data-label="Grinch"><code>running("us.zoom.xos")</code></td><td data-label="Finicky style"><code>finicky.isAppRunning("Zoom")</code></td></tr>
+      <tr><th scope="row">Modifier keys</th><td data-label="Grinch"><code>(url, ctx) =&gt; ctx.modifiers.shift</code></td><td data-label="Finicky style"><code>finicky.getModifierKeys()</code></td></tr>
+      <tr><th scope="row">Opener details</th><td data-label="Grinch"><code class="long">ctx.opener.{bundleId, name, path, windowTitle}</code></td><td data-label="Finicky style">The same <code>ctx.opener</code></td></tr>
     </tbody>
   </table>
   </div>

@@ -291,14 +291,6 @@ figure.term pre {
   padding-bottom: 4rem;
 }
 
-.hero-logo {
-  display: block;
-  width: 4.5rem;
-  height: 4.5rem;
-  margin: 0 0 1.25rem;
-  filter: drop-shadow(0 6px 16px rgba(70, 178, 94, 0.25));
-}
-
 .hero h1 {
   font-size: 2.75rem;
   line-height: 1.12;
@@ -321,6 +313,16 @@ figure.term pre {
 }
 
 .hero-demo figure.file { margin-bottom: 0.75rem; }
+
+/* one block per line, so a line that wraps on a phone hangs under its own
+   value column instead of restarting at the left edge */
+.hero-demo .l {
+  display: block;
+  padding-left: var(--h, 0);
+  text-indent: calc(-1 * var(--h, 0));
+}
+.hero-demo .l.cmd { --h: 4ch; }
+.hero-demo .l.out { --h: 9ch; }
 .hero-demo pre { font-size: 0.82rem; }
 
 /* page head on inner pages */
@@ -465,33 +467,36 @@ ol.steps > li > h2::before {
   color: var(--accent);
 }
 
-/* capabilities and page index on the home page */
+/* home: each capability beside the config line that does it */
 
-.capabilities {
+.proofs {
   list-style: none;
   padding: 0;
   margin: 0;
+}
+
+.proofs li {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1.75rem 2.5rem;
-}
-
-.capabilities li {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 0.75rem 1.75rem;
+  align-items: start;
   border-top: 1px solid var(--border);
-  padding-top: 1rem;
+  padding: 1.25rem 0;
+  margin: 0;
 }
 
-.capabilities h3 {
-  margin: 0 0 0.4rem;
+.proofs li:first-child { border-top: none; padding-top: 0.25rem; }
+.proofs h3 { margin: 0 0 0.4rem; }
+.proofs p { margin: 0; color: var(--fg-muted); }
+.proofs pre {
+  margin: 0;
+  font-size: 0.8rem;
 }
-
-.capabilities p { margin: 0; color: var(--fg-muted); }
 
 .doc-index {
   list-style: none;
   padding: 0;
   margin: 0;
-  border-top: 1px solid var(--border);
 }
 
 .doc-index li {
@@ -667,18 +672,44 @@ summary::marker { color: var(--accent); }
   .container, .wide { padding: 0 1rem; }
   .hero h1 { font-size: 2.1rem; }
   .hero .lead { font-size: 1.05rem; }
-  .hero-logo { width: 3.5rem; height: 3.5rem; }
+  .hero-demo pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
   .page-head { padding-top: 2rem; }
   .page-head h1 { font-size: 1.9rem; }
   h2 { font-size: 1.4rem; }
   pre { font-size: 0.8rem; padding: 0.75rem 1rem; }
   table { font-size: 0.85rem; }
   th, td { padding: 0.4rem 0.5rem; }
-  :not(pre) > code {
+  code.long {
     white-space: normal;
     overflow-wrap: anywhere;
   }
-  .capabilities { grid-template-columns: minmax(0, 1fr); }
+  .proofs li { grid-template-columns: minmax(0, 1fr); }
+  table.stack,
+  table.stack tbody,
+  table.stack tr,
+  table.stack th,
+  table.stack td {
+    display: block;
+  }
+  table.stack thead { display: none; }
+  table.stack tr {
+    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 0;
+  }
+  table.stack th,
+  table.stack td {
+    border: none;
+    padding: 0.1rem 0;
+  }
+  table.stack td:empty { display: none; }
+  table.stack td[data-label]::before {
+    content: attr(data-label) ": ";
+    color: var(--fg-muted);
+  }
+  table.stack code { white-space: normal; overflow-wrap: anywhere; }
   .doc-index a {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.15rem;

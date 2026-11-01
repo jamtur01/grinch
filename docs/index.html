@@ -47,7 +47,6 @@
 <section class="hero" aria-labelledby="hero-title">
   <div class="wide">
     <div>
-      <img class="hero-logo" src="grinch-icon.svg" width="72" height="72" alt="">
       <h1 id="hero-title">Choose where every link on your Mac opens.</h1>
       <p class="lead">Grinch is a menu-bar app you set as your default browser.
         Your JavaScript rules send each link from Slack, Mail, or any other app
@@ -62,30 +61,11 @@
     <div class="hero-demo">
       <figure class="file">
         <figcaption>~/.config/grinch.js</figcaption>
-<pre><code>module.exports = {
-  default: "com.apple.Safari",
-  rewrite: [strip("utm_*")],
-  rules: [
-    { match: "github.com", open: "Google Chrome:Default" },
-    { match: "zoom.us/j/*", open: "us.zoom.xos" },
-  ],
-};</code></pre>
+<pre><code><span class="l" style="--h:4ch">module.exports = {</span><span class="l" style="--h:6ch">  default: "com.apple.Safari",</span><span class="l" style="--h:6ch">  rewrite: [strip("utm_*")],</span><span class="l" style="--h:6ch">  rules: [</span><span class="l" style="--h:8ch">    { match: "github.com", open: "Google Chrome:Default" },</span><span class="l" style="--h:8ch">    { match: "zoom.us/j/*", open: "us.zoom.xos" },</span><span class="l" style="--h:6ch">  ],</span><span class="l" style="--h:4ch">};</span></code></pre>
       </figure>
       <figure class="term">
         <figcaption>Terminal</figcaption>
-<pre><code><span class="cmd">Grinch --test "https://github.com/?utm_source=slack"</span>
-<span class="out">URL:     https://github.com/?utm_source=slack
-Final:   <b>https://github.com/</b>
-Browser: <b>com.google.Chrome</b>
-Args:    <b>--profile-directory=Default</b></span>
-<span class="cmd">Grinch --test "https://zoom.us/j/123456789"</span>
-<span class="out">URL:     https://zoom.us/j/123456789
-Final:   https://zoom.us/j/123456789
-Browser: <b>us.zoom.xos</b></span>
-<span class="cmd">Grinch --test "https://example.com/"</span>
-<span class="out">URL:     https://example.com/
-Final:   https://example.com/
-Browser: <b>com.apple.Safari</b></span></code></pre>
+<pre><code><span class="l cmd">Grinch --test "https://github.com/?utm_source=slack"</span><span class="l out">URL:     https://github.com/?utm_source=slack</span><span class="l out">Final:   <b>https://github.com/</b></span><span class="l out">Browser: <b>com.google.Chrome</b></span><span class="l out">Args:    <b>--profile-directory=Default</b></span><span class="l cmd">Grinch --test "https://zoom.us/j/123456789"</span><span class="l out">URL:     https://zoom.us/j/123456789</span><span class="l out">Final:   https://zoom.us/j/123456789</span><span class="l out">Browser: <b>us.zoom.xos</b></span><span class="l cmd">Grinch --test "https://example.com/"</span><span class="l out">URL:     https://example.com/</span><span class="l out">Final:   https://example.com/</span><span class="l out">Browser: <b>com.apple.Safari</b></span></code></pre>
       </figure>
     </div>
   </div>
@@ -95,27 +75,47 @@ Browser: <b>com.apple.Safari</b></span></code></pre>
 
 <section id="what" aria-labelledby="what-title">
   <h2 id="what-title"><a class="self" href="#what">What Grinch does</a></h2>
-  <ul class="capabilities">
+  <ul class="proofs">
     <li>
-      <h3>Rules you can read</h3>
-      <p>Match a link by host, wildcard, or regular expression, by the app it
-        came from, by an app that is running, or by the modifier keys you held.
-        The first matching rule wins; everything else goes to your default.</p>
+      <div>
+        <h3>Rules you can read</h3>
+        <p>Match a link by host, wildcard, or regular expression, by the app it
+          came from, by an app that is running, or by the modifier keys you
+          held. The first matching rule wins; everything else goes to your
+          default.</p>
+      </div>
+<pre><code>{ match: from("com.tinyspeck.slackmacgap"),
+  open: "Google Chrome" }</code></pre>
     </li>
     <li>
-      <h3>Your browser profiles</h3>
-      <p>Open a link in a named profile, a private window, or a new window in
-        supported Chrome and Firefox browsers, or hand it to an app such as Zoom.</p>
+      <div>
+        <h3>Your browser profiles</h3>
+        <p>Open a link in a named profile, a private window, or a new window in
+          supported Chrome and Firefox browsers, or hand it to an app such as
+          Zoom.</p>
+      </div>
+<pre><code>{ match: "github.com",
+  open: { name: "Google Chrome",
+          profile: "Work" } }</code></pre>
     </li>
     <li>
-      <h3>Cleaner links</h3>
-      <p>Strip tracking parameters, and unwrap Microsoft SafeLinks, Proofpoint
-        URL Defense, and Teams launcher links before your rules see them.</p>
+      <div>
+        <h3>Cleaner links</h3>
+        <p>Strip tracking parameters, and unwrap Microsoft SafeLinks, Proofpoint
+          URL Defense, and Teams launcher links before your rules see them.</p>
+      </div>
+<pre><code>rewrite: [safelinks(), teams_launcher(),
+          strip("utm_*")]</code></pre>
     </li>
     <li>
-      <h3>Sign-in pages too</h3>
-      <p>Apps that sign in through <code>ASWebAuthenticationSession</code>, such
-        as Slack, send their sign-in pages through the same rules.</p>
+      <div>
+        <h3>Sign-in pages too</h3>
+        <p>Apps that sign in through <code>ASWebAuthenticationSession</code>,
+          such as Slack, send their sign-in pages through the same rules, so
+          your company's sign-in can open in your work profile.</p>
+      </div>
+<pre><code>{ match: "login.microsoftonline.com",
+  open: "Google Chrome:Work" }</code></pre>
     </li>
   </ul>
 </section>

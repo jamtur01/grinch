@@ -311,7 +311,7 @@ pub(crate) fn compile_matcher(
         if is_host_port_pattern(&s) && !s.contains(['*', '/', '?', '#']) {
             let pattern = format!(
                 "^(?:https?:|ftp:)?(?://)?{}(?:[/?#].*)?$",
-                regex::escape(&s)
+                regex::escape(&s.to_ascii_lowercase())
             );
             return Ok(Regex::new(&pattern).ok().map(Matcher::Wildcard));
         }
@@ -437,6 +437,34 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
 
     // Step 1: replace escaped asterisks with a sentinel.
     let mut work = pattern.replace("\\*", &PLACEHOLDER.to_string());
+    let has_protocol = pattern_has_protocol_prefix(pattern) && !is_host_port_pattern(pattern);
+    let host_start = if has_protocol {
+        work.find(':')
+            .filter(|&index| work[index..].starts_with("://"))
+            .map(|index| index + 3)
+    } else if work.starts_with("*://") {
+        Some(4)
+    } else if !work.starts_with('*') || work.starts_with("*.") {
+        Some(0)
+    } else {
+        None
+    };
+    if let Some(start) = host_start {
+        let end = work[start..]
+            .find(['/', '?', '#'])
+            .map_or(work.len(), |index| start + index);
+        let host_start = start + work[start..end].rfind('@').map_or(0, |index| index + 1);
+        let host_end = if work[host_start..end].starts_with('[') {
+            work[host_start..end]
+                .find(']')
+                .map_or(end, |index| host_start + index + 1)
+        } else {
+            work[host_start..end]
+                .find(':')
+                .map_or(end, |index| host_start + index)
+        };
+        work[host_start..host_end].make_ascii_lowercase();
+    }
 
     // Step 2: escape regex special chars except `*`.
     let mut escaped = String::with_capacity(work.len() + 16);
@@ -454,8 +482,7 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
     // Step 3: protocol-prefix logic. If the pattern has a `\w+:` prefix, treat
     // it as protocol-anchored; otherwise (and unless it starts with `*`)
     // prepend an optional protocol matcher.
-    let starts_with_protocol =
-        pattern_has_protocol_prefix(pattern) && !is_host_port_pattern(pattern);
+    let starts_with_protocol = has_protocol;
     if !starts_with_protocol {
         if !pattern.starts_with('*') {
             work = format!("(?:https?:|ftp:|mailto:|file:|tel:|sms:|data:)?(?://)?{work}");
@@ -476,12 +503,7 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
     // Step 6: anchor.
     let anchored = format!("^{work}$");
 
-    // Case-sensitive by default — Finicky's `matchWildcard` produces a
-    // bare JS RegExp with no `/i` flag and matches via `RegExp.test`,
-    // which is also case-sensitive by default. Earlier Grinch versions
-    // forced case_insensitive(true) here, which silently diverged on any
-    // mixed-case URL (e.g. `match: "GitHub.com/*"` matched
-    // `https://github.com/path` in Grinch but not in Finicky).
+    // Only the hostname is normalized; the remaining pattern stays case-sensitive.
     RegexBuilder::new(&anchored).build().ok()
 }
 

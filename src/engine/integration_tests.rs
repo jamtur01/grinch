@@ -296,6 +296,41 @@ fn wildcard_normalizes_hostname_but_not_path() {
     );
     let engine = build_engine(
         r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: "Example.NET/Path/*", open: "com.google.Chrome" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.net/Path/item").0,
+        "com.google.Chrome"
+    );
+    assert_eq!(
+        resolve(&engine, "https://EXAMPLE.NET/path/item").0,
+        "com.apple.Safari"
+    );
+    for pattern in ["https://Example.NET/Path/*", "*.Example.NET/Path/*"] {
+        let source = format!(
+            r#"module.exports = {{ default: "com.apple.Safari", rules: [
+            {{ match: "{pattern}", open: "com.google.Chrome" }}
+        ] }};"#
+        );
+        let engine = build_engine(&source);
+        assert_eq!(
+            resolve(&engine, "https://sub.example.net/Path/item").0,
+            if pattern.starts_with("*.") {
+                "com.google.Chrome"
+            } else {
+                "com.apple.Safari"
+            }
+        );
+        if pattern.starts_with("https:") {
+            assert_eq!(
+                resolve(&engine, "https://example.net/Path/item").0,
+                "com.google.Chrome"
+            );
+        }
+    }
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
         { match: "mailto:*GitHub.COM*", open: "com.google.Chrome" }
     ] };"#,
     );

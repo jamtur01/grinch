@@ -1,18 +1,10 @@
 // Firefox profile resolution.
 //
-// Firefox stores its profile inventory in `profiles.ini` (a flat
-// INI file) under each app's per-app Application Support folder. The
-// canonical command-line form is `firefox -P <Name>`, where `<Name>` is
-// the user-visible profile name listed in profiles.ini under a
-// `[Profile<n>]` section's `Name=` key.
-//
-// Unlike Chromium (where there's a separate display name vs on-disk
-// directory), Firefox uses a single name end-to-end. So the only thing
-// this module does is *validate* that the user-supplied profile name
-// actually exists in profiles.ini and warn loudly when it doesn't —
-// passing an unknown profile to `firefox -P` would silently open the
-// profile-manager UI, which a user routing URLs would experience as
-// "the link did nothing".
+// Legacy profile names come from `profiles.ini` and use `-P <name>`.
+// Selectable profile names come from the profile-group databases and use
+// `--profile <directory>`, as do explicit profile directory paths.
+
+mod sqlite;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -109,38 +101,7 @@ fn store_ids(content: &str) -> Result<HashSet<String>, ()> {
 fn read_group_store(path: &Path, root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     std::fs::File::open(path)
         .map_err(|error| format!("{error}. {}", crate::engine::profile_access_advice(&error)))?;
-    let output = std::process::Command::new("/usr/bin/sqlite3")
-        .args([
-            "-batch",
-            "-readonly",
-            "-json",
-            "-init",
-            "/dev/null",
-            "-cmd",
-            ".timeout 500",
-        ])
-        .arg(path)
-        .arg("SELECT name, path FROM Profiles ORDER BY id;")
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    if output.stdout.is_empty() {
-        return Ok(Vec::new());
-    }
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
-    let mut profiles = Vec::new();
-    for row in rows {
-        if let (Some(name), Some(path)) = (row["name"].as_str(), row["path"].as_str())
-            && !name.is_empty()
-            && !path.is_empty()
-        {
-            profiles.push((name.to_string(), root.join(path)));
-        }
-    }
-    Ok(profiles)
+    sqlite::profiles(path, root)
 }
 
 fn load_group_profiles(bundle_id: &str, diagnostics: &DiagnosticLog) -> GroupProfiles {

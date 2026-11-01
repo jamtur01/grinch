@@ -50,6 +50,27 @@ The config-loading benchmark uses `01-floor` and `14-many-rules`, with 300
 loads per sample. It includes JavaScriptCore setup, config evaluation, and rule
 compilation.
 
+To measure selectable Firefox profile lookup without touching a real profile,
+create a temporary profile group and run the config-loading benchmark:
+
+```sh
+stage=$(mktemp -d)
+firefox="$stage/Library/Application Support/Firefox"
+mkdir -p "$firefox/Profile Groups" "$firefox/Profiles/work"
+printf '[Profile0]\nName=Legacy\nStoreID=Group1\n' > "$firefox/profiles.ini"
+sqlite3 "$firefox/Profile Groups/Group1.sqlite" \
+  "CREATE TABLE Profiles(id INTEGER, name TEXT, path TEXT);
+   INSERT INTO Profiles VALUES (1, 'Work', 'Profiles/work');"
+printf '%s\n' 'module.exports = { default: { name: "org.mozilla.firefox", profile: "Work" } };' \
+  > "$stage/.grinch.js"
+for i in $(seq 1 10); do
+  HOME="$stage" target/release/Grinch --bench-init 30
+done
+```
+
+This measures cached data being cleared and the group database being reread on
+each reload. The temporary directory can be removed after the test.
+
 ## Results
 
 Representative release-build measurements on Apple Silicon:
@@ -82,6 +103,7 @@ Representative release-build measurements on Apple Silicon:
 |---|---:|
 | floor | 466.23 |
 | many-rules | 624.19 |
+| Firefox selectable profile | 560.11 |
 
 ## Including macOS lookups
 

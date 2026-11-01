@@ -641,7 +641,7 @@ impl Engine {
             .filter(|opts| !is_undef_or_null(opts) && unsafe { opts.isObject() })
             .map(|opts| parse_options_block(&opts))
             .unwrap_or_default();
-        diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_days);
+        diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_seconds);
         if options.invalid_log_format {
             let message =
                 "invalid options.logFormat — use 'json' or 'text'; keeping the current format";

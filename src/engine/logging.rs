@@ -49,11 +49,10 @@ pub struct OptionsConfig {
     /// a fresh empty file, so older entries are preserved on disk for
     /// post-mortem until the user prunes them.
     pub log_rotate_bytes: Option<u64>,
-    /// Rotate the diagnostic log when it has been written to for this many
-    /// days (since the file was opened or most-recently rotated).
+    /// Rotate after this many seconds since opening or the most recent rotation.
     /// `None` disables time-based rotation. Combine with
     /// `log_rotate_bytes` to get "rotate on either trigger".
-    pub log_rotate_days: Option<u32>,
+    pub log_rotate_seconds: Option<u64>,
 }
 
 /// App-owned diagnostic log shared across config reloads and engines.
@@ -94,11 +93,11 @@ impl DiagnosticLog {
         Self::new(path)
     }
 
-    pub(crate) fn configure_rotation(&self, bytes: Option<u64>, days: Option<u32>) {
+    pub(crate) fn configure_rotation(&self, bytes: Option<u64>, seconds: Option<u64>) {
         self.writer
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .configure_rotation(bytes, days);
+            .configure_rotation(bytes, seconds);
     }
 
     pub(crate) fn configure_format(&self, format: LogFormat) {
@@ -250,7 +249,7 @@ pub(crate) fn launch_error_event(
 /// Append-only writer behind [`DiagnosticLog`]. After a write failure it
 /// stops trying so one broken destination cannot spam stderr per resolve.
 ///
-/// Rotation: when either `rotate_bytes` or `rotate_days` is set and the
+/// Rotation: when either `rotate_bytes` or `rotate_seconds` is set and the
 /// corresponding threshold is exceeded, the current file is renamed to
 /// `<path>.<iso-timestamp>` (with a numeric suffix for collisions), and a
 /// fresh file is opened on the next write.
@@ -265,7 +264,7 @@ pub(crate) struct LogWriter {
     pub(crate) file: Option<std::fs::File>,
     failed: bool,
     rotate_bytes: Option<u64>,
-    rotate_days: Option<u32>,
+    rotate_seconds: Option<u64>,
     pub(crate) bytes_written: u64,
     pub(crate) opened_at_unix: u64,
 }
@@ -274,7 +273,7 @@ impl LogWriter {
     pub(crate) fn new(
         path: std::path::PathBuf,
         rotate_bytes: Option<u64>,
-        rotate_days: Option<u32>,
+        rotate_seconds: Option<u64>,
     ) -> Self {
         Self {
             base_path: path.clone(),
@@ -285,7 +284,7 @@ impl LogWriter {
             file: None,
             failed: false,
             rotate_bytes,
-            rotate_days,
+            rotate_seconds,
             bytes_written: 0,
             opened_at_unix: 0,
         }
@@ -346,9 +345,9 @@ impl LogWriter {
         Ok(self.path.clone())
     }
 
-    fn configure_rotation(&mut self, bytes: Option<u64>, days: Option<u32>) {
+    fn configure_rotation(&mut self, bytes: Option<u64>, seconds: Option<u64>) {
         self.rotate_bytes = bytes;
-        self.rotate_days = days;
+        self.rotate_seconds = seconds;
     }
 
     fn configure_format(&mut self, format: LogFormat) {
@@ -440,7 +439,7 @@ impl LogWriter {
     }
 
     /// True when writing `extra_bytes` more would push the file past
-    /// `rotate_bytes`, OR `now` is past `rotate_days` since the file
+    /// `rotate_bytes`, OR `now` is past `rotate_seconds` since the file
     /// was opened. Pure function so it's testable without a real fs.
     pub(crate) fn should_rotate(&self, extra_bytes: u64, now: u64) -> bool {
         if self.file.is_none() {
@@ -451,11 +450,10 @@ impl LogWriter {
         {
             return true;
         }
-        if let Some(days) = self.rotate_days {
-            let secs = u64::from(days).saturating_mul(86_400);
-            if now.saturating_sub(self.opened_at_unix) >= secs {
-                return true;
-            }
+        if let Some(secs) = self.rotate_seconds
+            && now.saturating_sub(self.opened_at_unix) >= secs
+        {
+            return true;
         }
         false
     }
@@ -721,19 +719,27 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
                 Some("text") => out.log_format = LogFormat::Text,
                 _ => out.invalid_log_format = true,
             },
+            "logRotateBytes" | "logRotateDays" if is_undef_or_null(&v) => {}
             "logRotateBytes" => {
                 // JS numbers are doubles; coerce to u64 with bounds-check
                 // so a negative/NaN/infinity value disables rotation
                 // rather than silently producing a giant cap.
                 let n = unsafe { v.toDouble() };
-                if n.is_finite() && n > 0.0 && n <= u64::MAX as f64 {
+                if n.is_finite() && n >= 1.0 && n < u64::MAX as f64 && n.fract() == 0.0 {
                     out.log_rotate_bytes = Some(n as u64);
+                } else {
+                    eprintln!(
+                        "grinch: invalid options.logRotateBytes — use a positive whole number"
+                    );
                 }
             }
             "logRotateDays" => {
                 let n = unsafe { v.toDouble() };
-                if n.is_finite() && n > 0.0 && n <= u32::MAX as f64 {
-                    out.log_rotate_days = Some(n as u32);
+                let seconds = n * 86_400.0;
+                if seconds.is_finite() && seconds >= 1.0 && seconds < u64::MAX as f64 {
+                    out.log_rotate_seconds = Some(seconds as u64);
+                } else {
+                    eprintln!("grinch: invalid options.logRotateDays — use at least one second");
                 }
             }
             other if !OPTION_KEYS.contains(&other) => {

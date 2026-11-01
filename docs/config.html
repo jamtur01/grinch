@@ -435,7 +435,8 @@ module.exports = {
     <dd>Cap the diagnostic log's growth. Rotation renames the current file to
       <code>&lt;original-name&gt;.log.&lt;iso-timestamp&gt;</code> and starts an
       empty one; same-second collisions add <code>.1</code>, <code>.2</code>,
-      and so on. Combine both and whichever fires first wins. By default the
+      and so on. Bytes must be a positive whole number; days may be fractional,
+      with a minimum of one second. Combine both and whichever fires first wins. By default the
       file grows until you delete it.</dd>
     <dt><code>logFormat: "text"</code></dt>
     <dd>Write readable diagnostic events. The default, <code>"json"</code>,

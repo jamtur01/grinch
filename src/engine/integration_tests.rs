@@ -357,6 +357,16 @@ fn log_format_switches_files_and_preserves_background_events() {
 }
 
 #[test]
+fn rotation_settings_preserve_fractional_days_and_reject_fractional_bytes() {
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari",
+        options: { logRotateDays: 0.5, logRotateBytes: 0.5 } };"#,
+    );
+    assert_eq!(engine.options.log_rotate_seconds, Some(43_200));
+    assert_eq!(engine.options.log_rotate_bytes, None);
+}
+
+#[test]
 fn format_change_includes_profile_errors_from_config_load() {
     let home = unique_tmp("format-profile-error");
     with_home(&home, || {

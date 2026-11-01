@@ -302,10 +302,16 @@ pub(crate) fn build_url_instance(
     url_ctor: &JSValue,
     ctx: &JSContext,
     url: &str,
+    reset_opener: Option<&JSValue>,
 ) -> Option<Retained<JSValue>> {
     if let Some(url_str) = js_string(ctx, url) {
         let url_str_obj: Retained<AnyObject> = unsafe { Retained::cast_unchecked(url_str) };
-        let args = NSArray::from_retained_slice(&[url_str_obj]);
+        let args = if let Some(reset) = reset_opener {
+            let reset: Retained<AnyObject> = unsafe { Retained::cast_unchecked(reset.retain()) };
+            NSArray::from_retained_slice(&[url_str_obj, reset])
+        } else {
+            NSArray::from_retained_slice(&[url_str_obj])
+        };
         if let Some(instance) = unsafe { url_ctor.constructWithArguments(Some(&args)) }
             && !unsafe { instance.isUndefined() }
             && !unsafe { instance.isNull() }

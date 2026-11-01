@@ -1263,7 +1263,12 @@ impl<'a> ResolveCtx<'a> {
         {
             return Some(instance.clone());
         }
-        let v = build_url_instance(self.url_ctor, self.ctx, url)?;
+        let reset_opener = self
+            .cached_ctx
+            .borrow()
+            .is_none()
+            .then_some(&**self.js_true);
+        let v = build_url_instance(self.url_ctor, self.ctx, url, reset_opener)?;
         *self.cached_url_instance.borrow_mut() = Some((Box::from(url), v.clone()));
         Some(v)
     }

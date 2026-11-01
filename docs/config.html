@@ -146,7 +146,7 @@
       <tr><th scope="row"><code>finicky.matchHostnames("github.com")</code></th><td>The exact hostname only, not subdomains. Finicky-compatible. Use it when you need exact-hostname matching.</td></tr>
       <tr><th scope="row"><code>from("com.tinyspeck.slackmacgap")</code></th><td>URLs opened by this app. Matches the caller's bundle ID, <code>ctx.opener.bundleId</code>.</td></tr>
       <tr><th scope="row"><code>running("us.zoom.xos")</code></th><td>Any URL while this app is running. Computed once per URL, only when needed.</td></tr>
-      <tr><th scope="row"><code>/regex/</code></th><td>A regex against the full URL. Uses Rust regex syntax and supports the <code>i</code> and <code>m</code> flags; lookarounds are not supported and produce a config warning.</td></tr>
+      <tr><th scope="row"><code>/regex/</code></th><td>A regex against the full URL. Uses Rust regex syntax and supports the <code>i</code> and <code>m</code> flags; lookarounds are not supported and produce a config warning. Character classes such as <code>\w</code> and word boundaries use Unicode rules, which differ from JavaScript.</td></tr>
       <tr><th scope="row"><code>(url, ctx) =&gt; bool</code></th><td>Your own condition. See <a href="#ctx">the <code>ctx</code> object</a>.</td></tr>
     </tbody>
   </table>

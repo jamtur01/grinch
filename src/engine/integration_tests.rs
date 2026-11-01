@@ -164,6 +164,72 @@ fn url_hostname_excludes_query_userinfo_and_normalizes_case() {
 }
 
 #[test]
+fn deprecated_url_opener_never_uses_a_previous_link() {
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: domain("first.test"), open: (url, ctx) => "com.apple.Safari" },
+        { match: url => url.opener?.bundleId === "com.first", open: "com.google.Chrome" }
+    ] };"#,
+    );
+    let first = opener("com.first", "First");
+    let second = opener("com.second", "Second");
+    assert_eq!(
+        resolve_with(
+            &engine,
+            "https://first.test/",
+            &first,
+            ModifierFlags::default()
+        )
+        .0,
+        "com.apple.Safari"
+    );
+    assert_eq!(
+        resolve_with(
+            &engine,
+            "https://second.test/",
+            &second,
+            ModifierFlags::default()
+        )
+        .0,
+        "com.apple.Safari"
+    );
+
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: (url, ctx) => url.opener?.bundleId === ctx.opener?.bundleId, open: "com.google.Chrome" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve_with(
+            &engine,
+            "https://example.com/",
+            &second,
+            ModifierFlags::default()
+        )
+        .0,
+        "com.google.Chrome"
+    );
+
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari",
+        rewrite: [{ match: () => true, url: (url, ctx) => "https://rewritten.test/" }],
+        rules: [{ match: (url, ctx) => url.opener?.bundleId === ctx.opener?.bundleId,
+                  open: "com.google.Chrome" }]
+    };"#,
+    );
+    assert_eq!(
+        resolve_with(
+            &engine,
+            "https://example.com/",
+            &second,
+            ModifierFlags::default()
+        )
+        .0,
+        "com.google.Chrome"
+    );
+}
+
+#[test]
 fn hostname_and_port_patterns_match_urls_with_that_port() {
     let engine = build_engine(
         r#"module.exports = { default: "com.apple.Safari", rules: [

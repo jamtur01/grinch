@@ -186,7 +186,8 @@
       <code>url.href</code>, <code>url.url</code> returns the legacy
       <code>{protocol, hostname, …}</code> object, and <code>url.opener</code>
       returns the same opener object as <code>ctx.opener</code>, or
-      <code>null</code>.</li>
+      <code>null</code>. URL-only callbacks do not request opener details;
+      declare <code>(url, ctx)</code> and use <code>ctx.opener</code>.</li>
     <li><code>url.keys</code> throws, with a message pointing at
       <code>ctx.modifiers</code> and <code>finicky.getModifierKeys()</code>. Its
       v3 shape differs from v4's, and returning the wrong shape silently would

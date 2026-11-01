@@ -176,7 +176,8 @@ pub const JS_PRELUDE: &str = r##"
     return sp;
   }
 
-  function URL(href) {
+  function URL(href, resetOpener) {
+    if (resetOpener === true) __grinchActiveOpener = null;
     parseInto(this, href);
   }
 
@@ -261,18 +262,11 @@ pub const JS_PRELUDE: &str = r##"
   });
   Object.defineProperty(URL.prototype, "opener", {
     get: function() {
-      // Match Finicky v4's deprecation behaviour: warn and return the
-      // current opener (or null if we don't have one). The opener lives
-      // on a per-resolve global set by `__grinchMakeCtx`; for url-only
-      // fn matchers (which skip the ctx build) the global is stale or
-      // null, but those matchers never touch ctx.opener anyway — the
-      // case that needs this getter is a v3-style 2-arg fn that hasn't
-      // yet been migrated to read `ctx.opener`.
       console.warn(
         "url.opener is deprecated since Finicky v4 — read ctx.opener (the " +
         "second argument of your matcher fn) instead"
       );
-      return (typeof __grinchActiveOpener !== "undefined") ? __grinchActiveOpener : null;
+      return __grinchActiveOpener;
     },
     enumerable: false,
   });
@@ -376,12 +370,6 @@ Object.defineProperty(__grinchOpener.prototype, "windowTitle", {
   enumerable: true,
 });
 
-// `__grinchActiveOpener` is the per-resolve opener exposed to the
-// deprecated `url.opener` getter. Set by `__grinchMakeCtx` whenever
-// ctx is built. For url-only fns that skip the ctx build, this stays
-// at the previous resolve's value (or initial null) — accepted because
-// url.opener is a v3-deprecation shim and v3-style fns always took
-// `(url, opts)`, so they always trigger ctx build anyway.
 var __grinchActiveOpener = null;
 
 function __grinchMakeCtx(url, openerBundleId, openerName, openerPath,

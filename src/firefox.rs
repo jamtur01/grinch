@@ -14,8 +14,8 @@
 // profile-manager UI, which a user routing URLs would experience as
 // "the link did nothing".
 
-use std::collections::HashSet;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::engine::DiagnosticLog;
@@ -70,12 +70,244 @@ fn profiles_ini_path(bundle_id: &str) -> Option<PathBuf> {
 /// ponytail: validation retries on Reload Config, not on each click after a transient failure.
 static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, HashSet<String>>>> =
     OnceLock::new();
+#[derive(Default)]
+struct GroupProfiles {
+    profiles: HashMap<String, Vec<PathBuf>>,
+    incomplete: bool,
+}
+static GROUP_CACHE: OnceLock<std::sync::Mutex<HashMap<String, GroupProfiles>>> = OnceLock::new();
 
 /// Discard cached names so the next lookup rereads profile data.
 pub fn clear_profile_cache() {
     if let Some(cache) = CACHE.get() {
         cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
+    if let Some(cache) = GROUP_CACHE.get() {
+        cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+}
+
+fn store_ids(content: &str) -> Result<HashSet<String>, ()> {
+    let mut ids = HashSet::new();
+    let mut in_profile = false;
+    for line in content.lines().map(str::trim) {
+        if line.starts_with('[') && line.ends_with(']') {
+            in_profile = line.starts_with("[Profile");
+        } else if in_profile && let Some((key, value)) = line.split_once('=') {
+            let value = value.trim();
+            if key.trim() == "StoreID" && !value.is_empty() {
+                if !value.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                    return Err(());
+                }
+                ids.insert(value.to_string());
+            }
+        }
+    }
+    Ok(ids)
+}
+
+fn read_group_store(path: &Path, root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    std::fs::File::open(path)
+        .map_err(|error| format!("{error}. {}", crate::engine::profile_access_advice(&error)))?;
+    let output = std::process::Command::new("/usr/bin/sqlite3")
+        .args([
+            "-batch",
+            "-readonly",
+            "-json",
+            "-init",
+            "/dev/null",
+            "-cmd",
+            ".timeout 500",
+        ])
+        .arg(path)
+        .arg("SELECT name, path FROM Profiles ORDER BY id;")
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    if output.stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    let mut profiles = Vec::new();
+    for row in rows {
+        if let (Some(name), Some(path)) = (row["name"].as_str(), row["path"].as_str())
+            && !name.is_empty()
+            && !path.is_empty()
+        {
+            profiles.push((name.to_string(), root.join(path)));
+        }
+    }
+    Ok(profiles)
+}
+
+fn load_group_profiles(bundle_id: &str, diagnostics: &DiagnosticLog) -> GroupProfiles {
+    let Some(ini) = profiles_ini_path(bundle_id) else {
+        return GroupProfiles::default();
+    };
+    let Some(root) = ini.parent() else {
+        return GroupProfiles::default();
+    };
+    let directory = root.join("Profile Groups");
+    let ids = match std::fs::read_to_string(&ini) {
+        Ok(content) => match store_ids(&content) {
+            Ok(ids) => ids,
+            Err(()) => {
+                diagnostics.record_profile_warning(
+                    bundle_id,
+                    Some(&ini),
+                    "Invalid Firefox profile group ID; check profiles.ini and Reload Config",
+                );
+                return GroupProfiles {
+                    incomplete: true,
+                    ..Default::default()
+                };
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return GroupProfiles::default();
+        }
+        Err(_) => {
+            return GroupProfiles {
+                incomplete: true,
+                ..Default::default()
+            };
+        }
+    };
+    let mut profiles = GroupProfiles::default();
+    let paths: Vec<PathBuf> = if ids.is_empty() {
+        match std::fs::read_dir(&directory) {
+            Ok(entries) => entries
+                .filter_map(|entry| match entry {
+                    Ok(entry) => Some(entry.path()),
+                    Err(_) => {
+                        profiles.incomplete = true;
+                        None
+                    }
+                })
+                .filter(|path| path.extension().is_some_and(|ext| ext == "sqlite"))
+                .collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => {
+                profiles.incomplete = true;
+                diagnostics.record_profile_warning(
+                    bundle_id,
+                    Some(&directory),
+                    &format!(
+                        "Cannot read Firefox profile groups: {error}. {}",
+                        crate::engine::profile_access_advice(&error)
+                    ),
+                );
+                Vec::new()
+            }
+        }
+    } else {
+        ids.iter()
+            .map(|id| directory.join(format!("{id}.sqlite")))
+            .collect()
+    };
+    for path in paths {
+        match read_group_store(&path, root) {
+            Ok(rows) => {
+                for (name, path) in rows {
+                    let entries = profiles.profiles.entry(name).or_default();
+                    if !entries.contains(&path) {
+                        entries.push(path);
+                    }
+                }
+            }
+            Err(error) => {
+                profiles.incomplete = true;
+                diagnostics.record_profile_warning(
+                    bundle_id,
+                    Some(&path),
+                    &format!(
+                        "Cannot read Firefox profile group: {error}; check access and Reload Config"
+                    ),
+                );
+            }
+        }
+    }
+    profiles
+}
+
+pub fn resolve_profile_args(
+    bundle_id: &str,
+    profile: &str,
+    diagnostics: &DiagnosticLog,
+) -> Result<Vec<String>, ()> {
+    let expanded = if let Some(tail) = profile.strip_prefix("~/") {
+        let Some(home) = std::env::var_os("HOME") else {
+            diagnostics.record_profile_error(
+                bundle_id,
+                None,
+                "Cannot expand Firefox profile path: HOME is not set",
+            );
+            return Err(());
+        };
+        Some(PathBuf::from(home).join(tail))
+    } else {
+        Path::new(profile)
+            .is_absolute()
+            .then(|| PathBuf::from(profile))
+    };
+    if let Some(path) = expanded {
+        return profile_path_args(bundle_id, &path, diagnostics);
+    }
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let legacy = cache
+        .entry(bundle_id.to_string())
+        .or_insert_with(|| load_profile_names(bundle_id, diagnostics));
+    if legacy.contains(profile) {
+        return Ok(vec!["-P".to_string(), profile.to_string()]);
+    }
+    drop(cache);
+    let groups = GROUP_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let mut groups = groups.lock().unwrap_or_else(|e| e.into_inner());
+    let group = groups
+        .entry(bundle_id.to_string())
+        .or_insert_with(|| load_group_profiles(bundle_id, diagnostics));
+    if group.incomplete {
+        diagnostics.record_profile_error(bundle_id, None, "Cannot safely select Firefox profile because profile groups could not be read; check access and Reload Config");
+        return Err(());
+    }
+    let paths = group.profiles.get(profile).cloned();
+    drop(groups);
+    if let Some(paths) = paths {
+        if paths.len() != 1 {
+            diagnostics.record_profile_error(
+                bundle_id,
+                None,
+                &format!(
+                    "Firefox profile {profile:?} matches multiple profiles; use its full path"
+                ),
+            );
+            return Err(());
+        }
+        return profile_path_args(bundle_id, &paths[0], diagnostics);
+    }
+    Ok(vec![
+        "-P".to_string(),
+        resolve_profile_name(bundle_id, profile, diagnostics),
+    ])
+}
+
+fn profile_path_args(
+    bundle_id: &str,
+    path: &Path,
+    diagnostics: &DiagnosticLog,
+) -> Result<Vec<String>, ()> {
+    if !path.is_dir() {
+        diagnostics.record_profile_error(bundle_id, Some(path), "Firefox profile directory is missing or inaccessible; check the path and access, then Reload Config");
+        return Err(());
+    }
+    Ok(vec![
+        "--profile".to_string(),
+        path.to_string_lossy().into_owned(),
+    ])
 }
 
 fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<String> {

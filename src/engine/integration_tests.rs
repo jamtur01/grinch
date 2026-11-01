@@ -2457,6 +2457,99 @@ fn browser_spec_string_with_profile_shorthand() {
 }
 
 #[test]
+fn firefox_selectable_profile_routing() {
+    const CHILD: &str = "GRINCH_FIREFOX_GROUP_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "engine::integration_tests::firefox_selectable_profile_routing",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+    let home = unique_tmp("firefox-groups");
+    let root = home.join("Library/Application Support/Firefox");
+    let groups = root.join("Profile Groups");
+    std::fs::create_dir_all(&groups).unwrap();
+    for name in ["work", "one", "two"] {
+        std::fs::create_dir_all(root.join("Profiles").join(name)).unwrap();
+    }
+    std::fs::write(
+        root.join("profiles.ini"),
+        "[Profile0]\nName=Legacy\nStoreID=Group1\n",
+    )
+    .unwrap();
+    let status = std::process::Command::new("/usr/bin/sqlite3")
+        .arg(groups.join("Group1.sqlite"))
+        .arg("CREATE TABLE Profiles(id INTEGER, name TEXT, path TEXT); INSERT INTO Profiles VALUES (1,'Work','Profiles/work'), (2,'Legacy','Profiles/work'), (3,'Same','Profiles/one'), (4,'Same','Profiles/two'), (5,'Missing','Profiles/missing');")
+        .status().unwrap();
+    assert!(status.success());
+    with_home(&home, || {
+        for (profile, expected) in [
+            (
+                "Work",
+                vec![
+                    "--profile".to_string(),
+                    root.join("Profiles/work").to_string_lossy().into_owned(),
+                ],
+            ),
+            ("Legacy", vec!["-P".to_string(), "Legacy".to_string()]),
+            (
+                "~/Library/Application Support/Firefox/Profiles/work",
+                vec![
+                    "--profile".to_string(),
+                    root.join("Profiles/work").to_string_lossy().into_owned(),
+                ],
+            ),
+            (
+                root.join("Profiles/work").to_str().unwrap(),
+                vec![
+                    "--profile".to_string(),
+                    root.join("Profiles/work").to_string_lossy().into_owned(),
+                ],
+            ),
+        ] {
+            let source = format!(
+                "module.exports = {{default: {{name:'org.mozilla.firefox', profile:{}}}}};",
+                serde_json::to_string(profile).unwrap()
+            );
+            let e = build_engine(&source);
+            let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+            assert_eq!(result.browser.args, expected, "{profile}");
+        }
+        for profile in ["Same", "Missing", "/missing/grinch-profile"] {
+            let e = build_engine(&format!(
+                "module.exports = {{default: {{name:'org.mozilla.firefox', profile:{}}}}};",
+                serde_json::to_string(profile).unwrap()
+            ));
+            let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+            assert!(result.browser.bundle_id.is_empty(), "{profile}");
+        }
+        for ini in [
+            "[Profile0]\nName=Legacy\nStoreID=Group1\n[Profile1]\nStoreID=Missing\n",
+            "[Profile0]\nName=Legacy\nStoreID=../Group1\n",
+        ] {
+            std::fs::write(root.join("profiles.ini"), ini).unwrap();
+            let engine = build_engine("module.exports = {default: 'org.mozilla.firefox:Work'};");
+            let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+            assert!(result.browser.bundle_id.is_empty(), "{ini}");
+        }
+    });
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn profile_read_failures_and_reload() {
     // Run alone: the fixture changes HOME and exercises process-wide profile caches.
     const CHILD: &str = "GRINCH_PROFILE_TEST_CHILD";

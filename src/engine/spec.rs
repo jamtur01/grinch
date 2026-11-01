@@ -70,8 +70,7 @@ fn expand_profile_args(
         return Ok(Some(vec![format!("--profile-directory={dir}")]));
     }
     if crate::firefox::is_firefox(bundle_id) {
-        let name = crate::firefox::resolve_profile_name(bundle_id, profile, diagnostics);
-        return Ok(Some(vec!["-P".to_string(), name]));
+        return crate::firefox::resolve_profile_args(bundle_id, profile, diagnostics).map(Some);
     }
     diagnostics.record_profile_error(
         bundle_id,

@@ -140,9 +140,10 @@
   <table class="stack">
     <thead><tr><th scope="col">Syntax</th><th scope="col">Matches</th></tr></thead>
     <tbody>
-      <tr><th scope="row"><code>"github.com"</code></th><td>The hostname, exactly or as a subdomain. Bare strings without <code>*</code> or <code>/</code> are hostname patterns. Differs from Finicky; see <a href="#bare-strings">below</a>.</td></tr>
+      <tr><th scope="row"><code>"github.com"</code></th><td>The hostname, exactly or as a subdomain. Bare strings without <code>*</code>, <code>/</code>, or a port are hostname patterns. Differs from Finicky; see <a href="#bare-strings">below</a>.</td></tr>
       <tr><th scope="row"><code>"*.slack.com/*"</code></th><td>Wildcard against the full URL. Strings containing <code>*</code> or <code>/</code> compile to an anchored regex, as in Finicky.</td></tr>
-      <tr><th scope="row"><code>"zoom.us/j/*"</code></th><td>Wildcard with an implicit <code>https?://</code> prefix.</td></tr>
+      <tr><th scope="row"><code>"zoom.us/j/*"</code></th><td>Wildcard with an optional common scheme, including <code>http://</code> and <code>https://</code>.</td></tr>
+      <tr><th scope="row"><code>"localhost:3000"</code></th><td>URLs for that host and port, with any path. A dotted name followed by a numeric port is also treated as a host; use a regex for an opaque scheme with the same shape.</td></tr>
       <tr><th scope="row"><code>"slack:*"</code></th><td>URLs with the <code>slack</code> scheme.</td></tr>
       <tr><th scope="row"><code>domain("a.com", "b.com")</code></th><td>Any listed hostname or its subdomains. Compiled to a single byte-level check.</td></tr>
       <tr><th scope="row"><code>finicky.matchHostnames("github.com")</code></th><td>The exact hostname only, not subdomains. Finicky-compatible. Use it when you need exact-hostname matching.</td></tr>

@@ -577,6 +577,34 @@ fn url_protocol_normalizes_schemes_for_functions() {
         resolve(&engine, "http://example.com/").0,
         "com.google.Chrome"
     );
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [{
+            match: () => {
+                for (const [input, scheme, expected] of [
+                    ["myapp://Open/Thing", "https", "myapp://Open/Thing"],
+                    ["https://example.com/", "myapp", "https://example.com/"],
+                    ["myapp://Open/Thing", "OTHER", "other://Open/Thing"],
+                    ["http://example.com:443/", "https", "https://example.com/"],
+                    ["http://user@example.com/", "file", "http://user@example.com/"],
+                    ["http://example.com:123/", "file", "http://example.com:123/"],
+                    ["file:///Thing", "https", "file:///Thing"]
+                ]) {
+                    const u = new URL(input);
+                    u.protocol = scheme;
+                    if (u.href !== expected) return false;
+                }
+                const u = new URL("myapp://Open/Thing");
+                u.href = "HTTPS://EXAMPLE.COM/x";
+                if (u.href !== "https://example.com/x") return false;
+                u.href = "myapp://Open/Thing";
+                return u.href === "myapp://Open/Thing";
+            }, open: "com.google.Chrome"
+        }] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.google.Chrome"
+    );
 }
 
 #[test]

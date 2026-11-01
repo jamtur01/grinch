@@ -360,7 +360,10 @@ module.exports = {
   <p><code>new URL(href)</code> works in your code. The URL object is mutable:
     <code>url.protocol = "https:"</code>, <code>url.hostname = "…"</code>, and
     <code>url.searchParams.set("k", "v")</code> are all reflected in later reads
-    of <code>.href</code>. Protocols are lowercased when parsed or assigned.</p>
+    of <code>.href</code>. Protocols are lowercased when parsed or assigned.
+    As in browsers, assigning <code>protocol</code> cannot switch between a
+    web scheme such as <code>https:</code> and a custom scheme. Return a new
+    URL or string to make that change.</p>
   <p>Shortened links such as <code>bit.ly</code> can't be expanded inside a
     rewrite; see <a href="integrations.html#url-shorteners">URL shorteners</a>.</p>
 </section>

@@ -37,7 +37,7 @@ pub const JS_PRELUDE: &str = r##"
   var defineProperty = Object.defineProperty;
   var createObject = Object.create;
 
-  function parseInto(self, href, initialProtocol) {
+  function parseInto(self, href, setProtocol) {
     href = String(href);
     if (href.indexOf("\\") >= 0 && /^(?:ftp|file|http|https|ws|wss):/i.test(href)) {
       var boundary = href.search(/[?#]/);
@@ -47,11 +47,7 @@ pub const JS_PRELUDE: &str = r##"
     var m = URL_RE.exec(href);
     if (!m) throw new TypeError("Invalid URL: " + href);
     var protocol = m[1].toLowerCase();
-    if (initialProtocol) initialProtocol(protocol);
-    else {
-      self.protocol = protocol;
-      protocol = self.protocol;
-    }
+    setProtocol(protocol);
     self.username = m[2] || "";
     self.password = m[3] || "";
     self.hostname = m[4] || "";
@@ -197,19 +193,31 @@ pub const JS_PRELUDE: &str = r##"
     return sp;
   }
 
-  function URL(href, resetOpener) {
-    if (resetOpener === true) __grinchActiveOpener = null;
-    var protocol = "";
+  function protocolDescriptor(protocol) {
     var descriptor = createObject(null);
     descriptor.enumerable = true;
     descriptor.configurable = true;
     descriptor.get = function() { return protocol; };
     descriptor.set = function(value) {
       var scheme = /^([a-z][a-z0-9+.-]*)(?::|$)/i.exec(String(value));
-      if (scheme) protocol = scheme[1].toLowerCase() + ":";
+      if (!scheme) return;
+      var next = scheme[1].toLowerCase() + ":";
+      if (isSpecialScheme(protocol) !== isSpecialScheme(next)) return;
+      if (next === "file:" && (this.username || this.password || this.port)) return;
+      if (protocol === "file:" && !this.hostname) return;
+      protocol = next;
+      var defaultPort = { ftp: "21", http: "80", https: "443", ws: "80", wss: "443" };
+      if (this.port && this.port === defaultPort[scheme[1].toLowerCase()]) this.port = "";
     };
-    defineProperty(this, "protocol", descriptor);
-    parseInto(this, href, function(value) { protocol = value; });
+    return descriptor;
+  }
+
+  function URL(href, resetOpener) {
+    if (resetOpener === true) __grinchActiveOpener = null;
+    var self = this;
+    parseInto(this, href, function(value) {
+      defineProperty(self, "protocol", protocolDescriptor(value));
+    });
   }
 
   // Other accessors live on the prototype. Each is defined once at engine init
@@ -237,7 +245,12 @@ pub const JS_PRELUDE: &str = r##"
 
   Object.defineProperty(URL.prototype, "href", {
     get: function() { return rebuildHref(this); },
-    set: function(v) { parseInto(this, String(v)); },
+    set: function(v) {
+      var self = this;
+      parseInto(this, String(v), function(value) {
+        defineProperty(self, "protocol", protocolDescriptor(value));
+      });
+    },
     enumerable: true,
   });
 

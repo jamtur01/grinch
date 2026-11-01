@@ -180,7 +180,7 @@ module.exports = {
     //   ❌ url: (url) => ({ ...url, protocol: 'msteams' })
     //       // → msteams://teams.microsoft.com/l/…  (broken double-slash)
     //   ❌ url: (url) => { url.protocol = 'msteams'; return url; }
-    //       // → same; in-place mutation keeps the original authority
+    //       // → unchanged HTTPS URL; this protocol switch is not allowed
     //   ✅ url: (url) => ({ protocol: 'msteams',
     //                       pathname: url.pathname,
     //                       search: url.search })
@@ -188,8 +188,8 @@ module.exports = {
     //
     // The `{protocol, pathname}` LegacyURLObject shape triggers
     // Grinch's "no authority → emit `scheme:path` not `scheme://path`"
-    // path. The spread / mutate forms carry `hostname` through and
-    // produce double-slash output.
+    // path. Spreading the input carries `hostname` through and produces
+    // double-slash output.
     {
       match: ["teams.microsoft.com/l/*", "*.teams.microsoft.com/l/*"],
       url: (url) => ({

@@ -1086,28 +1086,46 @@ mod tests {
 
     #[test]
     fn duplicate_cleanup_lock_serializes_contenders() {
+        const CHILD_DIR: &str = "GRINCH_STARTUP_LOCK_TEST_DIR";
+        if let Some(directory) = std::env::var_os(CHILD_DIR) {
+            let directory = std::path::PathBuf::from(directory);
+            std::fs::write(directory.join("started"), "started").unwrap();
+            let _lock = lock_duplicate_cleanup(&directory).unwrap();
+            std::fs::write(directory.join("acquired"), "acquired").unwrap();
+            return;
+        }
         let directory =
             std::env::temp_dir().join(format!("grinch-startup-lock-{}", std::process::id()));
         let first = lock_duplicate_cleanup(&directory).unwrap();
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
-        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
-        let other = directory.clone();
-        let worker = std::thread::spawn(move || {
-            started_tx.send(()).unwrap();
-            let _lock = lock_duplicate_cleanup(&other).unwrap();
-            acquired_tx.send(()).unwrap();
-        });
-        started_rx.recv().unwrap();
-        assert!(
-            acquired_rx
-                .recv_timeout(std::time::Duration::from_millis(100))
-                .is_err()
-        );
-        drop(first);
-        acquired_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "workspace::tests::duplicate_cleanup_lock_serializes_contenders",
+            ])
+            .env(CHILD_DIR, &directory)
+            .spawn()
             .unwrap();
-        worker.join().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !directory.join("started").exists() {
+            assert!(std::time::Instant::now() < deadline, "child did not start");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!directory.join("acquired").exists());
+        drop(first);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("child did not acquire the released lock");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(status.success());
+        assert!(directory.join("acquired").exists());
         std::fs::remove_dir_all(directory).unwrap();
     }
 

@@ -114,10 +114,12 @@
   <p>Grinch can also route local <code>.html</code> files and Universal Links
     delivered as web activities. Delivery depends on your macOS file and link
     associations.</p>
-  <p>Besides <code>http</code>, <code>https</code>, and <code>mailto</code>,
-    Grinch registers <code>tel:</code>, <code>webcal:</code>, and
-    <code>feed:</code>, so those links go through the same rules. Match them
-    with a scheme pattern such as <code>"webcal:*"</code>.</p>
+  <p>Grinch declares support for <code>tel:</code>, <code>webcal:</code>, and
+    <code>feed:</code>, but macOS may send those links to another app. When a
+    link is delivered to Grinch, it goes through the same rules; match it with
+    a scheme pattern such as <code>"webcal:*"</code>. You can also use the
+    <a href="#grinch-scheme"><code>grinch:</code> prefix</a> to send an
+    individual link through Grinch.</p>
 </section>
 
 <section id="grinch-scheme" aria-labelledby="grinch-scheme-title">

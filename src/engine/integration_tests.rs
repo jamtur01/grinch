@@ -1190,6 +1190,28 @@ fn config_key_check_matches_strict_object_keys_receiver() {
 }
 
 #[test]
+fn javascript_and_rust_config_key_lists_match() {
+    for (helper, expected) in [
+        ("__grinchUnknownRuleKeys", RULE_KEYS),
+        ("__grinchUnknownBrowserKeys", BROWSER_KEYS),
+    ] {
+        let source = JS_PRELUDE
+            .split_once(helper)
+            .unwrap()
+            .1
+            .split_once("})(Object.defineProperty, Reflect.apply, this);")
+            .unwrap()
+            .0;
+        let keys: std::collections::HashSet<_> = source
+            .split("k !== \"")
+            .skip(1)
+            .map(|part| part.split_once('"').unwrap().0)
+            .collect();
+        assert_eq!(keys, expected.iter().copied().collect(), "{helper}");
+    }
+}
+
+#[test]
 fn unknown_config_keys_do_not_error() {
     // Unknown option and top-level keys log a stderr warning but must not
     // break engine init. A root-level `hideIcon` is not honoured — it only

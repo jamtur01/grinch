@@ -3,6 +3,8 @@
 // modules' items that `engine` re-exports via `pub(crate) use`.
 use super::*;
 
+pub(crate) const RULE_KEYS: &[&str] = &["match", "open", "browser", "url", "name"];
+
 pub(crate) fn parse_rule_array(
     arr: &JSValue,
     browsers: &std::collections::HashMap<String, Rc<BrowserSpec>>,
@@ -22,7 +24,7 @@ pub(crate) fn parse_rule_array(
         };
         let mut misplaced = false;
         for field in unknown_config_keys(&item, checks.rule.as_deref()) {
-            if ["match", "open", "browser", "url", "name"].contains(&field.as_str()) {
+            if RULE_KEYS.contains(&field.as_str()) {
                 continue;
             }
             if [

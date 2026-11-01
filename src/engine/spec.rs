@@ -3,6 +3,18 @@
 // modules' items that `engine` re-exports via `pub(crate) use`.
 use super::*;
 
+pub(crate) const BROWSER_KEYS: &[&str] = &[
+    "id",
+    "bundleId",
+    "name",
+    "appType",
+    "args",
+    "profile",
+    "incognito",
+    "openInNewWindow",
+    "openInBackground",
+];
+
 /// Subcommand-style flag families: a per-browser-family flag that we wire
 /// up on demand from a single boolean on the config side. Keeps the
 /// flag-vs-family table out of `parse_browser_jsval` so adding a new
@@ -153,19 +165,7 @@ pub(crate) fn parse_browser_jsval(
     }
 
     for field in unknown_config_keys(v, checks.browser.as_deref()) {
-        if ![
-            "id",
-            "bundleId",
-            "name",
-            "appType",
-            "args",
-            "profile",
-            "incognito",
-            "openInNewWindow",
-            "openInBackground",
-        ]
-        .contains(&field.as_str())
-        {
+        if !BROWSER_KEYS.contains(&field.as_str()) {
             diagnostics.record_config_warning(&format!(
                 "unknown browser target field {field:?} is ignored"
             ));

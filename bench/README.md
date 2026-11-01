@@ -18,7 +18,8 @@ bench/run.sh init      # config loading
 
 The runner stages each config under a temporary HOME, keeping your config and
 logs untouched. It runs each workload ten times and reports the fifth sorted
-sample, the lower median. Routing benchmarks drain an autorelease pool every 1,000 operations.
+sample, the lower median. Routing benchmarks drain an autorelease pool every
+1,000 operations; config-loading benchmarks drain one after each load.
 Routing times use nanoseconds per operation (`ns/op`);
 config-loading times use microseconds per operation (`µs/op`).
 

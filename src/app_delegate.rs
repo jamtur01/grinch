@@ -1034,8 +1034,9 @@ impl Delegate {
     fn bench_init(&self, n: usize) -> bool {
         // One eager load so a broken config fails loudly before the timing
         // loop instead of silently measuring N error-return paths.
-        match self.load_engine() {
-            Ok(_) => {}
+        let initial = objc2::rc::autoreleasepool(|_| self.load_engine().map(|_| ()));
+        match initial {
+            Ok(()) => {}
             Err(msg) => {
                 println!("grinch: config load/build failed: {msg}");
                 return false;
@@ -1043,14 +1044,18 @@ impl Delegate {
         }
         let warmup = (n / 10).min(50);
         for _ in 0..warmup {
-            let _ = self.load_engine();
+            objc2::rc::autoreleasepool(|_| {
+                let _ = self.load_engine();
+            });
         }
         let start = std::time::Instant::now();
         for _ in 0..n {
             // `expect`-free: the eager load above proved the path works, and
             // a mid-run failure (e.g. the user edits the file) shouldn't
             // panic the benchmark — skip the sample and keep going.
-            let _ = self.load_engine();
+            objc2::rc::autoreleasepool(|_| {
+                let _ = self.load_engine();
+            });
         }
         let elapsed = start.elapsed();
         let us_per_op = elapsed.as_secs_f64() * 1_000_000.0 / n.max(1) as f64;

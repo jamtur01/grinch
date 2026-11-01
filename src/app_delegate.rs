@@ -291,7 +291,7 @@ define_class!(
             // for a one-shot CLI invocation, and skipping them avoids the
             // SMAppService / NSStatusBar work (which can stall in headless
             // sandboxes that have no UI session).
-            let args: Result<Vec<String>, _> = std::env::args_os().map(|arg| arg.into_string()).collect();
+            let args = cli_arguments(std::env::args_os());
             let Ok(args) = args else {
                 eprintln!("grinch: arguments must be valid UTF-8");
                 std::process::exit(2);
@@ -1216,6 +1216,24 @@ impl Delegate {
     }
 }
 
+fn cli_arguments(
+    args: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<Vec<String>, std::ffi::OsString> {
+    let args: Vec<_> = args.collect();
+    let flags = [
+        "--test",
+        "--bench",
+        "--bench-init",
+        "--list-rules",
+        "--list-browsers",
+        "--validate",
+    ];
+    if !args.iter().any(|arg| flags.iter().any(|flag| arg == flag)) {
+        return Ok(Vec::new());
+    }
+    args.into_iter().map(|arg| arg.into_string()).collect()
+}
+
 fn startup_context(engine: &Engine, pending: &PendingUrl) -> (Opener, ModifierFlags) {
     let opener = if engine.needs_opener_full() {
         pending.opener.clone()
@@ -1577,6 +1595,23 @@ fn sm_open_login_items_settings() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn non_utf8_arguments_only_reject_cli_commands() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = OsString::from_vec(vec![0xff]);
+        assert!(
+            super::cli_arguments(vec![OsString::from("Grinch"), invalid.clone()].into_iter())
+                .is_ok()
+        );
+        assert!(
+            super::cli_arguments(
+                vec![OsString::from("Grinch"), OsString::from("--test"), invalid].into_iter()
+            )
+            .is_err()
+        );
+    }
     use super::*;
 
     #[test]

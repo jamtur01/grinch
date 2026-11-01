@@ -38,7 +38,6 @@ unsafe extern "C" {
     fn sqlite3_column_type(stmt: *mut c_void, col: c_int) -> c_int;
     fn sqlite3_column_double(stmt: *mut c_void, col: c_int) -> f64;
     fn sqlite3_column_text(stmt: *mut c_void, col: c_int) -> *const u8;
-    fn sqlite3_column_blob(stmt: *mut c_void, col: c_int) -> *const c_void;
     fn sqlite3_column_bytes(stmt: *mut c_void, col: c_int) -> c_int;
 }
 
@@ -125,7 +124,8 @@ impl Statement<'_> {
         let kind = unsafe { sqlite3_column_type(self.pointer, col) };
         let pointer = match kind {
             SQLITE_TEXT => unsafe { sqlite3_column_text(self.pointer, col) }.cast::<c_void>(),
-            SQLITE_BLOB => unsafe { sqlite3_column_blob(self.pointer, col) },
+            // SQLite CLI versions decode blobs differently; guessing can select the wrong profile.
+            SQLITE_BLOB => return Err("binary data in Firefox profile name or path".to_string()),
             SQLITE_FLOAT if !unsafe { sqlite3_column_double(self.pointer, col) }.is_finite() => {
                 return Err("invalid numeric value in Firefox profile group".to_string());
             }
@@ -144,10 +144,10 @@ impl Statement<'_> {
         }
         // SQLite owns the bytes until the next step; copy them before advancing.
         let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), length) };
-        if kind == SQLITE_BLOB {
-            return Ok(Some(bytes.iter().map(|byte| char::from(*byte)).collect()));
+        // Truncating a name or path at NUL could select a different profile.
+        if bytes.contains(&0) {
+            return Err("NUL byte in Firefox profile name or path".to_string());
         }
-        let bytes = bytes.split(|byte| *byte == 0).next().unwrap_or_default();
         let value = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
         Ok(Some(value.to_string()))
     }
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_live_wal_and_matches_cli_values_without_changing_data() {
+    fn reads_live_wal_without_changing_data() {
         let root = directory();
         let path = root.join("group.sqlite");
         let (mut child, input) = writer(
@@ -232,8 +232,7 @@ mod tests {
             CREATE TABLE Profiles(id INTEGER, name, path);
             INSERT INTO Profiles VALUES
                 (1, 'Work', 'Profiles/work'),
-                (2, x'c3a9', x'61'),
-                (3, CAST(x'610062' AS TEXT), 'Profiles/a'),
+                (2, 'Café', 'Profiles/café'),
                 (4, 123, 'ignored'),
                 (5, 'ignored', NULL);
         "#,
@@ -241,22 +240,10 @@ mod tests {
         let wal = root.join("group.sqlite-wal");
         let before = std::fs::read(&path).unwrap();
         let before_wal = std::fs::read(&wal).unwrap();
-        let output = Command::new("/usr/bin/sqlite3")
-            .args(["-batch", "-readonly", "-json", "-init", "/dev/null"])
-            .arg(&path)
-            .arg("SELECT name, path FROM Profiles ORDER BY id;")
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
-        let expected: Vec<_> = rows
-            .iter()
-            .filter_map(|row| {
-                let name = row["name"].as_str()?;
-                let path = row["path"].as_str()?;
-                (!name.is_empty() && !path.is_empty()).then(|| (name.to_string(), root.join(path)))
-            })
-            .collect();
+        let expected = vec![
+            ("Work".to_string(), root.join("Profiles/work")),
+            ("Café".to_string(), root.join("Profiles/café")),
+        ];
         assert_eq!(profiles(&path, &root).unwrap(), expected);
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(std::fs::read(&wal).unwrap(), before_wal);
@@ -290,28 +277,33 @@ mod tests {
     }
 
     #[test]
-    fn rejects_values_that_made_the_cli_output_invalid() {
+    fn rejects_malformed_profile_names_and_paths() {
         let root = directory();
-        for (name, value) in [("utf8", "CAST(x'ff' AS TEXT)"), ("infinity", "1e999")] {
-            let path = root.join(format!("{name}.sqlite"));
-            let sql = format!(
-                "CREATE TABLE Profiles(id INTEGER, name, path); INSERT INTO Profiles VALUES (1, {value}, 'ignored'), (2, 'Work', 'Profiles/work');"
-            );
-            let status = Command::new("/usr/bin/sqlite3")
-                .arg(&path)
-                .arg(sql)
-                .status()
-                .unwrap();
-            assert!(status.success());
-            let output = Command::new("/usr/bin/sqlite3")
-                .args(["-json", "-readonly"])
-                .arg(&path)
-                .arg("SELECT name, path FROM Profiles ORDER BY id;")
-                .output()
-                .unwrap();
-            assert!(output.status.success());
-            assert!(serde_json::from_slice::<serde_json::Value>(&output.stdout).is_err());
-            assert!(profiles(&path, &root).is_err(), "{name}");
+        for (name, value) in [
+            ("utf8", "CAST(x'ff' AS TEXT)"),
+            ("infinity", "1e999"),
+            ("blob", "x'c3a9'"),
+            ("nul", "CAST(x'610062' AS TEXT)"),
+        ] {
+            for column in ["name", "path"] {
+                let path = root.join(format!("{name}.sqlite"));
+                let (profile_name, profile_path) = if column == "name" {
+                    (value, "'ignored'")
+                } else {
+                    ("'ignored'", value)
+                };
+                let sql = format!(
+                    "CREATE TABLE Profiles(id INTEGER, name, path); INSERT INTO Profiles VALUES (1, {profile_name}, {profile_path}), (2, 'Work', 'Profiles/work');"
+                );
+                let status = Command::new("/usr/bin/sqlite3")
+                    .arg(&path)
+                    .arg(sql)
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+                assert!(profiles(&path, &root).is_err(), "{name} in {column}");
+                std::fs::remove_file(path).unwrap();
+            }
         }
         std::fs::remove_dir_all(root).unwrap();
     }

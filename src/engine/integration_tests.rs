@@ -2608,7 +2608,7 @@ fn firefox_selectable_profile_routing() {
     .unwrap();
     let status = std::process::Command::new("/usr/bin/sqlite3")
         .arg(groups.join("Group1.sqlite"))
-        .arg("CREATE TABLE Profiles(id INTEGER, name TEXT, path TEXT); INSERT INTO Profiles VALUES (1,'Work','Profiles/work'), (2,'Legacy','Profiles/work'), (3,'Same','Profiles/one'), (4,'Same','Profiles/two'), (5,'Missing','Profiles/missing');")
+        .arg("CREATE TABLE Profiles(id INTEGER, name TEXT, path TEXT); INSERT INTO Profiles VALUES (1,'Work','Profiles/work'), (2,'Legacy','Profiles/work'), (3,'Same','Profiles/one'), (4,'Same','Profiles/two'), (5,'Missing','Profiles/missing'), (6,'Café','Profiles/work');")
         .status().unwrap();
     assert!(status.success());
     with_home(&home, || {
@@ -2621,6 +2621,13 @@ fn firefox_selectable_profile_routing() {
                 ],
             ),
             ("Legacy", vec!["-P".to_string(), "Legacy".to_string()]),
+            (
+                "Café",
+                vec![
+                    "--profile".to_string(),
+                    root.join("Profiles/work").to_string_lossy().into_owned(),
+                ],
+            ),
             (
                 "~/Library/Application Support/Firefox/Profiles/work",
                 vec![
@@ -2661,6 +2668,26 @@ fn firefox_selectable_profile_routing() {
             let result = engine.resolve("https://x/", &Opener::default(), ModifierFlags::default());
             assert!(result.browser.bundle_id.is_empty(), "{ini}");
         }
+        std::fs::write(
+            root.join("profiles.ini"),
+            "[Profile0]\nName=Legacy\nStoreID=Group1\n",
+        )
+        .unwrap();
+        let status = std::process::Command::new("/usr/bin/sqlite3")
+            .arg(groups.join("Group1.sqlite"))
+            .arg("INSERT INTO Profiles VALUES (7, x'c3a9', 'Profiles/work');")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let diagnostics = Rc::new(isolated_diagnostics());
+        let engine = build_engine_with_diagnostics(
+            "module.exports = {default: 'org.mozilla.firefox:Work'};",
+            Rc::clone(&diagnostics),
+        );
+        assert!(resolve(&engine, "https://example.com/").0.is_empty());
+        assert!(diagnostics.profile_error().is_some());
+        let events = std::fs::read_to_string(diagnostics.ensure_file().unwrap()).unwrap();
+        assert!(events.contains("binary data in Firefox profile name or path"));
     });
     std::fs::remove_dir_all(home).unwrap();
 }

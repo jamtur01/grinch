@@ -51,26 +51,21 @@
 <section id="features">
   <h2>What it is</h2>
   <ul class="features">
-    <li><strong>Finicky v4 config compatibility.</strong> Most v4 configs work unchanged: <code>finicky.matchHostnames</code>, <code>ctx.opener.*</code>, the <code>options</code> block, profile shorthand. Three v4 methods are not provided: <code>finicky.notify</code>, <code>finicky.getPowerInfo</code>, and <code>finicky.getBattery</code>.</li>
-    <li><strong>Browser profiles and launch options.</strong> Use <code>profile: "Work"</code>,
-      <code>incognito: true</code>, or <code>openInNewWindow: true</code> with Chromium
-      and Firefox browsers. Safari does not support these options.</li>
-    <li><strong>Choose a running browser.</strong> <code>finicky.getRunningBrowsers()</code>
-      lists running browsers so your config can select one from your preferred list.</li>
-    <li><strong>Pure Rust core</strong> + a small embedded JS prelude.</li>
-    <li><strong>Native JavaScriptCore</strong> for config eval — no Electron, no bundler, no transpiler.</li>
-    <li><strong>Single DMG.</strong> Universal binary (Apple Silicon + Intel).</li>
+    <li><strong>Send links where you want them.</strong> Open work links in one
+      browser, personal links in another, and meeting links in an app.</li>
+    <li><strong>Use your browser profiles.</strong> Send links to a work profile,
+      open a private window, or choose a new window in supported Chrome and Firefox browsers.</li>
+    <li><strong>Clean up links.</strong> Remove tracking parameters or unwrap
+      links before your rules choose where they open.</li>
     <li><strong>Menu-bar app.</strong> Reload config or open it in your editor without leaving the menu bar. Parse errors surface as <code>⚠️</code> with the failing line inline. With <code>hideIcon: true</code>, reopen Grinch from Spotlight or Finder to access config, log, and update actions in a window. The update button is disabled when the updater cannot check for updates.</li>
-    <li><strong>Automatic updates.</strong> Grinch checks for a new release once a day with
-      <a href="https://sparkle-project.org">Sparkle</a> and installs only updates signed with the
-      Grinch release key. Turn the check off from the menu bar or with
-      <code>options: { checkForUpdates: false }</code>.</li>
-    <li><strong>Declarative routing in nanoseconds</strong>,
-      JavaScript callbacks in microseconds.</li>
+    <li><strong>Automatic updates.</strong> Grinch checks for updates automatically.
+      You can check manually or turn automatic checks off from the menu bar.</li>
     <li><strong>Debuggable.</strong> Every resolve can be logged as JSON or text with the matched rule, opener, and modifier state. <code>--list-rules</code> prints the loaded rule table for cross-reference.</li>
     <li><strong>SSO / OAuth popups route through your rules.</strong> Sign-in requests
       from apps using <code>ASWebAuthenticationSession</code> use the same browser
       routing rules as other links.</li>
+    <li><strong>Moving from Finicky?</strong> Most Finicky v4 configs work with
+      Grinch. See the <a href="https://github.com/jamtur01/grinch#differences-from-finicky">compatibility notes</a>.</li>
   </ul>
 </section>
 
@@ -103,8 +98,8 @@ make run</code></pre>
   <h2>Configure</h2>
   <p>Edit your existing Grinch config, or create <code>~/.config/grinch.js</code>
     with the example below. Create <code>~/.config</code> first if needed, and
-    replace the browser targets if you use different apps. Grinch uses the first
-    file in its <a href="https://github.com/jamtur01/grinch#configuration-files">config search order</a>.</p>
+    replace the browser targets if you use different apps. If your edits don't
+    take effect, see <a href="https://github.com/jamtur01/grinch#if-grinch-uses-a-different-config">which config Grinch uses</a>.</p>
 <pre><code>module.exports = {
   default: "com.apple.Safari",
   rules: [

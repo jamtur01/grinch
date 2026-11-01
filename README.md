@@ -4,22 +4,17 @@
 
 # Grinch
 
-Grinch is a macOS app that chooses where links open. Set it as your default
-browser and use a JavaScript config to send, for example, work links to a
-Chrome profile, personal links to Safari, and meeting links to Zoom.
+Grinch chooses which browser or app opens each link on your Mac. Set it as
+your default browser, then give it a few rules.
 
-Most Finicky **v4** configs work in Grinch unchanged. (Finicky v3 configs
-need updating — see the
-[v4 migration guide](https://github.com/johnste/finicky/wiki/Migration-guide)
-upstream, then [Differences from Finicky](#differences-from-finicky) below
-for the rest.) Inspired by both [Finicky](https://github.com/johnste/finicky)
-and [Finch](https://github.com/expelledboy/finch).
+For example, you can open GitHub links in Chrome, send everything else to
+Safari, and use a separate browser profile for work. Links from Slack, Mail,
+and other apps follow the same rules automatically.
 
-- Pure Rust core + a small embedded JS prelude
-- Native `JavaScriptCore` for config eval — no Electron, no bundler, no transpiler
-- Single DMG, universal binary (Apple Silicon + Intel)
-- Config is real JavaScript — simple cases look like data, full power available
-- Declarative routing in nanoseconds; JavaScript callbacks in microseconds
+Grinch is inspired by [Finicky](https://github.com/johnste/finicky) and
+[Finch](https://github.com/expelledboy/finch), two other macOS apps for routing
+links. If you already use Finicky, most v4 configs work with Grinch; see
+[Differences from Finicky](#differences-from-finicky) when moving your config.
 
 Get started with [installation](#install) and
 [your first config](#set-up-your-first-config), then explore
@@ -59,14 +54,9 @@ default-browser picker.
 
 ### Updates
 
-Release builds update themselves with [Sparkle](https://sparkle-project.org).
-Grinch checks the latest GitHub release once a day and offers to install a
-newer one. Each update must carry a valid EdDSA signature from the Grinch
-release key and the same Developer ID signature as the installed app. Use
-**Check for Updates…** in the menu bar to check now, and **Check for Updates
-Automatically** or [`options.checkForUpdates`](#configuration) to turn the
-daily check off. Builds signed ad-hoc (no Developer ID certificate) don't
-include the updater.
+Grinch checks for updates automatically. To check now, choose **Check for
+Updates…** from the menu bar. You can turn automatic checks off with **Check
+for Updates Automatically** in the same menu.
 
 ### With Homebrew
 
@@ -91,6 +81,8 @@ cd grinch
 make run
 ```
 
+The default source build doesn't include automatic updates.
+
 Pass `UNIVERSAL=1` to `make build` to produce a fat binary locally
 (needs both rustup targets: `rustup target add aarch64-apple-darwin
 x86_64-apple-darwin`).
@@ -100,7 +92,7 @@ x86_64-apple-darwin`).
 1. If you already have a Grinch config, edit that file. Otherwise create
    `~/.config/grinch.js` with the example below, creating `~/.config` first
    if needed. Replace the browser targets if you use different apps.
-   Grinch uses the first file in its [config search order](#configuration-files).
+   If your changes don’t take effect, see [which config Grinch uses](#if-grinch-uses-a-different-config).
 2. Launch Grinch from Applications. Its eyes appear in the menu bar.
 3. In **System Settings → Desktop & Dock → Default web browser**, select
    **Grinch**. Links opened by other apps now go through your rules.
@@ -134,9 +126,6 @@ app, run this in your shell first, or use the full path in each command:
 alias Grinch='/Applications/Grinch.app/Contents/MacOS/Grinch'
 ```
 
-If you're moving from Finicky, copy your config to one of the paths below.
-Grinch accepts `export default { ... }` as well as `module.exports`; see
-[Differences from Finicky](#differences-from-finicky) for compatibility details.
 Only use configuration files you trust: Grinch evaluates them as JavaScript.
 
 ## Configuration
@@ -164,27 +153,9 @@ module.exports = {
 [`examples/grinch.example.js`](examples/grinch.example.js) is a feature
 reference with more examples.
 
-### Configuration files
-
-Grinch checks these paths in order and uses the first file it finds:
-
-1. `~/.grinch.js`
-2. `~/.config/grinch.js`
-3. `~/.config/grinch/grinch.js`
-4. `/Library/Application Support/Grinch/grinch.js` — a system-wide fallback
-   for managed or shared Macs.
-
-The config exports one object using `module.exports` or `export default`.
-Finicky's `defaultBrowser`, `handlers`, and `browser` are aliases for
-`default`, `rules`, and a rule's `open`, respectively.
-
-Unknown top-level keys produce a warning; put settings such as `hideIcon`
-inside `options`, not at the top level. Run `Grinch --validate` to check the
-config and see warnings.
-
 ### Rules
 
-`rules` (or `handlers`) is an array. Each rule has a `match` condition and an
+`rules` is an array. Each rule has a `match` condition and an
 `open` destination. Grinch checks them in order and stops at the first match:
 
 ```js
@@ -194,7 +165,6 @@ rules: [
 ],
 ```
 
-`open` (Grinch) and `browser` (Finicky) are aliases.
 A rule can also specify `url` to rewrite a matching URL before opening it.
 See [URL rewrites](#url-rewrites) for the supported return values.
 Unlike a literal `open: null`, a function that returns `null` or `undefined`
@@ -254,75 +224,69 @@ on the hot path for user-written `(url, ctx) => ...` predicates.
 
 ### Browser specs
 
-A browser is one of:
+A browser target tells Grinch where to open a link. Most of the time, use the
+app's name or bundle ID in `default` or a rule's `open`:
 
-| Form | Means |
-|---|---|
-| `"Google Chrome"` | App display name; Grinch resolves to bundle ID at config-load |
-| `"com.google.Chrome"` | Bundle ID (any reverse-DNS string is treated as one) |
-| `"Google Chrome:Work"` | `Name:Profile` shorthand — splits on the first `:`, resolves the profile to Chromium's directory flag or Firefox's `-P Work`. Only applied to literal config strings; fn-returned strings are treated opaquely |
-| `"/Applications/Foo.app"` or `"~/Apps/Bar.app"` | Path autodetect (Finicky-compatible) — bare-string spec ending in `.app` is resolved via `NSBundle` directly, no `appType: "path"` required. Useful for browsers outside `/Applications` or not registered with LaunchServices |
-| `{ name: "..." }` | Same as a bare string |
-| `{ name: "Google Chrome", profile: "Work" }` | Profile shorthand — resolves the display name to `--profile-directory=<directory>` (Chromium-family) or `-P Work` (Firefox-family) |
-| `{ name: "...", args: ["--incognito"] }` | Bundle ID + extra launch args |
-| `{ name: "...", incognito: true }` | Family-aware private-mode shorthand — `--incognito` (Chromium) or `--private-window` (Firefox). Forces a new instance so the flag is honoured. Safari is not supported (no CLI flag exists) and logs a warning |
-| `{ name: "...", openInNewWindow: true }` | Open as a new top-level window instead of a tab. Chromium and Firefox both honour `--new-window`. Safari has no equivalent CLI flag and logs a warning |
-| `{ name: "...", openInBackground: true }` | Don't activate (keep focus where it is) |
-| `{ name: "/Applications/Foo.app", appType: "path" }` | Path to an `.app` bundle — Grinch opens that exact copy, even when another app has the same bundle ID. Supports `~/` and unregistered bundles |
-| `{ name: "...", appType: "bundleId" }` | Trust the value as a bundle ID, skip the LaunchServices display-name fallback |
-| `{ appType: "none" }` | Explicit no-op browser. Same effect as `open: null` |
-| `(url, ctx) => "..."` | Dynamic target; a function default runs when no rule selects a browser. A rule's function can return `null` or `undefined` to try the next rule. |
-| `null` | Suppress: do nothing. Works as a rule's `open: null` AND as `defaultBrowser: null` (Finicky-compat) — when no rule matches and the default is null, nothing opens |
+```js
+{ match: "github.com", open: "Google Chrome" },
+{ match: "zoom.us", open: "us.zoom.xos" },
+```
 
-The `profile` shorthand is auto-expanded for the Chromium family (Chrome,
-Brave, Edge, Vivaldi, Arc, Opera, Opera GX, Chromium, Wavebox, Helium,
-Comet, Yandex) and the Firefox family (Firefox, Firefox Developer Edition,
-Firefox Nightly, Waterfox, LibreWolf, Zen). The exact bundle ID list mirrors
-Finicky's `browsers.json` — see `src/chromium.rs` and `src/firefox.rs` for
-the current set.
-Chromium profiles can be referenced by either their on-disk directory
-("Profile 10") or their display name ("Work") — Grinch resolves through
-Chrome's `Local State`. `Default` and `Profile N` (ASCII digits) are explicit
-directory names and need no profile-file access. Other values must match a
-display name or directory key in `Local State`. If the file is unreadable,
-invalid, or has no matching entry, Grinch logs a `profile_error` and suppresses
-that launch, including dynamic browser targets. It does not try a later rule
-or the default browser. This prevents a display name from accidentally
-selecting or creating a different profile directory.
+The first rule opens GitHub in Chrome; the second sends Zoom links to the Zoom
+app. Use `Grinch --list-browsers` to find the bundle IDs of apps registered to
+open web links.
 
-If profile resolution fails, first open the browser once so it creates its
-profile data, and check the current profile name (especially after a rename).
-Inspect the diagnostic log's file path and OS error to distinguish a missing
-`Local State` file from a read denial. Choose **Reload Config** after correcting
-the name, restoring the file, or changing browser profiles; this refreshes both
-browser families' profile caches.
+#### Choose a profile
 
-To route without reading `Local State`, use the final directory component shown
-in **Profile Path** at `chrome://version`, for example `profile: "Profile 1"`.
-Other directory names require a readable `Local State` entry so Grinch can verify
-the key. For an access-denied error, check file ownership and permissions first.
-If macOS privacy controls are blocking the read, **System Settings → Privacy &
-Security → Full Disk Access** may be relevant; this is a broader permission,
-reported as a workaround in [Finicky #556](https://github.com/johnste/finicky/issues/556),
-not a requirement for every profile-resolution failure. Reload Config after
-restoring access.
+If you use separate work and personal profiles, specify the profile by name:
 
-Read failures are cached too: dynamic browser functions do not retry a failed
-read on the next click. Use **Reload Config** after a transient filesystem error.
+```js
+{ match: "github.com", open: { name: "Google Chrome", profile: "Work" } },
+```
 
-Firefox profiles use the name from `profiles.ini`. Unreadable files are logged;
-when a nonempty inventory is available, unknown names are logged too. Grinch
-still passes `-P <name>` to Firefox to resolve.
-Names from Firefox's newer profile-group store are not resolved by Grinch.
-Other browsers' `profile` is dropped with a load-time warning.
+Grinch supports profiles in Chromium-based browsers, including Chrome, Brave,
+Edge, Arc, Vivaldi and Chromium, and Firefox-based browsers, including Firefox,
+LibreWolf, Waterfox and Zen. `"Google Chrome:Work"` is a shorter form for a
+literal target. For Chrome, `"Default"` and `"Profile N"` can also identify a
+profile by its directory name. Dynamic functions returning strings don't use
+the `Name:Profile` shorthand.
 
-You can predefine browsers in a top-level `browsers` map:
+If a Chrome profile can't be found, Grinch won't open the link in a potentially
+wrong profile. Check the profile name and **Open Diagnostic Log**, then choose
+**Reload Config** after fixing the name or the browser's profile data. If you
+need the directory name, open `chrome://version` in that profile and look at
+**Profile Path**. Firefox profile names are passed to Firefox even if Grinch
+can't verify them; Firefox's newer profile-group names aren't resolved by Grinch.
+
+#### Change how a link opens
+
+Use an object when a link needs a profile or another launch option:
+
+```js
+{ match: "private.example.org", open: { name: "Google Chrome", incognito: true } },
+{ match: "news.example.com", open: { name: "org.mozilla.firefox", openInNewWindow: true } },
+```
+
+`incognito` and `openInNewWindow` work with supported Chromium and Firefox
+browsers; Safari doesn't support these options. Set `openInBackground: true`
+to open a link without activating the target app. You can also pass browser
+command-line flags with `args: ["--incognito"]`.
+
+To open a particular app bundle, use its path, for example
+`"/Applications/Foo.app"` or `{ name: "~/Apps/Foo.app", appType: "path" }`.
+Use `{ name: "com.example.Browser", appType: "bundleId" }` to treat a name as
+a bundle ID without an app-name lookup. A target of `null` or
+`{ appType: "none" }` opens nothing. A function can choose a target dynamically;
+a rule's function returning `null` or `undefined` tries the next rule.
+
+#### Reuse a target
+
+Give targets names if several rules should use the same browser or profile:
 
 ```js
 const browsers = {
   personal: "com.apple.Safari",
-  work:     { name: "com.google.Chrome", profile: "Default" },
-  zen:      "app.zen-browser.zen",
+  work: { name: "com.google.Chrome", profile: "Default" },
 };
 
 module.exports = {
@@ -332,9 +296,27 @@ module.exports = {
 };
 ```
 
-Refer to entries by key (`open: "work"`) or by JavaScript reference
-(`open: browsers.work`). The map must be included in the exported config for
-string keys to resolve.
+The exported `browsers` map makes `"personal"` and `"work"` available by
+name. You can also use the JavaScript reference `browsers.work` directly.
+
+<details>
+<summary>More about resolving browser profiles</summary>
+
+Chrome display names are looked up in the browser's `Local State` file.
+`Default` and `Profile N` (ASCII digits) are explicit directory names and need
+no profile-file access. Other values must match a display name or directory key
+in `Local State`. An unreadable file or unknown name records a `profile_error`
+and suppresses the launch, including for dynamic targets; Grinch does not try a
+later rule or the default. Reloading the config clears cached profile data and
+read failures. Check file permissions if access is denied; Full Disk Access is a
+broader workaround, not a requirement for every profile problem.
+
+Firefox profiles use names from `profiles.ini`. Grinch logs unreadable files
+and unknown names when an inventory is available, but still passes the name to
+Firefox. Other browsers ignore `profile` with a warning. The full supported
+browser-family lists are in `src/chromium.rs` and `src/firefox.rs`.
+
+</details>
 
 ### URL rewrites
 
@@ -547,6 +529,20 @@ until the config is fixed; the next successful reload restores the Grinch
 icon. The full failure is also written as a `config_error` event in the
 diagnostic log.
 
+### If Grinch uses a different config
+
+If your edits don't take effect, choose **Open Config** from the menu to see
+which file Grinch loaded. It uses the first existing file in this order:
+
+1. `~/.grinch.js`
+2. `~/.config/grinch.js`
+3. `~/.config/grinch/grinch.js`
+4. `/Library/Application Support/Grinch/grinch.js` (a system-wide fallback)
+
+Edit the active file, then choose **Reload Config**. If it fails, the menu
+shows the error and Grinch keeps the last successfully loaded config.
+`Grinch --validate` can also report config errors and warnings in a terminal.
+
 ## Diagnostic log
 
 Grinch keeps a diagnostic log per app launch at
@@ -712,15 +708,13 @@ those requests bypass Grinch's routing rules.
 
 ## Chrome opens a link in a new window
 
-When a rule selects a Chrome profile, a link can open in a new window even if
-that profile already has a normal window. This can happen when the profile's
-most recently active Chrome window is a web app, popup, or DevTools window.
-Chrome chooses the window after Grinch passes it the URL and profile.
+When a rule selects a Chrome profile, Chrome can open a new window even if
+that profile already has a normal window. This can happen if you most recently
+used a Chrome web app, popup, or DevTools window for that profile.
 
-As a workaround, activate an ordinary Chrome window for the target profile
-before opening the link. The behavior was reproduced with Chrome 150; see
-[Grinch issue #3](https://github.com/jamtur01/grinch/issues/3) and
-[Finicky issue #514](https://github.com/johnste/finicky/issues/514) for details.
+To reuse an existing window, activate an ordinary Chrome window for that profile
+before opening the link. This is tracked in the
+[Chromium issue for this behavior](https://issues.chromium.org/issues/541287632).
 
 ## Working with URL shorteners
 
@@ -876,8 +870,10 @@ the bulk of its memory footprint.
 
 ## Differences from Finicky
 
-Grinch tracks **Finicky v4** (the current line, with `defaultBrowser` /
-`handlers` / `rewrite`). Finicky v3 configs are best ported through
+Grinch supports many **Finicky v4** configs. It accepts `export default` as
+well as `module.exports`; `defaultBrowser`, `handlers`, and `browser` are
+aliases for `default`, `rules`, and a rule's `open`. Finicky v3 configs are
+best ported through
 [Finicky's migration guide](https://github.com/johnste/finicky/wiki/Migration-guide)
 first, but for the most common v3 leftovers Grinch ships compatibility
 shims:
@@ -907,8 +903,7 @@ to adjust:
    resolve. Inline what you need or pre-process before invoking Grinch.
 2. **No `await fetch()`.** The resolve hot path is sync. The Finicky
    `shortenerExpander` pattern can't run; resolve a shortener separately
-   if you need it — see [Working with URL shorteners](#working-with-url-shorteners)
-   below.
+   if you need it — see [Working with URL shorteners](#working-with-url-shorteners).
 3. **`finicky.*` namespace is shipped without `notify`, `getPowerInfo`, or
    `getBattery`.** Calling one of those throws a `TypeError`: at the top
    level of a config that fails the load; inside a matcher or `open` fn the

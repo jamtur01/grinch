@@ -595,6 +595,41 @@ fn wildcard_protocol_anchored() {
         "http://example.com/*",
         "https://example.com/x"
     ));
+    for scheme in [
+        "http",
+        "https",
+        "ftp",
+        "file",
+        "mailto",
+        "tel",
+        "sms",
+        "data",
+        "ws",
+        "wss",
+        "web+app",
+        "git+https",
+        "chrome-extension",
+    ] {
+        let mixed: String = scheme
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i % 2 == 0 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let variants = [scheme.to_string(), scheme.to_ascii_uppercase(), mixed];
+        for pattern_scheme in &variants {
+            for url_scheme in &variants {
+                let pattern = format!("{pattern_scheme}://example.com/Path/*");
+                let url = format!("{url_scheme}://example.com/Path/x");
+                assert!(matches_pat(&pattern, &url), "{pattern:?} vs {url:?}");
+            }
+        }
+    }
 }
 
 #[test]

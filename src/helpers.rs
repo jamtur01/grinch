@@ -28,7 +28,7 @@ pub const JS_PRELUDE: &str = r##"
   // bare-host pattern. Without the IPv6 branch, the `[^:\/?#]*` class
   // stopped at the first `:` inside a `[::1]` address, leaking the
   // rest of the address into the pathname slot.
-  var URL_RE = /^([a-z][a-z0-9+.-]*:)(?:\/\/(?:([^:@\/]*)(?::([^@\/]*))?@)?(\[[^\]]+\]|[^:\/?#]*)(?::(\d+))?)?([^?#]*)(\?[^#]*)?(#.*)?$/i;
+  var URL_RE = /^([a-z][a-z0-9+.-]*:)(?:\/\/(?:([^:\/?#]*)(?::([^\/?#]*))?@)?(\[[^\]]+\]|[^:@\/?#]*)(?::(\d+))?)?([^?#]*)(\?[^#]*)?(#.*)?$/i;
 
   function parseInto(self, href) {
     var m = URL_RE.exec(href);
@@ -36,7 +36,7 @@ pub const JS_PRELUDE: &str = r##"
     self.protocol = m[1];
     self.username = m[2] || "";
     self.password = m[3] || "";
-    self.hostname = m[4] || "";
+    self.hostname = (m[4] || "").toLowerCase();
     self.port     = m[5] || "";
     self.pathname = m[6] || "";
     self._search  = m[7] || "";

@@ -143,6 +143,27 @@ fn negative_array_like_lengths_do_not_abort_config_loading() {
 }
 
 #[test]
+fn url_hostname_excludes_query_userinfo_and_normalizes_case() {
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: url => url.hostname === "gitlab.com", open: "com.google.Chrome" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "https://evil.com?@gitlab.com/").0,
+        "com.apple.Safari"
+    );
+    assert_eq!(
+        resolve(&engine, "https://user:pass@GitLab.COM/path").0,
+        "com.google.Chrome"
+    );
+    assert_eq!(
+        resolve(&engine, "https://user@evil.com@GitLab.COM/path").0,
+        "com.google.Chrome"
+    );
+}
+
+#[test]
 fn default_engine_fixture_isolates_runtime_error_logs() {
     let home = unique_tmp("fixture-log-home");
     with_home(&home, || {

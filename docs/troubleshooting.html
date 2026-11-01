@@ -182,6 +182,9 @@ rules:  1</span></code></pre>
     Config and profile errors take precedence. Each warning is printed to stderr
     and written to the diagnostic log as a <code>config_warning</code> event.
     Reloading a fixed config clears them.</p>
+  <p>A browser target returned by a function is checked when the function runs,
+    so its warnings appear on the first click or <code>Grinch --test</code> that
+    uses it, not in <code>Grinch --validate</code>.</p>
   <p>At launch, Grinch quits any other running copy of itself before adding its
     menu-bar item, so only one instance runs.</p>
   <p>With <a href="config.html#options"><code>hideIcon: true</code></a>, reopen

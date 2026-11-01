@@ -216,19 +216,21 @@
       match a display name or directory key in <code>Local State</code>. An
       unreadable file or unknown name records a <code>profile_error</code> and
       suppresses the launch, including for dynamic targets; Grinch does not try a
-      later rule or the default. Reloading the config clears cached profile data
-      and read failures. If macOS denies access, check Grinch's browser access
-      under <strong>System Settings → Privacy &amp; Security → Files &amp; Folders</strong>,
-      then reload the config.</p>
+      later rule or the default.</p>
     <p>Firefox profiles use names from <code>profiles.ini</code> or the newer
-      profile groups. If a name matches multiple profiles, a profile directory
-      is missing, or profile groups cannot be read, Grinch stops the launch;
-      use a full directory path to resolve duplicate names. Legacy profile names
+      profile groups. If Grinch can't read <code>profiles.ini</code> or the
+      profile groups, a name matches multiple profiles, or a profile directory
+      is missing, Grinch stops the launch; use a full directory path to resolve
+      duplicate names. Legacy profile names
       take precedence when both systems contain the same name. Unknown names are
       passed to Firefox with a warning when an inventory is available. A profile
       on any other browser records
-      a <code>profile_error</code> and suppresses the launch. The full supported
-      browser-family lists are in
+      a <code>profile_error</code> and suppresses the launch.</p>
+    <p>If macOS denies access to a browser's profile files, the error says so:
+      allow Grinch to access that browser under <strong>System Settings →
+      Privacy &amp; Security → Files &amp; Folders</strong>, then choose
+      <strong>Reload Config</strong>. Reloading clears cached profile data and
+      read failures. The full supported browser-family lists are in
       <a href="https://github.com/jamtur01/grinch/blob/main/src/chromium.rs"><code>src/chromium.rs</code></a> and
       <a href="https://github.com/jamtur01/grinch/blob/main/src/firefox.rs"><code>src/firefox.rs</code></a>.</p>
   </details>

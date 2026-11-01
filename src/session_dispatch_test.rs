@@ -396,9 +396,9 @@ fn verify_failed_routes() {
     }
 }
 
-fn verify_native_launch_failures() {
+fn verify_removed_app_launch_failures() {
     // Parse a real bundle identity, then remove the fixture before launch.
-    // Both native launch strategies must fail without opening any application.
+    // Both launch strategies must reject the missing bundle before invoking macOS.
     for args in ["", "args: ['--test'],"] {
         let path = std::env::temp_dir().join(format!("grinch-{}.app", NSUUID::new().UUIDString()));
         let contents = path.join("Contents");
@@ -428,7 +428,7 @@ fn verify_native_launch_failures() {
         FORWARDING
             .with(|forwarding| *forwarding.borrow_mut() = Forwarding::Route(Box::new(engine)));
         let uuid = deliver_from_worker("https://example.invalid/native-failure", false);
-        verify_cancellation(&uuid, "");
+        verify_cancellation(&uuid, "Browser not found");
         let log = std::fs::read_to_string(log_path).unwrap();
         let event: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
         let strategy = if args.is_empty() {
@@ -437,9 +437,12 @@ fn verify_native_launch_failures() {
             "launch_new_instance"
         };
         assert_eq!(event["strategy"], strategy);
+        assert_eq!(event["browser"], "com.grinch.test.unlaunchable");
         assert!(
-            event["errorDomain"].is_string(),
-            "expected a native launch failure"
+            event["message"]
+                .as_str()
+                .unwrap()
+                .contains("Browser not found")
         );
     }
 }
@@ -938,6 +941,12 @@ fn main() {
         verify_simultaneous_duplicate_startup();
         return;
     }
+    if std::env::args().any(|arg| arg == "--check-removed-apps") {
+        session_handler::install(mtm, forwarded);
+        session_handler::finish_startup(mtm);
+        verify_removed_app_launch_failures();
+        return;
+    }
     verify_real_reopen();
     verify_ordinary_startup_delivery(mtm);
     verify_simultaneous_duplicate_startup();
@@ -1002,7 +1011,7 @@ fn main() {
     }
     assert!(take_events().is_empty());
     verify_failed_routes();
-    verify_native_launch_failures();
+    verify_removed_app_launch_failures();
     verify_late_failures_do_not_finish_twice();
     println!("Authentication startup, completion, cancellation, and launch failure checks passed");
 }

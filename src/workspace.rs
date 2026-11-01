@@ -891,6 +891,9 @@ pub fn resolve_browser_path(path: &str) -> Option<String> {
 
 pub(crate) fn browser_app_url(spec: &BrowserSpec) -> Option<Retained<NSURL>> {
     if let Some(path) = &spec.app_path {
+        if !std::path::Path::new(path).exists() {
+            return None;
+        }
         return Some(NSURL::fileURLWithPath(&NSString::from_str(path)));
     }
     resolved_app_url(&spec.bundle_id)
@@ -1238,6 +1241,18 @@ mod tests {
         assert!(prepare_launch("--incognito", &result.browser, diagnostics).is_err());
         assert!(prepare_launch("https://[invalid", &result.browser, diagnostics).is_err());
         assert!(prepare_launch("https://example.com/", &result.browser, diagnostics).is_err());
+        let mut missing_path = (*result.browser).clone();
+        missing_path.app_path = Some(
+            std::env::temp_dir()
+                .join(format!("grinch-missing-{}.app", std::process::id()))
+                .to_string_lossy()
+                .into_owned(),
+        );
+        for args in [vec![], vec!["--test".to_string()]] {
+            missing_path.args = args;
+            missing_path.creates_new_instance = !missing_path.args.is_empty();
+            assert!(prepare_launch("https://example.com/", &missing_path, diagnostics).is_err());
+        }
         let mut suppressed = (*result.browser).clone();
         suppressed.bundle_id.clear();
         assert!(prepare_launch("https://example.com/", &suppressed, diagnostics).is_err());
@@ -1246,7 +1261,7 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 5);
         assert!(rows.iter().all(|row| row["event"] == "launch_error"));
         assert_eq!(rows[0]["strategy"], "suppress");
         assert_eq!(rows[0]["url"], "--incognito");
@@ -1259,6 +1274,8 @@ mod tests {
                 .unwrap()
                 .contains("Browser not found")
         );
+        assert_eq!(rows[3]["strategy"], "open_urls");
+        assert_eq!(rows[4]["strategy"], "launch_new_instance");
     }
 
     #[test]

@@ -143,7 +143,7 @@ pub fn forward_through_engine(
     engine: &Engine,
     uuid: Option<&str>,
     mtm: MainThreadMarker,
-) {
+) -> (String, Result<(), &'static str>) {
     let opener = Opener {
         bundle_id: "com.apple.AuthenticationServices".to_string(),
         name: "AuthenticationServices".to_string(),
@@ -151,8 +151,13 @@ pub fn forward_through_engine(
         pid: 0,
     };
     let result = engine.resolve(url, &opener, ModifierFlags::default());
+    let target = result
+        .browser
+        .app_path
+        .clone()
+        .unwrap_or_else(|| result.browser.bundle_id.clone());
     let uuid = uuid.map(str::to_owned);
-    open_url(
+    let outcome = open_url(
         &result.url,
         &result.browser,
         engine.diagnostics(),
@@ -169,6 +174,7 @@ pub fn forward_through_engine(
             });
         },
     );
+    (target, outcome)
 }
 
 fn fail_pending_request(uuid: &str, message: &str, _mtm: MainThreadMarker) {

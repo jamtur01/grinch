@@ -183,12 +183,20 @@ rules:  1</span></code></pre>
     <a href="config.html#rules">browser target</a>, or a field Grinch doesn't
     recognise in a rule or target. The icon changes to <strong>⚠️</strong> and
     the menu shows <strong>Config warning:</strong> with the first warning.
-    Config and profile errors take precedence. Each warning is printed to stderr
+    Config errors, profile errors, and missing-app warnings take precedence.
+    Each warning is printed to stderr
     and written to the diagnostic log as a <code>config_warning</code> event.
     Reloading a fixed config clears them.</p>
   <p>A browser target returned by a function is checked when the function runs,
     so its warnings appear on the first click or <code>Grinch --test</code> that
     uses it, not in <code>Grinch --validate</code>.</p>
+  <p>If a configured app path is already missing when the config loads,
+    Grinch shows a config warning. If Grinch can't find the app selected for
+    a link, the icon changes to
+    <strong>⚠️</strong> and the menu shows <strong>Browser unavailable:</strong>
+    with its bundle ID or configured path. Check the config or reinstall the
+    app. The warning clears when Grinch finds that target on a later attempt or
+    when a config reload succeeds. Config and profile errors take precedence.</p>
   <p>At launch, Grinch quits any other running copy of itself before adding its
     menu-bar item, so only one instance runs.</p>
   <p>With <a href="config.html#options"><code>hideIcon: true</code></a>, reopen

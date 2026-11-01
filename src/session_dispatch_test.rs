@@ -33,7 +33,7 @@ use objc2::{
     msg_send, sel,
 };
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSButton,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSButton, NSMenu,
     NSRunningApplication, NSTextField, NSView, NSWindow,
 };
 use objc2_authentication_services::{
@@ -250,7 +250,7 @@ fn forwarded(uuid: &str, url: &str, mtm: MainThreadMarker) -> Result<(), &'stati
         match &*forwarding.borrow() {
             Forwarding::Record => record(format!("forward:{url}")),
             Forwarding::Route(engine) => {
-                session_handler::forward_through_engine(url, engine, Some(uuid), mtm);
+                let _ = session_handler::forward_through_engine(url, engine, Some(uuid), mtm);
             }
             Forwarding::Unavailable => return Err("Configuration unavailable; fix it and reload"),
         }
@@ -425,6 +425,14 @@ fn verify_removed_app_launch_failures() {
         );
         assert_eq!(resolved.browser.bundle_id, "com.grinch.test.unlaunchable");
         std::fs::remove_dir_all(&path).unwrap();
+        let (target, outcome) = session_handler::forward_through_engine(
+            "https://example.invalid/auth",
+            &engine,
+            None,
+            MainThreadMarker::new().unwrap(),
+        );
+        assert_eq!(target, path.to_string_lossy());
+        assert_eq!(outcome, Err(workspace::BROWSER_NOT_FOUND));
         FORWARDING
             .with(|forwarding| *forwarding.borrow_mut() = Forwarding::Route(Box::new(engine)));
         let uuid = deliver_from_worker("https://example.invalid/native-failure", false);
@@ -816,6 +824,107 @@ fn verify_ordinary_startup_delivery(mtm: MainThreadMarker) {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+fn verify_missing_app_warning(mtm: MainThreadMarker) {
+    let directory = std::env::temp_dir().join(format!(
+        "grinch-missing-app-warning-{}",
+        NSUUID::new().UUIDString()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let config = directory.join(".grinch.js");
+    std::fs::write(
+        &config,
+        "module.exports = { default: 'com.grinch.test.missing-browser' };",
+    )
+    .unwrap();
+    let previous = std::env::var_os("HOME");
+    unsafe { std::env::set_var("HOME", &directory) };
+    let app = NSApplication::sharedApplication(mtm);
+    let delegate = app_delegate::Delegate::new(mtm);
+    let menu = NSMenu::new(mtm);
+    delegate.add_status_menu_header(&menu);
+    let warning_item = menu.itemAtIndex(0).unwrap();
+    assert!(warning_item.isHidden());
+    delegate.reload_engine();
+    delegate.finish_url_startup();
+    let url = NSURL::URLWithString(&NSString::from_str("https://example.invalid/")).unwrap();
+    let urls = NSArray::from_retained_slice(&[url]);
+    let _: () = unsafe { msg_send![&*delegate, application: &*app, openURLs: &*urls] };
+    let warning = delegate.status_error().unwrap();
+    assert!(
+        warning.contains("com.grinch.test.missing-browser"),
+        "{warning}"
+    );
+    assert!(!warning_item.isHidden());
+    assert!(
+        warning_item
+            .title()
+            .to_string()
+            .contains("Browser unavailable")
+    );
+    delegate.update_missing_app("com.grinch.test.other-browser", Ok(()));
+    assert!(delegate.status_error().is_some());
+    delegate.update_missing_app("com.grinch.test.missing-browser", Err("Invalid URL"));
+    assert!(delegate.status_error().is_some());
+    delegate.update_missing_app("com.grinch.test.missing-browser", Ok(()));
+    assert!(delegate.status_error().is_none());
+    assert!(warning_item.isHidden());
+    let _: () = unsafe { msg_send![&*delegate, application: &*app, openURLs: &*urls] };
+    assert!(delegate.status_error().is_some());
+    let bundle = directory.join("Removed Browser.app");
+    let contents = bundle.join("Contents");
+    std::fs::create_dir_all(&contents).unwrap();
+    std::fs::write(
+        contents.join("Info.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
+           <key>CFBundleIdentifier</key><string>com.grinch.test.removed-browser</string>
+           <key>CFBundleExecutable</key><string>missing</string>
+           <key>CFBundlePackageType</key><string>APPL</string></dict></plist>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            "module.exports = {{ default: {{ name: {}, appType: 'path' }} }};",
+            serde_json::to_string(&bundle).unwrap()
+        ),
+    )
+    .unwrap();
+    delegate.reload_engine();
+    assert!(delegate.status_error().is_none());
+    std::fs::remove_dir_all(&bundle).unwrap();
+    let _: () = unsafe { msg_send![&*delegate, application: &*app, openURLs: &*urls] };
+    let warning = delegate.status_error().unwrap();
+    assert!(warning.contains(&*bundle.to_string_lossy()), "{warning}");
+    std::fs::write(
+        &config,
+        format!(
+            "module.exports = {{ default: () => {} }};",
+            serde_json::to_string(&bundle).unwrap()
+        ),
+    )
+    .unwrap();
+    delegate.reload_engine();
+    assert!(warning_item.isHidden());
+    let _: () = unsafe { msg_send![&*delegate, application: &*app, openURLs: &*urls] };
+    assert!(!warning_item.isHidden());
+    assert!(
+        warning_item.title().to_string().contains("Config warning"),
+        "{}",
+        warning_item.title()
+    );
+    std::fs::write(&config, "module.exports = { default: 'com.apple.Safari' };").unwrap();
+    delegate.reload_engine();
+    assert!(delegate.status_error().is_none());
+    unsafe {
+        if let Some(home) = previous {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 struct DuplicateProbes {
     children: Vec<Child>,
     directory: PathBuf,
@@ -955,8 +1064,13 @@ fn main() {
         verify_ordinary_startup_delivery(mtm);
         return;
     }
+    if std::env::args().any(|arg| arg == "--check-missing-app-warning") {
+        verify_missing_app_warning(mtm);
+        return;
+    }
     verify_real_reopen();
     verify_ordinary_startup_delivery(mtm);
+    verify_missing_app_warning(mtm);
     verify_simultaneous_duplicate_startup();
     verify_update_button_binding(mtm);
     verify_actions_window(mtm);

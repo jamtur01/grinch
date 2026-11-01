@@ -880,7 +880,8 @@ pub fn host_info() -> (String, String) {
 pub fn resolve_browser_path(path: &str) -> Option<String> {
     let path_ns = NSString::from_str(path);
     let url = NSURL::fileURLWithPath(&path_ns);
-    if let Some(bundle) = NSBundle::bundleWithURL(&url)
+    if std::path::Path::new(path).exists()
+        && let Some(bundle) = NSBundle::bundleWithURL(&url)
         && let Some(id) = bundle.bundleIdentifier()
     {
         return Some(id.to_string());
@@ -914,6 +915,9 @@ pub(crate) fn browser_app_url(spec: &BrowserSpec) -> Option<Retained<NSURL>> {
         None
     }
 }
+
+pub(crate) const BROWSER_NOT_FOUND: &str =
+    "Browser not found; update your config to reference an installed browser";
 
 /// Resolve launch inputs without opening anything, recording unexpected drops.
 fn prepare_launch(
@@ -964,9 +968,9 @@ fn prepare_launch(
             url,
             &spec.bundle_id,
             plan.strategy(),
-            "Browser not found; update your config to reference an installed browser",
+            BROWSER_NOT_FOUND,
         ));
-        return Err("Browser not found; update your config to reference an installed browser");
+        return Err(BROWSER_NOT_FOUND);
     };
     Ok((plan, url_ns, app_url))
 }
@@ -985,13 +989,13 @@ pub fn open_url(
     diagnostics: &DiagnosticLog,
     mtm: MainThreadMarker,
     on_failure: impl Fn(&str) + Send + Sync + 'static,
-) {
+) -> Result<(), &'static str> {
     let _ = mtm;
     let (plan, url_ns, app_url) = match prepare_launch(url, spec, diagnostics) {
         Ok(prepared) => prepared,
         Err(message) => {
             on_failure(message);
-            return;
+            return Err(message);
         }
     };
     let workspace = NSWorkspace::sharedWorkspace();
@@ -1065,6 +1069,7 @@ pub fn open_url(
             );
         }
     }
+    Ok(())
 }
 
 /// Log the "browser not found" drop. Verbose (with a fix hint) on the first

@@ -33,8 +33,9 @@ use crate::engine::{DiagnosticLog, Engine, ModifierFlags};
 use crate::loader::{CONFIG_PATH_HINT, find_config_path, load_config};
 use crate::updater::Updater;
 use crate::workspace::{
-    Opener, current_modifier_flags, ensure_accessibility_permission, frontmost_opener,
-    frontmost_opener_id, list_http_browsers, open_url, opener_from_pid, opener_id_from_pid,
+    BROWSER_NOT_FOUND, Opener, current_modifier_flags, ensure_accessibility_permission,
+    frontmost_opener, frontmost_opener_id, list_http_browsers, open_url, opener_from_pid,
+    opener_id_from_pid,
 };
 
 // SMAppService lives in ServiceManagement.framework; not transitively pulled
@@ -102,6 +103,7 @@ pub struct DelegateIvars {
     // LaunchServices-launched apps, so without this the user gets no signal
     // that a reload failed.
     load_error: RefCell<Option<String>>,
+    missing_app: RefCell<Option<String>>,
     // Pre-built menu item for config or profile errors — hidden when neither exists.
     error_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
     // Sparkle updater; None in CLI modes and in bundles without Sparkle.
@@ -553,13 +555,23 @@ impl Delegate {
             );
         }
         if !result.browser.bundle_id.is_empty() {
-            open_url(
+            let target = result
+                .browser
+                .app_path
+                .as_deref()
+                .unwrap_or(&result.browser.bundle_id);
+            let outcome = open_url(
                 &result.url,
                 &result.browser,
                 engine.diagnostics(),
                 self.mtm(),
                 |_| {},
             );
+            self.update_missing_app(target, outcome);
+        } else {
+            self.refresh_status_item();
+            self.refresh_error_menu_item();
+            self.refresh_actions_window();
         }
     }
 
@@ -584,6 +596,9 @@ impl Delegate {
         let result = self.load_engine().map(|engine| {
             *self.ivars().engine.borrow_mut() = Some(engine);
         });
+        if result.is_ok() {
+            self.ivars().missing_app.borrow_mut().take();
+        }
         self.set_load_error(result.err());
         self.apply_check_for_updates_option();
         self.refresh_actions_window();
@@ -735,13 +750,21 @@ impl Delegate {
 
     fn set_load_error(&self, err: Option<String>) {
         *self.ivars().load_error.borrow_mut() = err;
-        // Skip the AppKit calls if the menu bar hasn't been built yet —
-        // setup_menu_bar() re-applies the current state at the end.
-        if self.ivars().status_item.borrow().is_none() {
-            return;
-        }
         self.refresh_status_item();
         self.refresh_error_menu_item();
+    }
+
+    pub(crate) fn update_missing_app(&self, target: &str, outcome: Result<(), &'static str>) {
+        let mut missing = self.ivars().missing_app.borrow_mut();
+        match outcome {
+            Err(BROWSER_NOT_FOUND) => *missing = Some(target.to_string()),
+            Ok(()) if missing.as_deref() == Some(target) => *missing = None,
+            _ => return,
+        }
+        drop(missing);
+        self.refresh_status_item();
+        self.refresh_error_menu_item();
+        self.refresh_actions_window();
     }
 
     fn refresh_status_item(&self) {
@@ -789,7 +812,7 @@ impl Delegate {
         }
     }
 
-    fn status_error(&self) -> Option<String> {
+    pub(crate) fn status_error(&self) -> Option<String> {
         self.ivars()
             .load_error
             .borrow()
@@ -800,6 +823,11 @@ impl Delegate {
                     .diagnostics
                     .profile_error()
                     .map(|message| format!("Profile error: {message}"))
+            })
+            .or_else(|| {
+                self.ivars().missing_app.borrow().as_ref().map(|target| {
+                    format!("Browser unavailable: {target}; check your config or reinstall the app")
+                })
             })
             .or_else(|| {
                 self.ivars()
@@ -1066,7 +1094,7 @@ impl Delegate {
         true
     }
 
-    fn add_status_menu_header(&self, menu: &NSMenu) {
+    pub(crate) fn add_status_menu_header(&self, menu: &NSMenu) {
         let mtm = self.mtm();
         // Pre-built config-error item, hidden until a reload fails.
         let error_item = unsafe {
@@ -1305,7 +1333,14 @@ fn forward_auth_session_url(
     let Some(engine) = engine_ref.as_ref() else {
         return Err("Grinch could not load its configuration; fix your config and reload it");
     };
-    crate::session_handler::forward_through_engine(url, engine, Some(uuid), mtm);
+    let (target, outcome) =
+        crate::session_handler::forward_through_engine(url, engine, Some(uuid), mtm);
+    delegate.update_missing_app(&target, outcome);
+    if target.is_empty() {
+        delegate.refresh_status_item();
+        delegate.refresh_error_menu_item();
+        delegate.refresh_actions_window();
+    }
     Ok(())
 }
 

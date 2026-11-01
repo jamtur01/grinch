@@ -18,7 +18,7 @@ fn main() {
     // --version short-circuits before NSApplication setup so it works from
     // any context (terminal, shell scripts) without needing a main-thread
     // run loop. Version comes from Cargo.toml via Cargo's standard env.
-    if std::env::args().any(|a| a == "--version" || a == "-V") {
+    if std::env::args_os().any(|a| a == "--version" || a == "-V") {
         println!("grinch {}", env!("CARGO_PKG_VERSION"));
         return;
     }

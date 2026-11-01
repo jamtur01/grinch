@@ -282,7 +282,11 @@ define_class!(
             // for a one-shot CLI invocation, and skipping them avoids the
             // SMAppService / NSStatusBar work (which can stall in headless
             // sandboxes that have no UI session).
-            let args: Vec<String> = std::env::args().collect();
+            let args: Result<Vec<String>, _> = std::env::args_os().map(|arg| arg.into_string()).collect();
+            let Ok(args) = args else {
+                eprintln!("grinch: arguments must be valid UTF-8");
+                std::process::exit(2);
+            };
             let cli_test = args.iter().position(|a| a == "--test");
             let cli_bench = args.iter().position(|a| a == "--bench");
             let cli_bench_init = args.iter().position(|a| a == "--bench-init");
@@ -300,6 +304,7 @@ define_class!(
                 };
                 self.reload_engine();
                 self.test_url(url);
+                if self.ivars().engine.borrow().is_none() { std::process::exit(1); }
                 terminate(self.mtm());
                 return;
             }
@@ -308,21 +313,36 @@ define_class!(
                     eprintln!("usage: Grinch --bench <iterations> <url>");
                     std::process::exit(2);
                 };
-                let n: usize = n.parse().unwrap_or(10_000);
+                let Ok(n) = n.parse::<usize>() else {
+                    eprintln!("grinch: --bench iterations must be a positive integer");
+                    std::process::exit(2);
+                };
+                if n == 0 {
+                    eprintln!("grinch: --bench iterations must be a positive integer");
+                    std::process::exit(2);
+                }
                 self.reload_engine();
                 self.bench(n, url);
+                if self.ivars().engine.borrow().is_none() { std::process::exit(1); }
                 terminate(self.mtm());
                 return;
             }
             if let Some(idx) = cli_bench_init {
-                let n: usize = args.get(idx + 1).and_then(|s| s.parse().ok()).unwrap_or(1_000);
-                self.bench_init(n);
+                let n = match args.get(idx + 1) {
+                    Some(value) => match value.parse::<usize>() {
+                        Ok(n) if n > 0 => n,
+                        _ => { eprintln!("grinch: --bench-init iterations must be a positive integer"); std::process::exit(2); }
+                    },
+                    None => 1_000,
+                };
+                if !self.bench_init(n) { std::process::exit(1); }
                 terminate(self.mtm());
                 return;
             }
             if cli_list_rules {
                 self.reload_engine();
                 self.list_rules();
+                if self.ivars().engine.borrow().is_none() { std::process::exit(1); }
                 terminate(self.mtm());
                 return;
             }
@@ -943,14 +963,14 @@ impl Delegate {
     ///
     /// Reports µs/op — reloads are microseconds, not nanoseconds. A parse
     /// failure on the first iteration aborts with the loader's message.
-    fn bench_init(&self, n: usize) {
+    fn bench_init(&self, n: usize) -> bool {
         // One eager load so a broken config fails loudly before the timing
         // loop instead of silently measuring N error-return paths.
         match self.load_engine() {
             Ok(_) => {}
             Err(msg) => {
                 println!("grinch: config load/build failed: {msg}");
-                return;
+                return false;
             }
         }
         let warmup = (n / 10).min(50);
@@ -970,6 +990,7 @@ impl Delegate {
         println!("Total:     {}ms", elapsed.as_millis());
         println!("Per-op:    {us_per_op:.2}µs");
         println!("Note:      full JSContext create + prelude eval + rule compile per op");
+        true
     }
 
     fn add_status_menu_header(&self, menu: &NSMenu) {

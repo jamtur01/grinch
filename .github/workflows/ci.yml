@@ -48,7 +48,7 @@ jobs:
         run: cargo clippy --release --all-targets -- -D warnings
 
       - name: cargo test
-        run: cargo test --release --bin Grinch --test session_dispatch
+        run: cargo test --release --bin Grinch --test session_dispatch --test cli
 
       - name: Release notes tests
         run: python3 -m unittest discover -s scripts/tests -p test_release_notes.py

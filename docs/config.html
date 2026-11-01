@@ -87,6 +87,8 @@
   options: {},                <span class="c">// optional app and logging settings</span>
 };</code></pre>
   </figure>
+  <p>Rule, rewrite, and matcher lists must be arrays with at most 65,536 entries.
+    An invalid list fails the config load; a failed reload keeps the previous config.</p>
   <p><a href="https://github.com/jamtur01/grinch/blob/main/examples/grinch.example.js"><code>examples/grinch.example.js</code></a>
     is a feature reference with more examples. Grinch looks for the config in
     several places; see <a href="troubleshooting.html#which-config">which config
@@ -245,7 +247,8 @@
     Chromium and Firefox browsers; Safari doesn't support them. Set
     <code>openInBackground: true</code> to open a link without activating the
     target app. Pass browser command-line flags with
-    <code>args: ["--incognito"]</code>.</p>
+    <code>args: ["--incognito"]</code>. An invalid argument list suppresses
+    that target and produces a config warning.</p>
   <p>To open a particular app bundle, use its path, for example
     <code>"/Applications/Foo.app"</code> or
     <code class="long">{ name: "~/Apps/Foo.app", appType: "path" }</code>. Use

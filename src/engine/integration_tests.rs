@@ -143,13 +143,19 @@ fn negative_array_like_lengths_do_not_abort_config_loading() {
                 .contains("launch suppressed")
         );
     }
-    let engine = build_engine(
-        "module.exports = { default: 'com.apple.Safari', rules: { length: -1 }, rewrite: { length: -1 } };",
-    );
-    assert_eq!(
-        resolve(&engine, "https://example.com").0,
-        "com.apple.Safari"
-    );
+    for source in [
+        "module.exports = { default: 'com.apple.Safari', rules: { length: -1 } };",
+        "module.exports = { default: 'com.apple.Safari', rewrite: { length: -1 } };",
+        "module.exports = { default: 'com.apple.Safari', rules: new Array(2147483647) };",
+        "module.exports = { default: 'com.apple.Safari', rules: [{ match: new Array(2147483647), open: null }] };",
+        "module.exports = { default: 'com.apple.Safari', rules: [{ match: { __type: 'domain', hosts: { length: -1 } }, open: null }] };",
+        "module.exports = { default: 'com.apple.Safari', rewrite: [{ __type: 'strip', params: new Array(2147483647) }] };",
+    ] {
+        assert!(matches!(
+            try_build_engine(source),
+            Err(EngineError::InvalidArray { .. })
+        ));
+    }
 }
 
 #[test]

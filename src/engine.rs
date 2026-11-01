@@ -579,6 +579,10 @@ pub struct Engine {
 #[derive(Debug)]
 pub enum EngineError {
     MissingDefault,
+    /// A routing list is not a reasonably sized array.
+    InvalidArray {
+        field: &'static str,
+    },
     /// One of the prelude globals (`RegExp`, `Function`, `URL`, or a
     /// `__grinch*` helper) was missing or null when the engine tried to
     /// look it up. Almost always caused by user config that overwrites
@@ -596,6 +600,9 @@ impl std::fmt::Display for EngineError {
                 "config has no `default` (or `defaultBrowser`) — \
                  add e.g. `default: \"Google Chrome\"` to module.exports"
             ),
+            EngineError::InvalidArray { field } => {
+                write!(f, "{field} must be an array with at most 65536 entries")
+            }
             EngineError::PreludeBroken { global } => write!(
                 f,
                 "prelude global `{global}` is missing or null — your config \
@@ -604,6 +611,10 @@ impl std::fmt::Display for EngineError {
             ),
         }
     }
+}
+
+fn validate_config_array(value: &JSValue, field: &'static str) -> Result<usize, EngineError> {
+    config_array_len(value).ok_or(EngineError::InvalidArray { field })
 }
 
 impl Engine {
@@ -702,23 +713,28 @@ impl Engine {
         };
 
         // rewrites
-        let rewrites = key(&exports, "rewrite")
-            .map(|arr| parse_rewrite_array(&arr, &regexp_ctor, &function_ctor, &diagnostics))
-            .unwrap_or_default();
+        let rewrites = if let Some(arr) = key(&exports, "rewrite").filter(|v| !is_undef_or_null(v))
+        {
+            let count = validate_config_array(&arr, "rewrite")?;
+            parse_rewrite_array(&arr, count, &regexp_ctor, &function_ctor, &diagnostics)?
+        } else {
+            vec![]
+        };
 
         // rules — accept Finicky's `handlers` as well as Grinch's `rules`
         let rules_val = key(&exports, "rules").or_else(|| key(&exports, "handlers"));
-        let rules = rules_val
-            .map(|arr| {
-                parse_rule_array(
-                    &arr,
-                    &browsers,
-                    (&regexp_ctor, &function_ctor),
-                    &diagnostics,
-                    &checks,
-                )
-            })
-            .unwrap_or_default();
+        let rules = if let Some(arr) = rules_val.filter(|v| !is_undef_or_null(v)) {
+            let count = validate_config_array(&arr, "rules")?;
+            parse_rule_array(
+                (&arr, count),
+                &browsers,
+                (&regexp_ctor, &function_ctor),
+                &diagnostics,
+                &checks,
+            )?
+        } else {
+            vec![]
+        };
 
         let mut needs = analyse_runtime_needs(&rewrites, &rules);
         // Dynamic defaults follow the same load-time arity contract as

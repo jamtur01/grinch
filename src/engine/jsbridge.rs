@@ -420,18 +420,19 @@ pub(crate) fn js_to_string(v: &JSValue) -> Option<String> {
     Some(s.to_string())
 }
 
-pub(crate) fn js_array_len(v: &JSValue) -> usize {
-    let len = key(v, "length");
-    len.and_then(|n| usize::try_from(unsafe { n.toInt32() }).ok())
-        .unwrap_or(0)
+pub(crate) fn config_array_len(value: &JSValue) -> Option<usize> {
+    if !unsafe { value.isArray() } {
+        return None;
+    }
+    let n = unsafe { key(value, "length")?.toDouble() };
+    (n.is_finite() && (0.0..=65_536.0).contains(&n) && n.fract() == 0.0).then_some(n as usize)
 }
 
 pub(crate) fn js_array_at(v: &JSValue, i: usize) -> Option<Retained<JSValue>> {
     unsafe { v.valueAtIndex(i) }
 }
 
-pub(crate) fn js_array_to_strings(v: &JSValue) -> Vec<String> {
-    let count = js_array_len(v);
+pub(crate) fn js_array_to_strings(v: &JSValue, count: usize) -> Vec<String> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         if let Some(item) = js_array_at(v, i)

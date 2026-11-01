@@ -6,17 +6,14 @@ use super::*;
 pub(crate) const RULE_KEYS: &[&str] = &["match", "open", "browser", "url", "name"];
 
 pub(crate) fn parse_rule_array(
-    arr: &JSValue,
+    array: (&JSValue, usize),
     browsers: &std::collections::HashMap<String, Rc<BrowserSpec>>,
     constructors: (&JSValue, &JSValue),
     diagnostics: &DiagnosticLog,
     checks: &crate::loader::KeyCheckers,
-) -> Vec<Rule> {
+) -> Result<Vec<Rule>, EngineError> {
     let (regexp_ctor, function_ctor) = constructors;
-    if is_undef_or_null(arr) {
-        return vec![];
-    }
-    let count = js_array_len(arr);
+    let (arr, count) = array;
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let Some(item) = js_array_at(arr, i) else {
@@ -54,7 +51,7 @@ pub(crate) fn parse_rule_array(
             regexp_ctor,
             function_ctor,
             diagnostics,
-        );
+        )?;
         if match_val
             .as_ref()
             .is_none_or(|value| is_undef_or_null(value))
@@ -110,7 +107,7 @@ pub(crate) fn parse_rule_array(
             label,
         });
     }
-    out
+    Ok(out)
 }
 
 /// Build a human-readable label for a rule's `match:` value at parse time.
@@ -128,7 +125,7 @@ fn derive_match_label(v: Option<&JSValue>) -> String {
         return js_to_string(v).unwrap_or_default();
     }
     if unsafe { v.isArray() } {
-        let count = js_array_len(v);
+        let count = config_array_len(v).unwrap_or(0);
         let parts: Vec<String> = (0..count)
             .filter_map(|i| js_array_at(v, i))
             .map(|item| describe_single_matcher(&item))
@@ -155,7 +152,8 @@ fn describe_single_matcher(v: &JSValue) -> String {
             if !items_key.is_empty()
                 && let Some(arr) = key(v, items_key)
             {
-                let items = js_array_to_strings(&arr).join(",");
+                let items =
+                    js_array_to_strings(&arr, config_array_len(&arr).unwrap_or(0)).join(",");
                 return format!("{t}:{items}");
             }
             return t;
@@ -197,14 +195,11 @@ fn truncate_label(s: &str, max_chars: usize) -> String {
 
 pub(crate) fn parse_rewrite_array(
     arr: &JSValue,
+    count: usize,
     regexp_ctor: &JSValue,
     function_ctor: &JSValue,
     diagnostics: &DiagnosticLog,
-) -> Vec<RewriteRule> {
-    if is_undef_or_null(arr) {
-        return vec![];
-    }
-    let count = js_array_len(arr);
+) -> Result<Vec<RewriteRule>, EngineError> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let Some(item) = js_array_at(arr, i) else {
@@ -213,7 +208,7 @@ pub(crate) fn parse_rewrite_array(
 
         // Bare strip(...) marker (no match field) — treat as "always run".
         if is_marker(&item, "strip") {
-            if let Some(r) = compile_strip(&item, diagnostics) {
+            if let Some(r) = compile_strip(&item, diagnostics)? {
                 out.push(RewriteRule {
                     matchers: vec![Matcher::Always],
                     rewriter: r,
@@ -251,14 +246,14 @@ pub(crate) fn parse_rewrite_array(
             regexp_ctor,
             function_ctor,
             diagnostics,
-        );
+        )?;
         let Some(uv) = url_val else { continue };
         let Some(rewriter) = compile_rewriter(&uv, function_ctor) else {
             continue;
         };
         out.push(RewriteRule { matchers, rewriter });
     }
-    out
+    Ok(out)
 }
 
 pub(crate) fn compile_rewriter(v: &JSValue, function_ctor: &JSValue) -> Option<Rewriter> {
@@ -279,26 +274,26 @@ fn compile_matchers(
     regexp_ctor: &JSValue,
     function_ctor: &JSValue,
     diagnostics: &DiagnosticLog,
-) -> Vec<Matcher> {
-    let Some(v) = v else { return vec![] };
+) -> Result<Vec<Matcher>, EngineError> {
+    let Some(v) = v else { return Ok(vec![]) };
     if is_undef_or_null(v) {
-        return vec![];
+        return Ok(vec![]);
     }
     if unsafe { v.isArray() } {
-        let count = js_array_len(v);
+        let count = validate_config_array(v, "match")?;
         let mut ms = Vec::with_capacity(count);
         for i in 0..count {
             if let Some(item) = js_array_at(v, i)
-                && let Some(m) = compile_matcher(&item, regexp_ctor, function_ctor, diagnostics)
+                && let Some(m) = compile_matcher(&item, regexp_ctor, function_ctor, diagnostics)?
             {
                 ms.push(m);
             }
         }
-        return ms;
+        return Ok(ms);
     }
-    compile_matcher(v, regexp_ctor, function_ctor, diagnostics)
+    Ok(compile_matcher(v, regexp_ctor, function_ctor, diagnostics)?
         .map(|m| vec![m])
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 pub(crate) fn compile_matcher(
@@ -306,26 +301,28 @@ pub(crate) fn compile_matcher(
     regexp_ctor: &JSValue,
     function_ctor: &JSValue,
     diagnostics: &DiagnosticLog,
-) -> Option<Matcher> {
+) -> Result<Option<Matcher>, EngineError> {
     // String → either a wildcard pattern (if it contains * or /) or a bare
     // hostname shorthand for a domain-and-subdomain match.
     if unsafe { v.isString() } {
-        let s = js_to_string(v)?;
+        let Some(s) = js_to_string(v) else {
+            return Ok(None);
+        };
         if is_host_port_pattern(&s) && !s.contains(['*', '/', '?', '#']) {
             let pattern = format!(
                 "^(?:https?:|ftp:)?(?://)?{}(?:[/?#].*)?$",
                 regex::escape(&s)
             );
-            return Regex::new(&pattern).ok().map(Matcher::Wildcard);
+            return Ok(Regex::new(&pattern).ok().map(Matcher::Wildcard));
         }
         if s.contains('*') || s.contains('/') || is_host_port_pattern(&s) {
-            return compile_wildcard(&s).map(Matcher::Wildcard);
+            return Ok(compile_wildcard(&s).map(Matcher::Wildcard));
         }
         // ASCII lowercase to match `quick_host`'s lowercasing of the URL's
         // host. URL hostnames are ASCII per the URL spec; using the
         // Unicode-aware to_lowercase() on either side could produce mismatches
         // on IDN inputs.
-        return Some(Matcher::Domain(vec![s.to_ascii_lowercase()]));
+        return Ok(Some(Matcher::Domain(vec![s.to_ascii_lowercase()])));
     }
     if unsafe { v.isObject() } {
         if let Some(t) = key(v, "__type")
@@ -335,21 +332,24 @@ pub(crate) fn compile_matcher(
             match name.as_str() {
                 "domain" => {
                     if let Some(arr) = key(v, "hosts") {
-                        let hosts: Vec<String> = js_array_to_strings(&arr)
+                        let count = validate_config_array(&arr, "domain hosts")?;
+                        let hosts: Vec<String> = js_array_to_strings(&arr, count)
                             .into_iter()
                             .map(|s| s.to_ascii_lowercase())
                             .collect();
-                        return Some(Matcher::Domain(hosts));
+                        return Ok(Some(Matcher::Domain(hosts)));
                     }
                 }
                 "from" => {
                     if let Some(arr) = key(v, "apps") {
-                        return Some(Matcher::From(js_array_to_strings(&arr)));
+                        let count = validate_config_array(&arr, "from apps")?;
+                        return Ok(Some(Matcher::From(js_array_to_strings(&arr, count))));
                     }
                 }
                 "running" => {
                     if let Some(arr) = key(v, "apps") {
-                        return Some(Matcher::Running(js_array_to_strings(&arr)));
+                        let count = validate_config_array(&arr, "running apps")?;
+                        return Ok(Some(Matcher::Running(js_array_to_strings(&arr, count))));
                     }
                 }
                 _ => {}
@@ -375,7 +375,7 @@ pub(crate) fn compile_matcher(
                 .multi_line(multi_line)
                 .build()
             {
-                Ok(re) => return Some(Matcher::Regex(re)),
+                Ok(re) => return Ok(Some(Matcher::Regex(re))),
                 Err(e) => {
                     // The Rust `regex` crate doesn't speak JS-specific
                     // regex syntax (lookbehinds, `\b` in some contexts).
@@ -389,15 +389,21 @@ pub(crate) fn compile_matcher(
             }
         }
         if is_function(v, function_ctor) {
-            return Some(Matcher::Fn(UserFn::new(v.retain())));
+            return Ok(Some(Matcher::Fn(UserFn::new(v.retain()))));
         }
     }
-    None
+    Ok(None)
 }
 
-fn compile_strip(v: &JSValue, diagnostics: &DiagnosticLog) -> Option<Rewriter> {
-    let arr = key(v, "params")?;
-    let params = js_array_to_strings(&arr);
+fn compile_strip(
+    v: &JSValue,
+    diagnostics: &DiagnosticLog,
+) -> Result<Option<Rewriter>, EngineError> {
+    let Some(arr) = key(v, "params") else {
+        return Ok(None);
+    };
+    let count = validate_config_array(&arr, "strip parameters")?;
+    let params = js_array_to_strings(&arr, count);
     if params.is_empty() {
         diagnostics.record_config_warning(
             "strip() called with no arguments — rewriter will never strip anything",
@@ -412,7 +418,7 @@ fn compile_strip(v: &JSValue, diagnostics: &DiagnosticLog) -> Option<Rewriter> {
             exact.insert(p);
         }
     }
-    Some(Rewriter::Strip { exact, prefixes })
+    Ok(Some(Rewriter::Strip { exact, prefixes }))
 }
 
 /// Port of Finicky's `matchWildcard`. Compiles a glob-style pattern to a

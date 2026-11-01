@@ -208,15 +208,11 @@ pub(crate) fn parse_browser_jsval(
 
     let mut args = Vec::new();
     if let Some(value) = key(v, "args").filter(|value| !is_undef_or_null(value)) {
-        let length = key(&value, "length").map(|length| unsafe { length.toDouble() });
-        if !unsafe { value.isArray() }
-            || !length
-                .is_some_and(|n| n.is_finite() && (0.0..=65_536.0).contains(&n) && n.fract() == 0.0)
-        {
+        let Some(count) = config_array_len(&value) else {
             diagnostics.record_suppressing_warning("browser target args must be an array with at most 65536 entries; launch suppressed");
             return BrowserSpec::empty();
-        }
-        args = js_array_to_strings(&value);
+        };
+        args = js_array_to_strings(&value, count);
     }
     // macOS ignores launch arguments on running instances, including the URL we append.
     let mut creates_new_instance = !args.is_empty();

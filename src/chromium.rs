@@ -73,14 +73,14 @@ fn local_state_path(bundle_id: &str) -> Option<PathBuf> {
     )))
 }
 
-/// Cache of {bundle_id → {display_name → directory_name}}, cleared on config reload. Local
+/// Cache of {bundle_id → {directory_name → display_name}}, cleared on config reload. Local
 /// State is small but parsing JSON has some cost; resolving is rare so a
 /// OnceLock-guarded HashMap is enough.
 /// Read failures are cached as empty maps too, including for dynamic targets.
 /// ponytail: no per-click retries; Reload Config is required after a transient failure.
 static CACHE: OnceLock<std::sync::Mutex<HashMap<String, NameMap>>> = OnceLock::new();
 
-type NameMap = HashMap<String, String>;
+type NameMap = HashMap<String, Option<String>>;
 
 /// Discard cached mappings so the next lookup rereads profile data.
 pub fn clear_profile_cache() {
@@ -116,7 +116,7 @@ fn read_name_map(path: &std::path::Path) -> std::io::Result<NameMap> {
     parse_name_map(&content)
 }
 
-/// Pure helper: extract {display_name → directory_name} from the JSON contents
+/// Pure helper: extract {directory_name → display_name} from the JSON contents
 /// of Chrome's `Local State`. Rejects malformed JSON or missing profile data.
 fn parse_name_map(content: &str) -> std::io::Result<NameMap> {
     let mut out = NameMap::new();
@@ -132,9 +132,11 @@ fn parse_name_map(content: &str) -> std::io::Result<NameMap> {
             )
         })?;
     for (dir_name, info) in info_cache {
-        if let Some(display) = info.get("name").and_then(|n| n.as_str()) {
-            out.insert(display.to_string(), dir_name.clone());
-        }
+        let display = info
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(str::to_string);
+        out.insert(dir_name.clone(), display);
     }
     Ok(out)
 }
@@ -143,10 +145,17 @@ fn parse_name_map(content: &str) -> std::io::Result<NameMap> {
 /// Pulled out of `resolve_profile_dir` so the lookup logic can be tested
 /// without faking `HOME` to point at a Chrome data dir.
 fn resolve_in_map(profile: &str, map: &NameMap) -> Option<String> {
-    if map.values().any(|d| d == profile) {
+    if map.contains_key(profile) {
         return Some(profile.to_string());
     }
-    map.get(profile).cloned()
+    let mut matches = map
+        .iter()
+        .filter(|(_, name)| name.as_deref() == Some(profile));
+    let (directory, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(directory.clone())
 }
 
 fn is_profile_directory(profile: &str) -> bool {
@@ -190,8 +199,8 @@ pub fn resolve_profile_dir(
             bundle_id,
             local_state_path(bundle_id).as_deref(),
             &format!(
-                "Cannot resolve profile {profile:?}; launch suppressed. Check the browser's \
-                 current profile name and Reload Config, or use the directory from \
+                "Cannot resolve profile {profile:?}; launch suppressed. Check for a missing or \
+                 duplicate profile name and Reload Config, or use the directory from \
                  chrome://version (Default or Profile N)."
             ),
         );
@@ -219,9 +228,18 @@ mod tests {
     #[test]
     fn parse_name_map_extracts_display_to_dir() {
         let map = parse_name_map(SAMPLE_LOCAL_STATE).unwrap();
-        assert_eq!(map.get("Personal").map(String::as_str), Some("Default"));
-        assert_eq!(map.get("Work").map(String::as_str), Some("Profile 1"));
-        assert_eq!(map.get("Convergint").map(String::as_str), Some("Profile 7"));
+        assert_eq!(
+            map.get("Default").and_then(Option::as_deref),
+            Some("Personal")
+        );
+        assert_eq!(
+            map.get("Profile 1").and_then(Option::as_deref),
+            Some("Work")
+        );
+        assert_eq!(
+            map.get("Profile 7").and_then(Option::as_deref),
+            Some("Convergint")
+        );
         assert_eq!(map.len(), 3);
     }
 
@@ -235,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_name_map_skips_entries_without_name() {
+    fn parse_name_map_keeps_entries_without_name() {
         let map = parse_name_map(
             r#"{"profile":{"info_cache":{
                 "Default": {"user_name": "no display"},
@@ -243,8 +261,30 @@ mod tests {
             }}}"#,
         )
         .unwrap();
-        assert_eq!(map.len(), 1);
-        assert_eq!(map.get("Work").map(String::as_str), Some("Profile 1"));
+        assert_eq!(map.len(), 2);
+        assert_eq!(resolve_in_map("Default", &map).as_deref(), Some("Default"));
+        assert_eq!(resolve_in_map("Work", &map).as_deref(), Some("Profile 1"));
+    }
+
+    #[test]
+    fn duplicate_names_are_not_resolved_but_directories_are() {
+        let map = parse_name_map(
+            r#"{"profile":{"info_cache":{
+            "Profile 1":{"name":"Work"}, "Profile 2":{"name":"Work"},
+            "Custom":{}
+        }}}"#,
+        )
+        .unwrap();
+        assert_eq!(resolve_in_map("Work", &map), None);
+        assert_eq!(
+            resolve_in_map("Profile 1", &map).as_deref(),
+            Some("Profile 1")
+        );
+        assert_eq!(
+            resolve_in_map("Profile 2", &map).as_deref(),
+            Some("Profile 2")
+        );
+        assert_eq!(resolve_in_map("Custom", &map).as_deref(), Some("Custom"));
     }
 
     #[test]

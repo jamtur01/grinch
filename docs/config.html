@@ -214,9 +214,9 @@
       file. <code>Default</code> and <code>Profile N</code> (ASCII digits) are
       explicit directory names and need no profile-file access. Other values must
       match a display name or directory key in <code>Local State</code>. An
-      unreadable file or unknown name records a <code>profile_error</code> and
+      unreadable file, unknown name, or duplicate display name records a <code>profile_error</code> and
       suppresses the launch, including for dynamic targets; Grinch does not try a
-      later rule or the default.</p>
+      later rule or the default. Use the profile directory when display names are duplicated.</p>
     <p>Firefox profiles use names from <code>profiles.ini</code> or the newer
       profile groups. If Grinch can't read <code>profiles.ini</code> or the
       profile groups, a name matches multiple profiles, or a profile directory

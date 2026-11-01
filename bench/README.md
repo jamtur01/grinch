@@ -74,37 +74,37 @@ each reload. The temporary directory can be removed after the test.
 
 ## Results
 
-Representative release-build measurements on Apple Silicon:
+Representative release-build measurements on an Apple M4 Max with Rust 1.95.0 (November 2026):
 
 | Routing workload | ns/op |
 |---|---:|
-| floor | 6.3 |
-| default | 62.8 |
-| strip | 182.2 |
-| bare | 38.4 |
-| domain | 45.5 |
-| regex | 23.2 |
-| wildcard | 34.0 |
-| many-rules | 263.3 |
-| rewrite-then-domain | 242.9 |
-| slow-native | 4368.6 |
-| slow-dynopen | 3726.3 |
-| slow-early | 38.5 |
-| slow-drop | 2201.8 |
-| slow-proto | 3352.3 |
-| slow-slack | 4382.5 |
-| slow-urlonly | 2454.8 |
-| dynamic-default | 2065.7 |
-| dynamic-object | 6510.9 |
-| rewrite-chain | 10479.7 |
-| from | 8.4 |
-| logged | 6304.1 |
+| floor | 6.7 |
+| default | 73.8 |
+| strip | 185.3 |
+| bare | 39.9 |
+| domain | 47.1 |
+| regex | 25.5 |
+| wildcard | 40.5 |
+| many-rules | 253.7 |
+| rewrite-then-domain | 247.1 |
+| slow-native | 4585.2 |
+| slow-dynopen | 3982.8 |
+| slow-early | 39.3 |
+| slow-drop | 2431.1 |
+| slow-proto | 4097.9 |
+| slow-slack | 4799.8 |
+| slow-urlonly | 2768.4 |
+| dynamic-default | 2838.0 |
+| dynamic-object | 8788.1 |
+| rewrite-chain | 12227.3 |
+| from | 9.9 |
+| logged | 6721.9 |
 
 | Config loading | µs/op |
 |---|---:|
-| floor | 458.60 |
-| many-rules | 710.82 |
-| Firefox selectable profile | 560.11 |
+| floor | 468.92 |
+| many-rules | 790.93 |
+| Firefox selectable profile | 569.12 |
 
 ## Including macOS lookups
 
@@ -122,8 +122,8 @@ launches.
 
 | Workload | µs/op |
 |---|---:|
-| URL-only dynamic default | 2.15 |
-| Declarative `from()` with a Finder sender PID | 1.64 |
+| URL-only dynamic default | 2.47 |
+| Declarative `from()` with a Finder sender PID | 1.43 |
 
 For comparisons, use the same machine, compiler, configs, and iteration counts.
 Alternate builds between runs to reduce the effect of changing system load.

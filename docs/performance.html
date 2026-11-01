@@ -65,8 +65,9 @@
 
 <section id="method" aria-labelledby="method-title">
   <h2 id="method-title"><a class="self" href="#method">Method</a></h2>
-  <p>Release builds on Apple Silicon, median of ten runs. The benchmarks measure
-    URL routing only, not launching the browser or loading the page.</p>
+  <p>Release builds on an Apple M4 Max with Rust 1.95.0, median of ten runs
+    (November 2026). The benchmarks measure URL routing only, not launching
+    the browser or loading the page.</p>
   <p>Run <code>bench/run.sh</code> to reproduce them. The workloads are in
     <code>bench/configs/</code>; setup and full results are in the
     <a href="https://github.com/jamtur01/grinch/blob/main/bench/README.md">benchmark notes</a>.
@@ -83,14 +84,14 @@
   <table>
     <thead><tr><th scope="col">Workload</th><th scope="col" class="num">ns per URL</th></tr></thead>
     <tbody>
-      <tr><th scope="row">Floor: no rules, no rewrite</th><td class="num">6.3</td></tr>
-      <tr><th scope="row">Default fallback, no query</th><td class="num">62.8</td></tr>
-      <tr><th scope="row">Default fallback, <code>strip</code> removes a parameter</th><td class="num">182.2</td></tr>
-      <tr><th scope="row">Bare-hostname match (<code>"github.com"</code>)</th><td class="num">38.4</td></tr>
-      <tr><th scope="row"><code>domain()</code> match</th><td class="num">45.5</td></tr>
-      <tr><th scope="row">Regex match</th><td class="num">23.2</td></tr>
-      <tr><th scope="row">Wildcard match (<code>"zoom.us/j/*"</code>)</th><td class="num">34.0</td></tr>
-      <tr><th scope="row">50 bare-hostname rules, the last one matches</th><td class="num">263.3</td></tr>
+      <tr><th scope="row">Floor: no rules, no rewrite</th><td class="num">6.7</td></tr>
+      <tr><th scope="row">Default fallback, no query</th><td class="num">73.8</td></tr>
+      <tr><th scope="row">Default fallback, <code>strip</code> removes a parameter</th><td class="num">185.3</td></tr>
+      <tr><th scope="row">Bare-hostname match (<code>"github.com"</code>)</th><td class="num">39.9</td></tr>
+      <tr><th scope="row"><code>domain()</code> match</th><td class="num">47.1</td></tr>
+      <tr><th scope="row">Regex match</th><td class="num">25.5</td></tr>
+      <tr><th scope="row">Wildcard match (<code>"zoom.us/j/*"</code>)</th><td class="num">40.5</td></tr>
+      <tr><th scope="row">50 bare-hostname rules, the last one matches</th><td class="num">253.7</td></tr>
     </tbody>
   </table>
   </div>
@@ -107,12 +108,12 @@
   <table>
     <thead><tr><th scope="col">Workload</th><th scope="col" class="num">ns per URL</th></tr></thead>
     <tbody>
-      <tr><th scope="row">A native rule matches first; no function runs</th><td class="num">38.5</td></tr>
-      <tr><th scope="row">Drop the URL with <code>() =&gt; null</code> (URL only)</th><td class="num">2,201.8</td></tr>
-      <tr><th scope="row">HTTP to HTTPS by changing the URL (URL only)</th><td class="num">3,352.3</td></tr>
-      <tr><th scope="row"><code>?browser=</code> dynamic <code>open</code> function (URL-only matcher)</th><td class="num">3,726.3</td></tr>
-      <tr><th scope="row">4 function matchers reading <code>ctx.opener</code></th><td class="num">4,368.6</td></tr>
-      <tr><th scope="row">Full Slack web to <code>slack://</code> rewrite</th><td class="num">4,382.5</td></tr>
+      <tr><th scope="row">A native rule matches first; no function runs</th><td class="num">39.3</td></tr>
+      <tr><th scope="row">Drop the URL with <code>() =&gt; null</code> (URL only)</th><td class="num">2,431.1</td></tr>
+      <tr><th scope="row">HTTP to HTTPS by changing the URL (URL only)</th><td class="num">4,097.9</td></tr>
+      <tr><th scope="row"><code>?browser=</code> dynamic <code>open</code> function (URL-only matcher)</th><td class="num">3,982.8</td></tr>
+      <tr><th scope="row">4 function matchers reading <code>ctx.opener</code></th><td class="num">4,585.2</td></tr>
+      <tr><th scope="row">Full Slack web to <code>slack://</code> rewrite</th><td class="num">4,799.8</td></tr>
     </tbody>
   </table>
   </div>

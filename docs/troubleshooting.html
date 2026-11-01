@@ -170,7 +170,7 @@ path:   /Users/alex/.config/grinch.js</span>
     the running app from Spotlight or Finder to get <strong>Open Config</strong>,
     <strong>Reload Config</strong>, <strong>Open Diagnostic Log</strong>, and
     <strong>Check for Updates…</strong> in a window. The window also shows config
-    and profile errors. The update button is disabled when the updater is
+    warnings and profile errors. The update button is disabled when the updater is
     unavailable or can't check right now. Closing the window leaves Grinch
     running.</p>
 </section>
@@ -179,7 +179,7 @@ path:   /Users/alex/.config/grinch.js</span>
   <h2 id="diagnostic-log-title"><a class="self" href="#diagnostic-log">Diagnostic log</a></h2>
   <p>Grinch writes one diagnostic log per launch, at:</p>
 <pre><code>~/Library/Logs/Grinch/Grinch_&lt;timestamp&gt;.log</code></pre>
-  <p>It always records config-load errors, JavaScript exceptions at runtime,
+  <p>It always records config warnings and load errors, JavaScript exceptions at runtime,
     profile errors, and launch failures. <code>logRequests</code> adds a
     <code>resolve</code> event for each routed link. The file is created on the
     first event or when you choose <strong>Open Diagnostic Log</strong>.</p>
@@ -241,7 +241,7 @@ path:   /Users/alex/.config/grinch.js</span>
     <dt><code>date</code>, <code>ts</code></dt>
     <dd>Local date and time with UTC offset; <code>ts</code> is Unix seconds.</dd>
     <dt><code>event</code></dt>
-    <dd><code>resolve</code>, <code>config_error</code>, <code>runtime_js_error</code>,
+    <dd><code>resolve</code>, <code>config_warning</code>, <code>config_error</code>, <code>runtime_js_error</code>,
       <code>profile_error</code>, or <code>launch_error</code>.</dd>
     <dt><code>rewritten</code></dt>
     <dd>True when <code>final</code> differs from <code>url</code>, meaning a
@@ -277,8 +277,8 @@ path:   /Users/alex/.config/grinch.js</span>
       They report unreadable profile files, profile names Grinch couldn't
       resolve, and profiles set on browsers that don't support them.</p>
     <p>Errors that stop a launch affect the menu bar: an unresolved Chromium
-      profile, or a profile on a browser that doesn't support profiles. Firefox
-      warnings stay in the log. The first such error after a config load changes
+      profile, an ambiguous or inaccessible Firefox profile, or a profile on a
+      browser that doesn't support profiles. The first such error after a config load changes
       the icon to <strong>⚠️</strong> and shows <strong>Profile error:</strong>
       in the menu, including errors found when a dynamic target runs on a click.
       Hover over it for the full message. A config error takes precedence in the

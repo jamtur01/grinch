@@ -80,7 +80,9 @@
   <p class="note"><strong>Finishing the sign-in is best effort.</strong> The
     callback has to come back to Grinch to complete the pending session. Grinch
     matches incoming callback URLs against pending requests and returns matching
-    ones to the app that asked. Registering a callback with
+    ones to the app that asked. If a callback matches more than one pending
+    request, Grinch cancels those requests so it doesn't deliver the response to
+    the wrong app. Registering a callback with
     <code>ASWebAuthenticationSession</code> doesn't make Chrome send it to
     Grinch, so apps that rely only on the session callback can keep waiting
     after the sign-in page has done its job.</p>

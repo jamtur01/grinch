@@ -177,7 +177,7 @@
     <code>"Profile N"</code> also identify a profile by its directory name.
     Dynamic functions returning strings don't use the <code>Name:Profile</code>
     shorthand.</p>
-  <p>Other browsers, including Safari, don't support profiles. If a target
+  <p>Grinch doesn't select profiles in other browsers, including Safari. If a target
     names a profile for one of them, whether as an object, with the
     <code>Name:Profile</code> shorthand, or in an object a function returns,
     Grinch doesn't open the link and records a profile error. Remove the
@@ -187,9 +187,10 @@
     <strong>Open Diagnostic Log</strong>, then choose <strong>Reload Config</strong>
     after fixing the name or the browser's profile data. To find the directory
     name, open <code>chrome://version</code> in that profile and look at
-    <strong>Profile Path</strong>. Firefox profile names are passed to Firefox
-    even if Grinch can't verify them; Grinch doesn't resolve Firefox's newer
-    profile-group names.</p>
+    <strong>Profile Path</strong>. For Firefox, use the name shown in its
+    profile picker, or the full profile directory path from
+    <code>about:profiles</code>. Paths beginning with <code>~/</code> are also
+    supported.</p>
   <details>
     <summary>How Grinch resolves browser profiles</summary>
     <p>Chrome display names are looked up in the browser's <code>Local State</code>
@@ -199,12 +200,16 @@
       unreadable file or unknown name records a <code>profile_error</code> and
       suppresses the launch, including for dynamic targets; Grinch does not try a
       later rule or the default. Reloading the config clears cached profile data
-      and read failures. Check file permissions if access is denied; Full Disk
-      Access is a broader workaround, not a requirement for every profile
-      problem.</p>
-    <p>Firefox profiles use names from <code>profiles.ini</code>. Grinch logs
-      unreadable files and unknown names when an inventory is available, but
-      still passes the name to Firefox. A profile on any other browser records
+      and read failures. If macOS denies access, check Grinch's browser access
+      under <strong>System Settings → Privacy &amp; Security → Files &amp; Folders</strong>,
+      then reload the config.</p>
+    <p>Firefox profiles use names from <code>profiles.ini</code> or the newer
+      profile groups. If a name matches multiple profiles, a profile directory
+      is missing, or profile groups cannot be read, Grinch stops the launch;
+      use a full directory path to resolve duplicate names. Legacy profile names
+      take precedence when both systems contain the same name. Unknown names are
+      passed to Firefox with a warning when an inventory is available. A profile
+      on any other browser records
       a <code>profile_error</code> and suppresses the launch. The full supported
       browser-family lists are in
       <a href="https://github.com/jamtur01/grinch/blob/main/src/chromium.rs"><code>src/chromium.rs</code></a> and
@@ -423,7 +428,11 @@ module.exports = {
   <p>The Finicky options <code>urlShorteners</code> and <code>keepRunning</code>
     are accepted but have no effect: shortened links need
     <a href="integrations.html#url-shorteners">expanding outside Grinch</a>, and
-    Grinch always stays running. Unknown keys log a one-line warning.</p>
+    Grinch always stays running. Unknown keys produce a warning in the menu,
+    diagnostic log, and <code>--validate</code> output.</p>
+  <p>Put browser options such as <code>profile</code> and <code>args</code>
+    inside the rule's <code>open</code> object. If these options are placed
+    directly on a rule, Grinch warns and won't open links matching that rule.</p>
 </section>
 
 <nav class="next-page" aria-label="Previous and next pages">

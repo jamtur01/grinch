@@ -167,16 +167,6 @@ fn unwrap_safelink_once(url: &str) -> Option<String> {
 /// exhausted replacement stream, unknown run-length char) so the
 /// rewriter passes the URL through unchanged.
 ///
-/// **ASCII-only scope.** The full Proofpoint decoder handles multi-byte
-/// UTF-8 sequences with a `save_bytes` carry-over for replacement runs
-/// that cross 65-byte segment boundaries; that's only relevant when the
-/// original URL contains non-ASCII chars in the host or path (rare for
-/// browser-router workloads, since URLs are typically ASCII). The
-/// implementation here treats the replacement stream as Unicode chars
-/// and pops one char per byte of run-length; it produces wrong output
-/// for the rare non-ASCII case, which fails `looks_like_url` and falls
-/// through as a pass-through — never the wrong-URL-routed-as-clean
-/// outcome.
 fn unwrap_proofpoint_v3(url: &str) -> Option<String> {
     // Extract `<encoded>` between `__` markers and `<b64-marker>` between
     // `__;` and the first `!`. The trailing `!![tracker]$` is opaque.
@@ -206,10 +196,9 @@ fn unwrap_proofpoint_v3(url: &str) -> Option<String> {
         };
     }
     let replacement_bytes = base64_url_decode(marker_b64)?;
-    let replacement = String::from_utf8(replacement_bytes).ok()?;
-    let mut chars = replacement.chars();
+    let mut replacement = replacement_bytes.iter().copied();
 
-    let mut result = String::with_capacity(encoded.len() + replacement.len());
+    let mut result = Vec::with_capacity(encoded.len() + replacement_bytes.len());
     let bytes = encoded.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -222,21 +211,19 @@ fn unwrap_proofpoint_v3(url: &str) -> Option<String> {
             if i + 2 < bytes.len() && bytes[i + 1] == b'*' {
                 let n = proofpoint_v3_run_length(bytes[i + 2])?;
                 for _ in 0..n {
-                    result.push(chars.next()?);
+                    result.push(replacement.next()?);
                 }
                 i += 3;
             } else {
-                result.push(chars.next()?);
+                result.push(replacement.next()?);
                 i += 1;
             }
         } else {
-            // Non-ASCII bytes in the encoded path are unusual but
-            // technically valid UTF-8. Push them verbatim — they're
-            // already in their final form, no replacement needed.
-            result.push(b as char);
+            result.push(b);
             i += 1;
         }
     }
+    let result = String::from_utf8(result).ok()?;
     if looks_like_url(&result) {
         Some(result)
     } else {

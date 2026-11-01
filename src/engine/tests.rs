@@ -422,6 +422,26 @@ fn proofpoint_v3_unwraps_run_length_marker() {
 }
 
 #[test]
+fn proofpoint_v3_preserves_unicode_and_rejects_invalid_utf8() {
+    for (wrapped, expected) in [
+        (
+            "https://urldefense.com/v3/__https://example.com/café*__;Lw!!tag$",
+            Some("https://example.com/café/"),
+        ),
+        (
+            "https://urldefense.com/v3/__https://example.com/caf**A__;w6k!!tag$",
+            Some("https://example.com/café"),
+        ),
+        (
+            "https://urldefense.com/v3/__https://example.com/*__;_w!!tag$",
+            None,
+        ),
+    ] {
+        assert_eq!(unwrap_safelink(wrapped).as_deref(), expected);
+    }
+}
+
+#[test]
 fn proofpoint_v3_unwraps_urldefense_us_government_host() {
     // FedRAMP tenant uses the same v3 format on `urldefense.us`.
     // Must dispatch through the same decoder.

@@ -578,9 +578,9 @@ var finicky = {
 
 // ---------- Config field checks ----------
 // Keep these known keys in sync with the Rust fallback checks.
-var __grinchUnknownRuleKeys = (function(define) {
+var __grinchUnknownRuleKeys = (function(define, apply, global) {
   return function(v) {
-    var keysFn = Object.keys, keys = keysFn(v), out = [];
+    var keys = apply(Object.keys, global, [v]), out = [];
     for (var i = 0, n = keys.length >>> 0; i < n; i++) {
       var k = keys[i];
       if (k !== "match" && k !== "open" && k !== "browser" && k !== "url" && k !== "name")
@@ -588,10 +588,10 @@ var __grinchUnknownRuleKeys = (function(define) {
     }
     return out;
   };
-})(Object.defineProperty);
-var __grinchUnknownBrowserKeys = (function(define) {
+})(Object.defineProperty, Reflect.apply, this);
+var __grinchUnknownBrowserKeys = (function(define, apply, global) {
   return function(v) {
-    var keysFn = Object.keys, keys = keysFn(v), out = [];
+    var keys = apply(Object.keys, global, [v]), out = [];
     for (var i = 0, n = keys.length >>> 0; i < n; i++) {
       var k = keys[i];
       if (k !== "id" && k !== "bundleId" && k !== "name" && k !== "appType" &&
@@ -601,7 +601,7 @@ var __grinchUnknownBrowserKeys = (function(define) {
     }
     return out;
   };
-})(Object.defineProperty);
+})(Object.defineProperty, Reflect.apply, this);
 
 // ---------- CommonJS scaffolding ----------
 var __grinchModule = { exports: {} };

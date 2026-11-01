@@ -1043,6 +1043,23 @@ fn config_checks_preserve_enumeration_behavior() {
 }
 
 #[test]
+fn config_key_check_matches_strict_object_keys_receiver() {
+    let ctx: Retained<JSContext> = unsafe { JSContext::new() };
+    let prelude = NSString::from_str(JS_PRELUDE);
+    unsafe { ctx.evaluateScript(Some(&prelude)) }.unwrap();
+    let checks = crate::loader::KeyCheckers::capture(&ctx);
+    let script = NSString::from_str(
+        r#"Object.keys = function(o) { "use strict"; return this === undefined ? [] : ["profile"]; };
+           ({ match: "example.com", open: "com.google.Chrome", profile: "Work" });"#,
+    );
+    let rule = unsafe { ctx.evaluateScript(Some(&script)) }.unwrap();
+    assert_eq!(
+        object_keys(&rule),
+        unknown_config_keys(&rule, checks.rule.as_deref())
+    );
+}
+
+#[test]
 fn unknown_config_keys_do_not_error() {
     // Unknown option and top-level keys log a stderr warning but must not
     // break engine init. A root-level `hideIcon` is not honoured — it only

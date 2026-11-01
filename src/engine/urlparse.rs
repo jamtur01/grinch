@@ -61,9 +61,31 @@ pub(crate) fn url_after_scheme(url: &str) -> Option<&str> {
 pub(crate) fn quick_host(url: &str) -> Option<Cow<'_, str>> {
     // Opaque URIs can contain nested URLs; only this URI's own scheme
     // can introduce an authority. A later `://` belongs to its payload.
-    let mut s = url_after_scheme(url)?.strip_prefix("//")?;
-    if let Some(idx) = s.find(['/', '?', '#']) {
-        s = &s[..idx];
+    let rest = url_after_scheme(url)?;
+    let special = || {
+        let scheme = &url[..url.len() - rest.len() - 1];
+        ["http", "https", "ftp", "file", "ws", "wss"]
+            .iter()
+            .any(|candidate| scheme.eq_ignore_ascii_case(candidate))
+    };
+    let mut s = if let Some(s) = rest.strip_prefix("//") {
+        s
+    } else if rest.len() >= 2
+        && rest.as_bytes()[..2]
+            .iter()
+            .all(|b| *b == b'/' || *b == b'\\')
+        && special()
+    {
+        &rest[2..]
+    } else {
+        return None;
+    };
+    if let Some(idx) = s.find(['/', '?', '#', '\\']) {
+        if s.as_bytes()[idx] != b'\\' || special() {
+            s = &s[..idx];
+        } else if let Some(idx) = s.find(['/', '?', '#']) {
+            s = &s[..idx];
+        }
     }
     if let Some(at) = s.rfind('@') {
         s = &s[at + 1..];

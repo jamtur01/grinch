@@ -170,12 +170,29 @@ fn url_hostname_excludes_query_userinfo_and_normalizes_case() {
         "com.apple.Safari"
     );
     assert_eq!(
+        resolve(&engine, r"https://evil.com\@gitlab.com/").0,
+        "com.apple.Safari"
+    );
+    assert_eq!(
+        resolve(&engine, r"myapp://evil.com\@gitlab.com/").0,
+        "com.google.Chrome"
+    );
+    assert_eq!(
         resolve(&engine, "https://user:pass@GitLab.COM/path").0,
         "com.google.Chrome"
     );
     assert_eq!(
         resolve(&engine, "https://user@evil.com@GitLab.COM/path").0,
         "com.google.Chrome"
+    );
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: domain("gitlab.com"), open: "com.google.Chrome" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, r"https://evil.com\@gitlab.com/").0,
+        "com.apple.Safari"
     );
 }
 

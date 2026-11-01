@@ -31,6 +31,12 @@ pub const JS_PRELUDE: &str = r##"
   var URL_RE = /^([a-z][a-z0-9+.-]*:)(?:\/\/(?:([^:\/?#]*)(?::([^\/?#]*))?@)?(\[[^\]]+\]|[^:@\/?#]*)(?::(\d+))?)?([^?#]*)(\?[^#]*)?(#.*)?$/i;
 
   function parseInto(self, href) {
+    href = String(href);
+    if (href.indexOf("\\") >= 0 && /^(?:ftp|file|http|https|ws|wss):/i.test(href)) {
+      var boundary = href.search(/[?#]/);
+      if (boundary < 0) boundary = href.length;
+      href = href.slice(0, boundary).replace(/\\/g, "/") + href.slice(boundary);
+    }
     var m = URL_RE.exec(href);
     if (!m) throw new TypeError("Invalid URL: " + href);
     self.protocol = m[1];

@@ -118,10 +118,7 @@ define_class!(
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            let lock = directory.join("startup-lock");
-            std::thread::spawn(move || {
-                objc2::rc::autoreleasepool(|_| workspace::terminate_duplicate_instances_at(&lock));
-            });
+            workspace::terminate_duplicate_instances_at(&directory.join("startup-lock"));
             std::fs::write(directory.join(format!("passed-{pid}")), "passed").unwrap();
         }
     }

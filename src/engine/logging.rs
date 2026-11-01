@@ -4,6 +4,15 @@
 use super::*;
 use std::sync::Mutex;
 
+pub(crate) fn profile_access_advice(error: &std::io::Error) -> &'static str {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        "macOS may be blocking access; check Privacy & Security > Files & Folders > Grinch, \
+         enable access to this browser, then Reload Config."
+    } else {
+        "Open the browser once, check the profile-data path and file access, then Reload Config."
+    }
+}
+
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LogFormat {
     #[default]
@@ -681,6 +690,17 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
 #[cfg(test)]
 mod tests {
     use crate::engine::logging::rename_rotated_log;
+
+    #[test]
+    fn profile_access_advice_distinguishes_denial_from_missing_files() {
+        for code in [libc::EACCES, libc::EPERM] {
+            let message = super::profile_access_advice(&std::io::Error::from_raw_os_error(code));
+            assert!(message.contains("Files & Folders"));
+        }
+        let missing =
+            super::profile_access_advice(&std::io::Error::from_raw_os_error(libc::ENOENT));
+        assert!(!missing.contains("Files & Folders"));
+    }
 
     #[test]
     fn format_switch_retries_after_directory_failure() {

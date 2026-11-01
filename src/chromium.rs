@@ -101,10 +101,9 @@ fn load_name_map(bundle_id: &str, diagnostics: &DiagnosticLog) -> NameMap {
                 bundle_id,
                 Some(&path),
                 &format!(
-                    "Cannot read profile mapping at {}: {error}. Open the browser once, \
-                     check the profile-data path and file access, then Reload Config. \
+                    "Cannot read profile mapping at {}: {error}. {} \
                      Alternatively, use the directory from chrome://version (Default or Profile N).",
-                    path.display()
+                    path.display(), crate::engine::profile_access_advice(&error)
                 ),
             );
             NameMap::new()

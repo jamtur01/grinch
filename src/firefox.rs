@@ -94,10 +94,9 @@ fn load_profile_names(bundle_id: &str, diagnostics: &DiagnosticLog) -> HashSet<S
                 bundle_id,
                 Some(&path),
                 &format!(
-                    "Cannot read {}: {error}; passing profile names through to Firefox. \
-                     To restore validation, open the browser once, check the profile-data \
-                     path and file access, then Reload Config.",
-                    path.display()
+                    "Cannot read {}: {error}; passing profile names through to Firefox. {}",
+                    path.display(),
+                    crate::engine::profile_access_advice(&error)
                 ),
             );
             HashSet::new()

@@ -347,12 +347,13 @@ rules:  1</span></code></pre>
   <table class="stack">
     <thead><tr><th scope="col">Flag</th><th scope="col">Effect</th></tr></thead>
     <tbody>
-      <tr><th scope="row"><code>--version</code></th><td>Print the version.</td></tr>
+      <tr><th scope="row"><code>--version</code>, <code>-V</code></th><td>Print the version.</td></tr>
       <tr><th scope="row"><code>--test &lt;url&gt;</code></th><td>Run a URL through the rules without opening it. <code>grinch:</code> URLs are unwrapped, so <code>--test grinch:tel:+15551234567</code> tests routing for <code>tel:+15551234567</code>.</td></tr>
       <tr><th scope="row"><code>--list-rules</code></th><td>Print rule indices, labels, and targets.</td></tr>
       <tr><th scope="row"><code>--list-browsers</code></th><td>List every app registered to open <code>https://</code> URLs: bundle ID and display name.</td></tr>
       <tr><th scope="row"><code>--validate</code></th><td>Load the config and report whether it parses. Exits 0 on success, including when it prints warnings, and 1 on a load error, printing the message and the path it read. Use it in editor save hooks and CI.</td></tr>
       <tr><th scope="row"><code>--bench N &lt;url&gt;</code></th><td>Resolve a URL N times in-process and report timing.</td></tr>
+      <tr><th scope="row"><code>--bench-init [N]</code></th><td>Load the config N times and report timing. Defaults to 1,000 loads.</td></tr>
     </tbody>
   </table>
   </div>

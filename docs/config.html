@@ -73,9 +73,10 @@
     in order, and then checks <a href="#rules">rules</a> from top to bottom. The
     first matching rule selects a <a href="#browser-targets">browser or app</a>.
     If none matches, <code>default</code> selects the destination. A rule or the
-    default can also suppress a URL. A dynamic <code>open</code> function that
+    default can also suppress a URL. A rule's <code>open</code> function that
     returns <code>null</code> or <code>undefined</code> falls through to the next
-    rule.</p>
+    rule. If a <code>default</code> function returns either value, Grinch opens
+    nothing.</p>
   <p>A config exports one object:</p>
   <figure class="file">
     <figcaption>~/.config/grinch.js</figcaption>
@@ -375,8 +376,10 @@ module.exports = {
   },
   modifiers: {
     shift: false, option: false, command: false, control: false,
+    capsLock: false, fn: false, function: false,
   },
 }</code></pre>
+  <p><code>fn</code> and <code>function</code> both represent the Fn/Globe key.</p>
   <p><code>ctx.url</code> is the URL Grinch received; it doesn't reflect
     rewrites. The first argument, a URL instance, is the current URL and is
     rebuilt for each function call.</p>

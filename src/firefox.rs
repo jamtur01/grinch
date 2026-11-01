@@ -102,6 +102,7 @@ fn read_group_store(path: &Path, root: &Path) -> Result<Vec<(String, PathBuf)>, 
     std::fs::File::open(path)
         .map_err(|error| format!("{error}. {}", crate::engine::profile_access_advice(&error)))?;
     sqlite::profiles(path, root)
+        .map_err(|error| format!("{error}. Check the profile group and Reload Config."))
 }
 
 fn load_group_profiles(bundle_id: &str, diagnostics: &DiagnosticLog) -> GroupProfiles {
@@ -184,9 +185,7 @@ fn load_group_profiles(bundle_id: &str, diagnostics: &DiagnosticLog) -> GroupPro
                 diagnostics.record_profile_warning(
                     bundle_id,
                     Some(&path),
-                    &format!(
-                        "Cannot read Firefox profile group: {error}; check access and Reload Config"
-                    ),
+                    &format!("Cannot read Firefox profile group: {error}"),
                 );
             }
         }

@@ -310,7 +310,7 @@ pub(crate) fn compile_matcher(
         };
         if is_host_port_pattern(&s) && !s.contains(['*', '/', '?', '#']) {
             let pattern = format!(
-                "^(?:https?:|ftp:)?(?://)?{}(?:[/?#].*)?$",
+                "^(?i-u:https?:|ftp:)?(?://)?{}(?:[/?#].*)?$",
                 regex::escape(&s.to_ascii_lowercase())
             );
             return Ok(Regex::new(&pattern).ok().map(Matcher::Wildcard));
@@ -485,9 +485,12 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
     let starts_with_protocol = has_protocol;
     if !starts_with_protocol {
         if !pattern.starts_with('*') {
-            work = format!("(?:https?:|ftp:|mailto:|file:|tel:|sms:|data:)?(?://)?{work}");
+            work = format!("(?i-u:https?:|ftp:|mailto:|file:|tel:|sms:|data:)?(?://)?{work}");
         }
     } else {
+        if let Some(index) = work.find(':') {
+            work = format!("(?i-u:{}){}", &work[..index], &work[index..]);
+        }
         work = work.replace('/', "\\/");
         if work.ends_with("\\/\\/") {
             work.push_str(".*");

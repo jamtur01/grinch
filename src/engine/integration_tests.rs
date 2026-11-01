@@ -287,6 +287,10 @@ fn hostname_and_port_patterns_match_urls_with_that_port() {
         "org.mozilla.firefox"
     );
     assert_eq!(
+        resolve(&engine, "HTTP://localhost:3000/path").0,
+        "org.mozilla.firefox"
+    );
+    assert_eq!(
         resolve(&engine, "http://localhost:30001/").0,
         "com.apple.Safari"
     );
@@ -302,6 +306,14 @@ fn wildcard_normalizes_hostname_but_not_path() {
     assert_eq!(
         resolve(&engine, "https://GitHub.COM/Path/item").0,
         "com.google.Chrome"
+    );
+    assert_eq!(
+        resolve(&engine, "HTTPS://github.com/Path/item").0,
+        "com.google.Chrome"
+    );
+    assert_eq!(
+        resolve(&engine, "HTTPS://github.com/path/item").0,
+        "com.apple.Safari"
     );
     assert_eq!(
         resolve(&engine, "https://GitHub.COM/path/item").0,
@@ -342,6 +354,10 @@ fn wildcard_normalizes_hostname_but_not_path() {
         if pattern.starts_with("https:") {
             assert_eq!(
                 resolve(&engine, "https://example.net/Path/item").0,
+                "com.google.Chrome"
+            );
+            assert_eq!(
+                resolve(&engine, "HTTPS://example.net/Path/item").0,
                 "com.google.Chrome"
             );
         }

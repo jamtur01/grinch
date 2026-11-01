@@ -362,7 +362,7 @@ figure.term pre {
   padding: 0;
   letter-spacing: 0;
 }
-.toc ul {
+.toc .toc-list {
   display: inline;
   list-style: none;
   margin: 0;
@@ -370,7 +370,7 @@ figure.term pre {
 }
 .toc li {
   display: inline-block;
-  margin: 0 0.9rem 0 0 !important;
+  margin: 0 0.9rem 0 0;
 }
 
 /* main sections */
@@ -403,13 +403,6 @@ h3 {
   line-height: 1.35;
   margin: 2.25rem 0 0.75rem;
   color: var(--fg);
-  font-weight: 600;
-}
-
-h4 {
-  font-size: 1rem;
-  margin: 1.75rem 0 0.5rem;
-  color: var(--fg-muted);
   font-weight: 600;
 }
 
@@ -501,7 +494,7 @@ ol.steps > li > h2::before {
 
 .doc-index li {
   border-bottom: 1px solid var(--border);
-  margin: 0 !important;
+  margin: 0;
 }
 
 .doc-index a {

@@ -363,7 +363,7 @@ pub fn terminate_duplicate_instances() -> usize {
     let lock_dir = std::path::PathBuf::from(format!("/tmp/grinch-startup-{}", unsafe {
         libc::geteuid()
     }));
-    let _lock = match lock_duplicate_cleanup(&lock_dir) {
+    let _lock = match lock_duplicate_cleanup(&lock_dir, std::time::Duration::from_secs(3)) {
         Ok(lock) => lock,
         Err(error) => {
             eprintln!("grinch: cannot coordinate duplicate cleanup: {error}");
@@ -436,7 +436,10 @@ pub fn terminate_duplicate_instances() -> usize {
     duplicates.len()
 }
 
-fn lock_duplicate_cleanup(directory: &std::path::Path) -> std::io::Result<std::fs::File> {
+fn lock_duplicate_cleanup(
+    directory: &std::path::Path,
+    timeout: std::time::Duration,
+) -> std::io::Result<std::fs::File> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 
@@ -461,13 +464,24 @@ fn lock_duplicate_cleanup(directory: &std::path::Path) -> std::io::Result<std::f
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(directory.join("startup.lock"))?;
+    let deadline = std::time::Instant::now() + timeout;
     loop {
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
             return Ok(file);
         }
         let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::Interrupted {
-            return Err(error);
+        match error.kind() {
+            std::io::ErrorKind::Interrupted => {}
+            std::io::ErrorKind::WouldBlock if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            std::io::ErrorKind::WouldBlock => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "startup lock timed out",
+                ));
+            }
+            _ => return Err(error),
         }
     }
 }
@@ -1090,13 +1104,20 @@ mod tests {
         if let Some(directory) = std::env::var_os(CHILD_DIR) {
             let directory = std::path::PathBuf::from(directory);
             std::fs::write(directory.join("started"), "started").unwrap();
-            let _lock = lock_duplicate_cleanup(&directory).unwrap();
+            let _lock =
+                lock_duplicate_cleanup(&directory, std::time::Duration::from_secs(3)).unwrap();
             std::fs::write(directory.join("acquired"), "acquired").unwrap();
             return;
         }
         let directory =
             std::env::temp_dir().join(format!("grinch-startup-lock-{}", std::process::id()));
-        let first = lock_duplicate_cleanup(&directory).unwrap();
+        let first = lock_duplicate_cleanup(&directory, std::time::Duration::from_secs(3)).unwrap();
+        assert_eq!(
+            lock_duplicate_cleanup(&directory, std::time::Duration::from_millis(50))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::TimedOut
+        );
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",

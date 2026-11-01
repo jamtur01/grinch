@@ -219,7 +219,7 @@ module.exports = {
     { match: /github\.com\/(paymentology|tutuka)\//i, open: browsers.work },
     { match: /\.(figma|notion)\.(com|so)/i,           open: browsers.work },
 
-    // Wildcard string with `*`. Implicitly anchored; `(?:https?:)?(?://)?` is
+    // Wildcard string with `*`. Implicitly anchored; the optional common-scheme prefix is
     // prepended unless the pattern starts with `*` or a protocol prefix.
     { match: "zoom.us/j/*", open: apps.zoom },
     { match: "*.zoom.us/j/*", open: apps.zoom },

@@ -46,7 +46,7 @@ cd grinch
 make run
 ```
 
-The default source build doesn't include automatic updates. Pass `UNIVERSAL=1`
+Ad-hoc signed source builds don't include automatic updates. Pass `UNIVERSAL=1`
 to `make build` to produce a fat binary locally (needs both rustup targets:
 `rustup target add aarch64-apple-darwin x86_64-apple-darwin`).
 
@@ -95,7 +95,8 @@ reload fails, Grinch keeps the last config that loaded.
 - [Moving from Finicky](https://jamtur01.github.io/grinch/finicky.html): what
   carries over and what to change.
 - [Performance](https://jamtur01.github.io/grinch/performance.html): routing
-  benchmarks and memory measurements, reproducible with `bench/run.sh`.
+  benchmarks and historical memory measurements. Run `bench/run.sh` to repeat
+  the routing benchmarks.
 
 [`examples/grinch.example.js`](examples/grinch.example.js) is a feature
 reference config.

@@ -127,8 +127,6 @@ Args:    --profile-directory=Default</span></code></pre>
     reload fails, the menu shows the error and Grinch keeps the last config that
     loaded. <code>--validate</code> reports the same errors and warnings in a
     terminal and exits 1 when the config doesn't load:</p>
-  <p>From a terminal, <code>kill -HUP &lt;pid&gt;</code> also reloads the running
-    app's config. <code>Grinch --version</code> (or <code>-V</code>) shows its version.</p>
   <figure class="term">
     <figcaption>Terminal</figcaption>
 <pre><code><span class="cmd">Grinch --validate</span>
@@ -140,6 +138,8 @@ path:   /Users/alex/.config/grinch.js</span>
 <span class="cmd">echo $?</span>
 <span class="out">1</span></code></pre>
   </figure>
+  <p>From a terminal, <code>kill -HUP &lt;pid&gt;</code> also reloads the running
+    app's config. <code>Grinch --version</code> (or <code>-V</code>) shows its version.</p>
   <p>Warnings don't fail validation. They print before the result, which
     changes to <code>config OK with warnings</code>, and the exit status stays
     0:</p>
@@ -348,8 +348,8 @@ rules:  1</span></code></pre>
     <thead><tr><th scope="col">Flag</th><th scope="col">Effect</th></tr></thead>
     <tbody>
       <tr><th scope="row"><code>--version</code>, <code>-V</code></th><td>Print the version.</td></tr>
-      <tr><th scope="row"><code>--test &lt;url&gt;</code></th><td>Run a URL through the rules without opening it. <code>grinch:</code> URLs are unwrapped, so <code>--test grinch:tel:+15551234567</code> tests routing for <code>tel:+15551234567</code>.</td></tr>
-      <tr><th scope="row"><code>--list-rules</code></th><td>Print rule indices, labels, and targets.</td></tr>
+      <tr><th scope="row"><code>--test &lt;url&gt;</code></th><td>Run a URL through the rules without opening it. <code>grinch:</code> URLs are unwrapped, so <code>--test grinch:tel:+15551234567</code> tests routing for <code>tel:+15551234567</code>. Exits 0 when the config loads, 1 if loading fails, or 2 for a missing URL or non-UTF-8 argument.</td></tr>
+      <tr><th scope="row"><code>--list-rules</code></th><td>Print rule indices, labels, and targets. Exits 0 when the config loads, 1 if loading fails, or 2 for a non-UTF-8 argument.</td></tr>
       <tr><th scope="row"><code>--list-browsers</code></th><td>List every app registered to open <code>https://</code> URLs: bundle ID and display name.</td></tr>
       <tr><th scope="row"><code>--validate</code></th><td>Load the config and report whether it parses. Exits 0 on success, including when it prints warnings, and 1 on a load error, printing the message and the path it read. Use it in editor save hooks and CI.</td></tr>
       <tr><th scope="row"><code>--bench N &lt;url&gt;</code></th><td>Resolve a URL N times in-process and report timing.</td></tr>

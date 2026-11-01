@@ -638,6 +638,7 @@ impl Delegate {
     fn load_engine(&self) -> Result<Engine, String> {
         let loaded = load_config(Rc::clone(&self.ivars().diagnostics))?;
         let path = loaded.path.clone();
+        *self.ivars().config_path.borrow_mut() = Some(path.clone());
         let diagnostics = Rc::clone(&loaded.diagnostics);
         Engine::new(loaded).map_err(|error| {
             let message = format!("engine init failed: {error}");

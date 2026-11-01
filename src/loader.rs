@@ -57,7 +57,10 @@ impl KeyCheckers {
 /// regardless of whether evaluation succeeds. Used by the menu's "Open
 /// Config" action so the user can fix a broken config from inside the app.
 pub fn find_config_path() -> Option<PathBuf> {
-    config_paths().into_iter().find(|p| p.is_file())
+    config_paths().into_iter().find(|p| match p.metadata() {
+        Ok(metadata) => metadata.is_file(),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    })
 }
 
 pub fn load_config(diagnostics: Rc<DiagnosticLog>) -> Result<LoadedConfig, String> {
@@ -239,10 +242,17 @@ enum ReadOutcome {
 }
 
 fn read_first_existing(paths: &[PathBuf]) -> ReadOutcome {
-    let mut first_unreadable: Option<(PathBuf, std::io::Error)> = None;
     for path in paths {
-        if !path.is_file() {
-            continue;
+        match path.metadata() {
+            Ok(metadata) if !metadata.is_file() => continue,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return ReadOutcome::Unreadable {
+                    path: path.clone(),
+                    error,
+                };
+            }
         }
         match std::fs::read_to_string(path) {
             Ok(source) => {
@@ -252,22 +262,34 @@ fn read_first_existing(paths: &[PathBuf]) -> ReadOutcome {
                 };
             }
             Err(error) => {
-                if first_unreadable.is_none() {
-                    first_unreadable = Some((path.clone(), error));
-                }
+                return ReadOutcome::Unreadable {
+                    path: path.clone(),
+                    error,
+                };
             }
         }
     }
-    if let Some((path, error)) = first_unreadable {
-        ReadOutcome::Unreadable { path, error }
-    } else {
-        ReadOutcome::Missing
-    }
+    ReadOutcome::Missing
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unreadable_first_config_does_not_fall_back() {
+        let root = test_path("unreadable");
+        std::fs::create_dir_all(&root).unwrap();
+        let first = root.join("first.js");
+        let second = root.join("second.js");
+        std::fs::write(&first, [0xff]).unwrap();
+        std::fs::write(&second, "module.exports = {};").unwrap();
+        match read_first_existing(&[first.clone(), second]) {
+            ReadOutcome::Unreadable { path, .. } => assert_eq!(path, first),
+            _ => panic!("expected the first config to fail"),
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn test_path(name: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};

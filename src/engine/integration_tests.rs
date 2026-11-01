@@ -3363,7 +3363,12 @@ fn check_profile_read_failures(tmp: &std::path::Path) {
         Rc::clone(&diagnostics),
     );
     assert!(resolve(&engine, "https://x/").0.is_empty());
-    assert!(diagnostics.profile_error().is_some());
+    let error = diagnostics.profile_error().unwrap();
+    assert!(
+        error.contains("Firefox profile data is incomplete"),
+        "{error}"
+    );
+    assert!(!error.contains("profile groups"), "{error}");
     check_blocked_profile_routes(&diagnostics);
     let events = read_log_events(&log);
     for path in [&chrome, &firefox] {

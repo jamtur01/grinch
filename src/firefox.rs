@@ -240,7 +240,12 @@ pub fn resolve_profile_args(
         .entry(bundle_id.to_string())
         .or_insert_with(|| load_group_profiles(bundle_id, diagnostics));
     if group.incomplete {
-        diagnostics.record_profile_error(bundle_id, None, "Cannot safely select Firefox profile because profile groups could not be read; check access and Reload Config");
+        diagnostics.record_profile_error(
+            bundle_id,
+            None,
+            "Cannot safely select Firefox profile because Firefox profile data is incomplete; \
+             check the diagnostic log and Reload Config",
+        );
         return Err(());
     }
     let paths = group.profiles.get(profile).cloned();

@@ -363,13 +363,18 @@ pub fn terminate_duplicate_instances() -> usize {
     let lock_dir = std::path::PathBuf::from(format!("/tmp/grinch-startup-{}", unsafe {
         libc::geteuid()
     }));
-    let _lock = match lock_duplicate_cleanup(&lock_dir, std::time::Duration::from_secs(3)) {
+    let (_lock, waited) = match lock_duplicate_cleanup(&lock_dir, std::time::Duration::from_secs(3))
+    {
         Ok(lock) => lock,
         Err(error) => {
             eprintln!("grinch: cannot coordinate duplicate cleanup: {error}");
             return 0;
         }
     };
+    if waited {
+        // The preceding cleanup may already have requested this process to quit.
+        return 0;
+    }
     let self_pid = NSRunningApplication::currentApplication().processIdentifier();
     let instances = NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id);
 
@@ -433,13 +438,17 @@ pub fn terminate_duplicate_instances() -> usize {
             );
         }
     }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline && duplicates.iter().any(|app| !app.isTerminated()) {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
     duplicates.len()
 }
 
 fn lock_duplicate_cleanup(
     directory: &std::path::Path,
     timeout: std::time::Duration,
-) -> std::io::Result<std::fs::File> {
+) -> std::io::Result<(std::fs::File, bool)> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 
@@ -465,14 +474,16 @@ fn lock_duplicate_cleanup(
         .custom_flags(libc::O_NOFOLLOW)
         .open(directory.join("startup.lock"))?;
     let deadline = std::time::Instant::now() + timeout;
+    let mut waited = false;
     loop {
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-            return Ok(file);
+            return Ok((file, waited));
         }
         let error = std::io::Error::last_os_error();
         match error.kind() {
             std::io::ErrorKind::Interrupted => {}
             std::io::ErrorKind::WouldBlock if std::time::Instant::now() < deadline => {
+                waited = true;
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
             std::io::ErrorKind::WouldBlock => {
@@ -1104,14 +1115,16 @@ mod tests {
         if let Some(directory) = std::env::var_os(CHILD_DIR) {
             let directory = std::path::PathBuf::from(directory);
             std::fs::write(directory.join("started"), "started").unwrap();
-            let _lock =
+            let (_lock, waited) =
                 lock_duplicate_cleanup(&directory, std::time::Duration::from_secs(3)).unwrap();
+            assert!(waited);
             std::fs::write(directory.join("acquired"), "acquired").unwrap();
             return;
         }
         let directory =
             std::env::temp_dir().join(format!("grinch-startup-lock-{}", std::process::id()));
         let first = lock_duplicate_cleanup(&directory, std::time::Duration::from_secs(3)).unwrap();
+        assert!(!first.1);
         assert_eq!(
             lock_duplicate_cleanup(&directory, std::time::Duration::from_millis(50))
                 .unwrap_err()

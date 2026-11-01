@@ -532,6 +532,10 @@ fn verify_actions_window(mtm: MainThreadMarker) {
     let _: () = unsafe { msg_send![&*reload, performClick: None::<&objc2::runtime::AnyObject>] };
     let value: Retained<NSString> = unsafe { msg_send![&*status, stringValue] };
     assert!(value.to_string().contains("Config error:"));
+    std::fs::write(&config, "module.exports = { default: null, rules: [{ match: 'example.com', browser: 'com.google.Chrome', profile: 'Work' }] };").unwrap();
+    let _: () = unsafe { msg_send![&*reload, performClick: None::<&objc2::runtime::AnyObject>] };
+    let value: Retained<NSString> = unsafe { msg_send![&*status, stringValue] };
+    assert!(value.to_string().contains("Config warning:"));
     std::fs::write(&config, "module.exports = { default: null };").unwrap();
     let _: () = unsafe { msg_send![&*reload, performClick: None::<&objc2::runtime::AnyObject>] };
     let value: Retained<NSString> = unsafe { msg_send![&*status, stringValue] };

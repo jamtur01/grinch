@@ -829,9 +829,14 @@ impl Delegate {
             }
             return 1;
         }
+        let result = if self.ivars().diagnostics.config_warning().is_some() {
+            "config OK with warnings"
+        } else {
+            "config OK"
+        };
         match path {
-            Some(path) => println!("grinch: config OK — {path}"),
-            None => println!("grinch: config OK (no path resolved)"),
+            Some(path) => println!("grinch: {result} — {path}"),
+            None => println!("grinch: {result} (no path resolved)"),
         }
         let engine_ref = self.ivars().engine.borrow();
         if let Some(engine) = engine_ref.as_ref() {

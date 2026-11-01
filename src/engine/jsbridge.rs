@@ -577,15 +577,14 @@ pub(crate) fn is_marker(v: &JSValue, ty: &str) -> bool {
     js_to_string(&t).as_deref() == Some(ty)
 }
 
-/// Iterate the keys of a JS object as Rust strings, returning (key, value).
+/// Return the keys of a JS object as Rust strings.
 ///
 /// Uses `Object.keys(v)` rather than `v.toDictionary()`. The dictionary
 /// path recursively converts every value to its NS* equivalent, which
 /// stack-overflows on a circular config like `var x = {}; x.self = x;
 /// module.exports = { browsers: x };`. `Object.keys` returns only the
 /// own enumerable property *names* — no value walk — so circular values
-/// are safe; we re-fetch each value via subscript afterwards (one JSC
-/// bridge crossing per key, fine because this is engine-init only).
+/// are safe without evaluating property values.
 pub(crate) fn object_keys(v: &JSValue) -> Vec<String> {
     if !unsafe { v.isObject() } {
         return vec![];

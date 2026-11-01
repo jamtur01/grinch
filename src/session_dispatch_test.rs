@@ -799,7 +799,9 @@ struct DuplicateProbes {
 impl Drop for DuplicateProbes {
     fn drop(&mut self) {
         for child in &mut self.children {
-            let _ = child.kill();
+            if child.try_wait().is_ok_and(|status| status.is_none()) {
+                let _ = child.kill();
+            }
         }
         for child in &mut self.children {
             let _ = child.wait();
@@ -863,6 +865,7 @@ fn verify_simultaneous_duplicate_startup() {
         std::thread::sleep(Duration::from_millis(25));
     }
     std::fs::write(probes.directory.join("start"), "start").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let mut alive = Vec::new();
         for child in &mut probes.children {

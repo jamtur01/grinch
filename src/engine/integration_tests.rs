@@ -260,6 +260,36 @@ fn hostname_and_port_patterns_match_urls_with_that_port() {
 }
 
 #[test]
+fn wildcard_normalizes_hostname_but_not_path() {
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: "github.com/Path/*", open: "com.google.Chrome" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "https://GitHub.COM/Path/item").0,
+        "com.google.Chrome"
+    );
+    assert_eq!(
+        resolve(&engine, "https://GitHub.COM/path/item").0,
+        "com.apple.Safari"
+    );
+    assert_eq!(
+        resolve(&engine, "https://evil.example/?@github.com/Path/item").0,
+        "com.apple.Safari"
+    );
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: "mailto:*GitHub.COM*", open: "com.google.Chrome" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "mailto:test@example.com?body=https://GitHub.COM/").0,
+        "com.google.Chrome"
+    );
+}
+
+#[test]
 fn default_engine_fixture_isolates_runtime_error_logs() {
     let home = unique_tmp("fixture-log-home");
     with_home(&home, || {

@@ -3,6 +3,36 @@
 // modules' items that `engine` re-exports via `pub(crate) use`.
 use super::*;
 
+pub(crate) fn wildcard_matches(pattern: &regex::Regex, url: &str) -> bool {
+    if !url.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return pattern.is_match(url);
+    }
+    let Some(rest) = url_after_scheme(url).and_then(|rest| rest.strip_prefix("//")) else {
+        return pattern.is_match(url);
+    };
+    let start = url.len() - rest.len();
+    let end = url[start..]
+        .find(['/', '?', '#'])
+        .map_or(url.len(), |i| start + i);
+    let authority = &url[start..end];
+    let host_start = start + authority.rfind('@').map_or(0, |i| i + 1);
+    let host = &url[host_start..end];
+    let host_end = if host.starts_with('[') {
+        host.find(']').map_or(end, |i| host_start + i + 1)
+    } else {
+        host.find(':').map_or(end, |i| host_start + i)
+    };
+    if !url[host_start..host_end]
+        .bytes()
+        .any(|b| b.is_ascii_uppercase())
+    {
+        return pattern.is_match(url);
+    }
+    let mut normalized = url.to_string();
+    normalized[host_start..host_end].make_ascii_lowercase();
+    pattern.is_match(&normalized)
+}
+
 /// Return the part after an absolute URI's RFC 3986 scheme.
 /// Relative inputs must never become browser command-line switches.
 pub(crate) fn url_after_scheme(url: &str) -> Option<&str> {

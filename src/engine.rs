@@ -438,6 +438,7 @@ fn warn_if_fn_might_read_ctx(f: &JSValue) {
 pub(crate) enum Matcher {
     Always,
     Regex(Regex),
+    Wildcard(Regex),
     Domain(Vec<String>),
     From(Vec<String>),
     Running(Vec<String>),
@@ -1087,7 +1088,11 @@ fn analyse_runtime_needs(rewrites: &[RewriteRule], rules: &[Rule]) -> RuntimeNee
                     n.modifiers = true;
                 }
                 Matcher::Domain(_) => n.host = true,
-                Matcher::Always | Matcher::Regex(_) | Matcher::Running(_) | Matcher::Fn(_) => {}
+                Matcher::Always
+                | Matcher::Regex(_)
+                | Matcher::Wildcard(_)
+                | Matcher::Running(_)
+                | Matcher::Fn(_) => {}
             }
         }
     }
@@ -1317,6 +1322,7 @@ fn matches(m: &Matcher, url: &str, host: Option<&str>, rc: &ResolveCtx) -> bool 
     match m {
         Matcher::Always => true,
         Matcher::Regex(re) => re.is_match(url),
+        Matcher::Wildcard(re) => wildcard_matches(re, url),
         Matcher::Domain(hosts) => match host {
             Some(host) => hosts.iter().any(|h| host_matches(host, h)),
             None => false,

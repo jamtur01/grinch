@@ -84,7 +84,7 @@ Representative release-build measurements on Apple Silicon:
 | bare | 38.4 |
 | domain | 45.5 |
 | regex | 23.2 |
-| wildcard | 31.4 |
+| wildcard | 34.0 |
 | many-rules | 263.3 |
 | rewrite-then-domain | 242.9 |
 | slow-native | 4717.1 |

@@ -316,10 +316,10 @@ pub(crate) fn compile_matcher(
                 "^(?:https?:|ftp:)?(?://)?{}(?:[/?#].*)?$",
                 regex::escape(&s)
             );
-            return Regex::new(&pattern).ok().map(Matcher::Regex);
+            return Regex::new(&pattern).ok().map(Matcher::Wildcard);
         }
         if s.contains('*') || s.contains('/') || is_host_port_pattern(&s) {
-            return compile_wildcard(&s).map(Matcher::Regex);
+            return compile_wildcard(&s).map(Matcher::Wildcard);
         }
         // ASCII lowercase to match `quick_host`'s lowercasing of the URL's
         // host. URL hostnames are ASCII per the URL spec; using the

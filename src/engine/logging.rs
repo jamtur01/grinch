@@ -131,7 +131,7 @@ impl DiagnosticLog {
         self.record_warning(message, false);
     }
 
-    pub(crate) fn record_suppressed_rule_warning(&self, message: &str) {
+    pub(crate) fn record_suppressing_warning(&self, message: &str) {
         self.record_warning(message, true);
     }
 

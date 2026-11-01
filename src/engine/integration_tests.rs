@@ -127,19 +127,29 @@ fn resolve_with(
 
 #[test]
 fn negative_array_like_lengths_do_not_abort_config_loading() {
+    for args in ["{ length: -1 }", "new Array(2147483647)"] {
+        let diagnostics = Rc::new(isolated_diagnostics());
+        let engine = build_engine_with_diagnostics(
+            &format!(
+                "module.exports = {{ default: {{ name: 'com.apple.Safari', args: {args} }} }};"
+            ),
+            Rc::clone(&diagnostics),
+        );
+        assert!(resolve(&engine, "https://example.com").0.is_empty());
+        assert!(
+            diagnostics
+                .config_warning()
+                .unwrap()
+                .contains("launch suppressed")
+        );
+    }
     let engine = build_engine(
-        r#"module.exports = {
-        default: { name: "com.apple.Safari", args: { length: -1 } },
-        rules: { length: -1 }, rewrite: { length: -1 }
-    };"#,
+        "module.exports = { default: 'com.apple.Safari', rules: { length: -1 }, rewrite: { length: -1 } };",
     );
-    let result = engine.resolve(
-        "https://example.com",
-        &Opener::default(),
-        ModifierFlags::default(),
+    assert_eq!(
+        resolve(&engine, "https://example.com").0,
+        "com.apple.Safari"
     );
-    assert_eq!(result.browser.bundle_id, "com.apple.Safari");
-    assert!(result.browser.args.is_empty());
 }
 
 #[test]

@@ -181,6 +181,15 @@ fn url_hostname_excludes_query_userinfo_and_normalizes_case() {
         resolve(&engine, "https://user:pass@GitLab.COM/path").0,
         "com.google.Chrome"
     );
+    let protocol = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: url => url.protocol === "https:", open: "com.google.Chrome" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve(&protocol, "HTTPS://example.com/").0,
+        "com.google.Chrome"
+    );
     assert_eq!(
         resolve(&engine, "https://user@evil.com@GitLab.COM/path").0,
         "com.google.Chrome"
@@ -2730,6 +2739,18 @@ fn polyfill_preserves_opaque_scheme_on_rewrite() {
     assert_eq!(
         resolve(&e, "https://example.com/path").1,
         "https://example.com/path"
+    );
+    let setter = build_engine(
+        r#"module.exports = { default: "com.apple.Safari",
+        rewrite: [{ match: () => true, url: url => { url.host = "NewHost:99"; return url; } }] };"#,
+    );
+    assert_eq!(
+        resolve(&setter, "myapp://Open/Thing").1,
+        "myapp://NewHost:99/Thing"
+    );
+    assert_eq!(
+        resolve(&setter, "https://Open/Thing").1,
+        "https://newhost:99/Thing"
     );
 }
 

@@ -30,6 +30,10 @@ pub const JS_PRELUDE: &str = r##"
   // rest of the address into the pathname slot.
   var URL_RE = /^([a-z][a-z0-9+.-]*:)(?:\/\/(?:([^:\/?#]*)(?::([^\/?#]*))?@)?(\[[^\]]+\]|[^:@\/?#]*)(?::(\d+))?)?([^?#]*)(\?[^#]*)?(#.*)?$/i;
 
+  function isSpecialScheme(protocol) {
+    return /^(?:ftp|file|http|https|ws|wss):$/i.test(protocol);
+  }
+
   function parseInto(self, href) {
     href = String(href);
     if (href.indexOf("\\") >= 0 && /^(?:ftp|file|http|https|ws|wss):/i.test(href)) {
@@ -39,11 +43,11 @@ pub const JS_PRELUDE: &str = r##"
     }
     var m = URL_RE.exec(href);
     if (!m) throw new TypeError("Invalid URL: " + href);
-    self.protocol = m[1];
+    self.protocol = m[1].toLowerCase();
     self.username = m[2] || "";
     self.password = m[3] || "";
     self.hostname = m[4] || "";
-    if (/^(?:ftp|file|http|https|ws|wss):$/i.test(self.protocol)) {
+    if (isSpecialScheme(self.protocol)) {
       self.hostname = self.hostname.toLowerCase();
     }
     self.port     = m[5] || "";
@@ -207,7 +211,7 @@ pub const JS_PRELUDE: &str = r##"
     get: function() { return this.hostname + (this.port ? ":" + this.port : ""); },
     set: function(v) {
       var parts = String(v).split(":");
-      this.hostname = parts[0].toLowerCase();
+      this.hostname = isSpecialScheme(this.protocol) ? parts[0].toLowerCase() : parts[0];
       this.port = parts[1] || "";
     },
     enumerable: true,

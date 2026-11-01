@@ -33,8 +33,8 @@ use objc2::{
     msg_send, sel,
 };
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSButton, NSTextField,
-    NSView, NSWindow,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSButton,
+    NSRunningApplication, NSTextField, NSView, NSWindow,
 };
 use objc2_authentication_services::{
     ASWebAuthenticationSessionCallback, ASWebAuthenticationSessionErrorCode,
@@ -96,6 +96,42 @@ define_class!(
         }
     }
 );
+
+define_class!(
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[name = "GrinchTestDuplicateDelegate"]
+    struct DuplicateDelegate;
+
+    unsafe impl NSObjectProtocol for DuplicateDelegate {}
+
+    unsafe impl NSApplicationDelegate for DuplicateDelegate {
+        #[unsafe(method(applicationDidFinishLaunching:))]
+        fn did_finish(&self, _notification: &NSNotification) {
+            let directory = PathBuf::from(std::env::var_os("GRINCH_DUPLICATE_TEST_DIR").unwrap());
+            let pid = std::process::id();
+            std::fs::write(directory.join(format!("ready-{pid}")), "ready").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !directory.join("start").exists() {
+                if Instant::now() >= deadline {
+                    std::process::exit(2);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            workspace::terminate_duplicate_instances();
+            std::fs::write(directory.join(format!("passed-{pid}")), "passed").unwrap();
+        }
+    }
+);
+
+fn run_duplicate_probe(mtm: MainThreadMarker) {
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    let delegate: Retained<DuplicateDelegate> =
+        unsafe { msg_send![DuplicateDelegate::alloc(mtm), init] };
+    app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    app.run();
+}
 
 define_class!(
     #[unsafe(super = NSObject)]
@@ -755,14 +791,115 @@ fn verify_ordinary_startup_delivery(mtm: MainThreadMarker) {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+struct DuplicateProbes {
+    children: Vec<Child>,
+    directory: PathBuf,
+}
+
+impl Drop for DuplicateProbes {
+    fn drop(&mut self) {
+        for child in &mut self.children {
+            let _ = child.kill();
+        }
+        for child in &mut self.children {
+            let _ = child.wait();
+        }
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn verify_simultaneous_duplicate_startup() {
+    let id = NSUUID::new().UUIDString().to_string();
+    let bundle_id = format!("org.grinch.test.duplicate-{id}");
+    let directory = std::env::temp_dir().join(format!("grinch-duplicate-{id}"));
+    let contents = directory.join("Probe.app/Contents");
+    let executable = contents.join("MacOS/probe");
+    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    let plist = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
+        <key>CFBundleIdentifier</key><string>{bundle_id}</string>\
+        <key>CFBundleExecutable</key><string>probe</string>\
+        <key>CFBundlePackageType</key><string>APPL</string>\
+        <key>LSUIElement</key><true/></dict></plist>"
+    );
+    std::fs::write(contents.join("Info.plist"), plist).unwrap();
+    let mut probes = DuplicateProbes {
+        children: Vec::new(),
+        directory,
+    };
+    for index in 0..2 {
+        let home = probes.directory.join(format!("home-{index}"));
+        std::fs::create_dir_all(&home).unwrap();
+        probes.children.push(
+            Command::new(&executable)
+                .arg("--duplicate-probe")
+                .env("HOME", home)
+                .env("GRINCH_DUPLICATE_TEST_DIR", &probes.directory)
+                .spawn()
+                .unwrap(),
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let ready = probes.children.iter().all(|child| {
+            probes
+                .directory
+                .join(format!("ready-{}", child.id()))
+                .exists()
+        });
+        let registered = NSRunningApplication::runningApplicationsWithBundleIdentifier(
+            &NSString::from_str(&bundle_id),
+        )
+        .count()
+            >= 2;
+        if ready && registered {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "duplicate probes did not register"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    std::fs::write(probes.directory.join("start"), "start").unwrap();
+    loop {
+        let mut alive = Vec::new();
+        for child in &mut probes.children {
+            if child.try_wait().unwrap().is_none() {
+                alive.push(child.id());
+            }
+        }
+        if alive.len() == 1
+            && probes
+                .directory
+                .join(format!("passed-{}", alive[0]))
+                .exists()
+        {
+            break;
+        }
+        assert!(!alive.is_empty(), "both duplicate instances exited");
+        assert!(
+            Instant::now() < deadline,
+            "duplicate cleanup did not leave one running instance"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn main() {
     let mtm = MainThreadMarker::new().expect("harness must own the main thread");
     if std::env::args().any(|arg| arg == "--reopen-probe") {
         run_reopen_probe(mtm);
         return;
     }
+    if std::env::args().any(|arg| arg == "--duplicate-probe") {
+        run_duplicate_probe(mtm);
+        return;
+    }
     verify_real_reopen();
     verify_ordinary_startup_delivery(mtm);
+    verify_simultaneous_duplicate_startup();
     verify_update_button_binding(mtm);
     verify_actions_window(mtm);
     session_handler::install(mtm, forwarded);

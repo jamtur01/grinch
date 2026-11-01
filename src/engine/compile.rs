@@ -35,7 +35,7 @@ pub(crate) fn parse_rule_array(
             .contains(&field.as_str())
             {
                 misplaced = true;
-                diagnostics.record_config_warning(&format!(
+                diagnostics.record_suppressed_rule_warning(&format!(
                     "rules[{i}].{field} is ignored; move it inside the browser target; this rule is suppressed"
                 ));
             } else {

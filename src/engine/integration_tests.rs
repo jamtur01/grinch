@@ -367,6 +367,38 @@ fn rotation_settings_preserve_fractional_days_and_reject_fractional_bytes() {
 }
 
 #[test]
+fn config_warnings_include_options_and_prioritize_suppressed_rules() {
+    let diagnostics = Rc::new(isolated_diagnostics());
+    let engine = build_engine_with_diagnostics(
+        r#"
+        const rule = { match: "example.com", open: "com.apple.Safari" };
+        for (let i = 0; i < 32; i++) rule["typo" + i] = true;
+        rule.profile = "Work";
+        module.exports = { default: "com.apple.Safari", hideIcon: true,
+            options: { logFormat: "text", logRequest: true, logRotateBytes: 0.5 }, rules: [rule] };
+    "#,
+        Rc::clone(&diagnostics),
+    );
+    assert!(
+        diagnostics
+            .config_warning()
+            .unwrap()
+            .contains("this rule is suppressed")
+    );
+    let body = std::fs::read_to_string(diagnostics.ensure_file().unwrap()).unwrap();
+    for expected in [
+        "options.logRequest",
+        "options.logRotateBytes",
+        "top-level `hideIcon`",
+        "this rule is suppressed",
+    ] {
+        assert!(body.contains(expected), "missing {expected}: {body}");
+    }
+    assert!(body.contains("  config_warning\n"));
+    assert!(resolve(&engine, "https://example.com").0.is_empty());
+}
+
+#[test]
 fn format_change_includes_profile_errors_from_config_load() {
     let home = unique_tmp("format-profile-error");
     with_home(&home, || {

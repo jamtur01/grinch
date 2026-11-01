@@ -378,18 +378,20 @@ const TOP_LEVEL_KEYS: &[&str] = &[
 /// Warn about top-level config keys that `Engine::new` would otherwise
 /// ignore without a trace. A misplaced option such as a root-level
 /// `hideIcon` gets pointed at `options.hideIcon`.
-fn warn_unknown_top_level_keys(exports: &JSValue) {
+fn warn_unknown_top_level_keys(exports: &JSValue, diagnostics: &DiagnosticLog) {
     for (k, _) in iter_object(exports) {
         if TOP_LEVEL_KEYS.contains(&k.as_str()) {
             continue;
         }
         if OPTION_KEYS.contains(&k.as_str()) {
-            eprintln!("grinch: top-level `{k}` is ignored — move it to options.{k}");
+            diagnostics.record_config_warning(&format!(
+                "top-level `{k}` is ignored — move it to options.{k}"
+            ));
         } else {
-            eprintln!(
-                "grinch: unknown top-level key `{k}` — accepted keys are {}",
+            diagnostics.record_config_warning(&format!(
+                "unknown top-level key `{k}` — accepted keys are {}",
                 TOP_LEVEL_KEYS.join(", ")
-            );
+            ));
         }
     }
 }
@@ -637,9 +639,10 @@ impl Engine {
         // options block — Finicky-compat. Accept all five v4 keys without
         // erroring so configs ported across don't have to delete them.
         // Anything unknown logs a one-line warning per key.
+        let mut option_warnings = Vec::new();
         let options = key(&exports, "options")
             .filter(|opts| !is_undef_or_null(opts) && unsafe { opts.isObject() })
-            .map(|opts| parse_options_block(&opts))
+            .map(|opts| parse_options_block(&opts, &mut option_warnings))
             .unwrap_or_default();
         diagnostics.configure_rotation(options.log_rotate_bytes, options.log_rotate_seconds);
         if options.invalid_log_format {
@@ -650,7 +653,10 @@ impl Engine {
         } else {
             diagnostics.configure_format(options.log_format);
         }
-        warn_unknown_top_level_keys(&exports);
+        for warning in option_warnings {
+            diagnostics.record_config_warning(&warning);
+        }
+        warn_unknown_top_level_keys(&exports, &diagnostics);
 
         // browsers
         let mut browsers: std::collections::HashMap<String, Rc<BrowserSpec>> =

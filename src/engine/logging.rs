@@ -128,11 +128,29 @@ impl DiagnosticLog {
     }
 
     pub(crate) fn record_config_warning(&self, message: &str) {
+        self.record_warning(message, false);
+    }
+
+    pub(crate) fn record_suppressed_rule_warning(&self, message: &str) {
+        self.record_warning(message, true);
+    }
+
+    fn record_warning(&self, message: &str, priority: bool) {
         let mut warnings = self.config_warnings.borrow_mut();
-        if warnings.len() >= 32 || warnings.iter().any(|warning| warning == message) {
+        if warnings.iter().any(|warning| warning == message) {
             return;
         }
-        warnings.push(message.to_string());
+        if warnings.len() >= 32 {
+            if !priority {
+                return;
+            }
+            warnings.pop();
+        }
+        if priority {
+            warnings.insert(0, message.to_string());
+        } else {
+            warnings.push(message.to_string());
+        }
         drop(warnings);
         eprintln!("grinch: {message}");
         self.write_event(serde_json::json!({"event": "config_warning", "ts": now_unix_f64(), "message": message}));
@@ -700,7 +718,7 @@ pub(crate) const OPTION_KEYS: &[&str] = &[
 /// | `hideIcon`      | **honoured** — propagated through `OptionsConfig` to AppDelegate, which skips menu-bar status item creation when set |
 ///
 /// Unknown keys log a one-line warning so users can spot typos.
-pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
+pub(crate) fn parse_options_block(opts: &JSValue, warnings: &mut Vec<String>) -> OptionsConfig {
     let mut out = OptionsConfig::default();
     for (k, v) in iter_object(opts) {
         match k.as_str() {
@@ -728,8 +746,8 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
                 if n.is_finite() && n >= 1.0 && n < u64::MAX as f64 && n.fract() == 0.0 {
                     out.log_rotate_bytes = Some(n as u64);
                 } else {
-                    eprintln!(
-                        "grinch: invalid options.logRotateBytes — use a positive whole number"
+                    warnings.push(
+                        "invalid options.logRotateBytes — use a positive whole number".to_string(),
                     );
                 }
             }
@@ -739,14 +757,16 @@ pub(crate) fn parse_options_block(opts: &JSValue) -> OptionsConfig {
                 if seconds.is_finite() && seconds >= 1.0 && seconds < u64::MAX as f64 {
                     out.log_rotate_seconds = Some(seconds as u64);
                 } else {
-                    eprintln!("grinch: invalid options.logRotateDays — use at least one second");
+                    warnings.push(
+                        "invalid options.logRotateDays — use at least one second".to_string(),
+                    );
                 }
             }
             other if !OPTION_KEYS.contains(&other) => {
-                eprintln!(
-                    "grinch: unknown options.{other} — accepted keys are {}",
+                warnings.push(format!(
+                    "unknown options.{other} — accepted keys are {}",
                     OPTION_KEYS.join(", ")
-                );
+                ));
             }
             // Known but inert keys: accept silently.
             _ => {}

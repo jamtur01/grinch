@@ -311,7 +311,14 @@ pub(crate) fn compile_matcher(
     // hostname shorthand for a domain-and-subdomain match.
     if unsafe { v.isString() } {
         let s = js_to_string(v)?;
-        if s.contains('*') || s.contains('/') {
+        if is_host_port_pattern(&s) && !s.contains(['*', '/', '?', '#']) {
+            let pattern = format!(
+                "^(?:https?:|ftp:)?(?://)?{}(?:[/?#].*)?$",
+                regex::escape(&s)
+            );
+            return Regex::new(&pattern).ok().map(Matcher::Regex);
+        }
+        if s.contains('*') || s.contains('/') || is_host_port_pattern(&s) {
             return compile_wildcard(&s).map(Matcher::Regex);
         }
         // ASCII lowercase to match `quick_host`'s lowercasing of the URL's
@@ -440,7 +447,8 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
     // Step 3: protocol-prefix logic. If the pattern has a `\w+:` prefix, treat
     // it as protocol-anchored; otherwise (and unless it starts with `*`)
     // prepend an optional protocol matcher.
-    let starts_with_protocol = pattern_has_protocol_prefix(pattern);
+    let starts_with_protocol =
+        pattern_has_protocol_prefix(pattern) && !is_host_port_pattern(pattern);
     if !starts_with_protocol {
         if !pattern.starts_with('*') {
             work = format!("(?:https?:|ftp:|mailto:|file:|tel:|sms:|data:)?(?://)?{work}");
@@ -468,6 +476,17 @@ pub(crate) fn compile_wildcard(pattern: &str) -> Option<Regex> {
     // mixed-case URL (e.g. `match: "GitHub.com/*"` matched
     // `https://github.com/path` in Grinch but not in Finicky).
     RegexBuilder::new(&anchored).build().ok()
+}
+
+fn is_host_port_pattern(pattern: &str) -> bool {
+    let Some((host, rest)) = pattern.split_once(':') else {
+        return false;
+    };
+    if host != "localhost" && !host.contains('.') {
+        return false;
+    }
+    let port = rest.split(['/', '?', '#']).next().unwrap_or("");
+    !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 pub(crate) fn pattern_has_protocol_prefix(pat: &str) -> bool {

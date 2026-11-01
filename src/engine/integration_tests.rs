@@ -164,6 +164,36 @@ fn url_hostname_excludes_query_userinfo_and_normalizes_case() {
 }
 
 #[test]
+fn hostname_and_port_patterns_match_urls_with_that_port() {
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [
+        { match: "example.com:8080/*", open: "com.google.Chrome" },
+        { match: "localhost:3000", open: "org.mozilla.firefox" }
+    ] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com:8080/path").0,
+        "com.google.Chrome"
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com:8081/path").0,
+        "com.apple.Safari"
+    );
+    assert_eq!(
+        resolve(&engine, "http://localhost:3000").0,
+        "org.mozilla.firefox"
+    );
+    assert_eq!(
+        resolve(&engine, "http://localhost:3000/path").0,
+        "org.mozilla.firefox"
+    );
+    assert_eq!(
+        resolve(&engine, "http://localhost:30001/").0,
+        "com.apple.Safari"
+    );
+}
+
+#[test]
 fn default_engine_fixture_isolates_runtime_error_logs() {
     let home = unique_tmp("fixture-log-home");
     with_home(&home, || {

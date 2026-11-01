@@ -48,9 +48,9 @@ fn expand_flag_for_family(bundle_id: &str, flag: FlagFamily) -> Option<&'static 
 ///     end-to-end the same string the user wrote; we just validate it's
 ///     known so an unrecognised name doesn't silently open the profile-
 ///     manager UI.
-///   - Anything else   → `None` (caller logs a warning).
+///   - Anything else   → an error (the launch is suppressed).
 ///
-/// Returns `Ok(Some(args))` on a recognised family, `Ok(None)` otherwise.
+/// Returns `Ok(Some(args))` on a recognised family, `Ok(None)` for an empty profile.
 /// An unresolved Chromium profile returns `Err(())`; callers must suppress
 /// the entire launch, including any other arguments on the browser spec. The
 /// caller is responsible for setting `creates_new_instance: true` when
@@ -73,7 +73,12 @@ fn expand_profile_args(
         let name = crate::firefox::resolve_profile_name(bundle_id, profile, diagnostics);
         return Ok(Some(vec!["-P".to_string(), name]));
     }
-    Ok(None)
+    diagnostics.record_profile_error(
+        bundle_id,
+        None,
+        &format!("Profile {profile:?} is unsupported for this browser; remove the profile or use Chromium or Firefox"),
+    );
+    Err(())
 }
 
 /// Heuristic: does this string look like an `.app` bundle path that
@@ -134,12 +139,6 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
                         open_in_background: false,
                         creates_new_instance: true,
                     };
-                }
-                if !profile.is_empty() {
-                    eprintln!(
-                        "grinch: ignoring `:profile` shorthand for unrecognised browser \
-                         family {bundle_id} (input was {s:?}; supported: Chromium, Firefox)"
-                    );
                 }
                 return BrowserSpec::from_bundle_id(bundle_id);
             }
@@ -202,11 +201,6 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
         if let Some(profile_args) = profile_args {
             args.extend(profile_args);
             creates_new_instance = true;
-        } else if !profile.is_empty() {
-            eprintln!(
-                "grinch: ignoring `profile` for unrecognised browser family \
-                 {bundle_id} (profile = {profile}; supported: Chromium, Firefox)"
-            );
         }
     }
 

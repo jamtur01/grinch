@@ -2864,6 +2864,28 @@ fn parse_browser_jsval_incognito_composes_with_profile() {
 }
 
 #[test]
+fn unsupported_browser_profiles_are_not_opened() {
+    for target in [
+        r#"{ name: "com.apple.Safari", profile: "Work" }"#,
+        r#""com.apple.Safari:Work""#,
+        r#"() => ({ name: "com.apple.Safari", profile: "Work" })"#,
+    ] {
+        let diagnostics = Rc::new(isolated_diagnostics());
+        let engine = build_engine_with_diagnostics(
+            &format!("module.exports = {{ default: {target} }};"),
+            Rc::clone(&diagnostics),
+        );
+        let result = engine.resolve(
+            "https://example.com/",
+            &Opener::default(),
+            ModifierFlags::default(),
+        );
+        assert!(result.browser.bundle_id.is_empty(), "{target}");
+        assert!(diagnostics.profile_error().is_some(), "{target}");
+    }
+}
+
+#[test]
 fn parse_browser_jsval_apptype_none_suppresses() {
     // appType: "none" is Finicky's explicit no-op browser. Should
     // behave identically to `open: null`.

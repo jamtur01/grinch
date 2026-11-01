@@ -105,8 +105,9 @@
       <code>options.opener</code>.</li>
     <li><code>appType</code>: <code>"appName"</code>, <code>"bundleId"</code>,
       <code>"path"</code>, and <code>"none"</code>. When you leave it out, a
-      reverse-DNS string is treated as a bundle ID and anything else as an app
-      name.</li>
+      Grinch recognizes app paths first, then looks up the value as an installed
+      bundle ID or app name. If neither lookup succeeds, it uses the value as a
+      bundle ID.</li>
     <li>Option keys such as <code>hideIcon</code> and <code>logRequests</code>.
       <code>urlShorteners</code> and <code>keepRunning</code> are accepted but
       have no effect.</li>

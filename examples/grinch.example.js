@@ -21,14 +21,14 @@ const browsers = {
   arc: { id: "company.thebrowser.Browser" },
 
   // Finicky-compatible "Name:Profile" string shorthand. Splits on the
-  // first `:` for Chromium-family browsers; equivalent to
+  // first `:` for static Chromium and Firefox targets; equivalent to
   // { name: "Google Chrome", profile: "Work" }.
   workShort: "Google Chrome:Work",
 
   // `profile` shorthand. Chromium-family expands to --profile-directory=<dir>;
-  // Firefox-family expands to -P <name>. Recognised for Chrome, Brave, Edge,
-  // Vivaldi, Arc, Opera, Chromium (Chromium family) and Firefox, Firefox
-  // Developer Edition, Firefox Nightly, Waterfox, LibreWolf (Firefox family).
+  // Firefox uses -P for legacy names and --profile for profile-group paths.
+  // Supported browsers: https://github.com/jamtur01/grinch/blob/main/src/chromium.rs
+  // and https://github.com/jamtur01/grinch/blob/main/src/firefox.rs
   // Chromium display names must resolve in Local State; unresolved names suppress
   // the launch and log an error. Use "Default" or "Profile 1" to avoid file lookup.
   // Reload Config refreshes profile data after browser or permission changes.
@@ -92,17 +92,7 @@ module.exports = {
 
   // ---------- Rewrites — applied in order, every match fires ----------
   rewrite: [
-    // strip(): remove query params. Trailing `*` is a prefix wildcard.
-    // Returns a marker object compiled to native byte-level filtering.
-    strip("utm_source", "utm_medium", "utm_campaign", "utm_term",
-          "utm_content", "fbclid", "gclid", "mc_eid", "ref", "referrer"),
-    strip("utm_*"),
-
-    // safelinks(): unwrap Microsoft Defender / Teams / Proofpoint
-    // (v2 + v3, including FedRAMP `urldefense.us`) URL wrappers in one
-    // line. Pass-through on every other host, so it's safe to leave on.
-    // Composes with strip() — put safelinks() first so utm_* cleanup
-    // runs on the inner URL, not the wrapper.
+    // Unwrap first so the following strip() calls clean the destination URL.
     safelinks(),
 
     // teams_launcher(): unwrap Teams' web-app launcher URLs (the
@@ -112,6 +102,12 @@ module.exports = {
     // launcher is path-routed (no `?url=`-style query wrapper), so
     // safelinks() doesn't catch it.
     teams_launcher(),
+
+    // strip(): remove query params. Trailing `*` is a prefix wildcard.
+    // Returns a marker object compiled to native byte-level filtering.
+    strip("utm_source", "utm_medium", "utm_campaign", "utm_term",
+          "utm_content", "fbclid", "gclid", "mc_eid", "ref", "referrer"),
+    strip("utm_*"),
 
     // Conditional literal rewrite.
     {
@@ -203,7 +199,7 @@ module.exports = {
       }),
     },
 
-    // Return null/undefined to drop the URL entirely.
+    // Return null to drop the URL; undefined leaves it unchanged.
     {
       match: (url) => url.hostname === "tracking.example.com",
       url: () => null,

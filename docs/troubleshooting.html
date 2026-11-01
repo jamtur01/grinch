@@ -127,6 +127,8 @@ Args:    --profile-directory=Default</span></code></pre>
     reload fails, the menu shows the error and Grinch keeps the last config that
     loaded. <code>--validate</code> reports the same errors and warnings in a
     terminal and exits 1 when the config doesn't load:</p>
+  <p>From a terminal, <code>kill -HUP &lt;pid&gt;</code> also reloads the running
+    app's config. <code>Grinch --version</code> (or <code>-V</code>) shows its version.</p>
   <figure class="term">
     <figcaption>Terminal</figcaption>
 <pre><code><span class="cmd">Grinch --validate</span>
@@ -265,18 +267,19 @@ rules:  1</span></code></pre>
     <dd><code>resolve</code>, <code>config_warning</code>, <code>config_error</code>, <code>runtime_js_error</code>,
       <code>profile_error</code>, or <code>launch_error</code>.</dd>
     <dt><code>rewritten</code></dt>
-    <dd>True when <code>final</code> differs from <code>url</code>, meaning a
-      rewrite fired.</dd>
+    <dd>True when <code>final</code> differs from <code>url</code>. A suppressed
+      URL also becomes <code>about:blank</code> and has <code>rewritten: true</code>.</dd>
     <dt><code>opener</code></dt>
     <dd>The app that sent the URL, identified from the Apple Event's sender. An
       empty <code>bundleId</code> means neither the sender nor the frontmost-app
-      fallback identified one.</dd>
+      fallback identified one, or the config did not need opener information.
+      Modifier flags are likewise captured only when the config needs them.</dd>
     <dt><code>matchedRule</code></dt>
     <dd><code>{index, name}</code> of the rule that matched, or <code>null</code>
       when the URL fell through to <code>default</code>. <code>name</code> is
       the rule's own <code>name</code>, or an automatic label: the string
-      pattern, <code>domain:foo,bar</code>, or the first line of a function's
-      source.</dd>
+      pattern, <code>domain:foo,bar</code>, <code>from:…</code>, or
+      <code>fn: …</code>. Arrays join their labels with <code> | </code>.</dd>
   </dl>
   <p>A <code>resolve</code> event records the routing decision; it does not
     confirm the browser opened. <code>launch_error</code> events record invalid

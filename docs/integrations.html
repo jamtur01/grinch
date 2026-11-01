@@ -72,7 +72,9 @@
     Grinch routes these requests with the same rules as other links, and opens
     the sign-in page in the selected browser as a normal tab. It does not move
     the authentication session into that browser or watch what the page does
-    next.</p>
+    next. Since the requesting app isn't available to Grinch, rules see
+    <code>com.apple.AuthenticationServices</code> as the opener and no modifier
+    keys for these requests.</p>
   <p>Requests that arrive while Grinch is starting wait for the first config
     load. If no config is available, a rule suppresses the URL, or the browser
     can't be opened, Grinch ends the sign-in request with an error. Requests
@@ -107,6 +109,8 @@
 
 <section id="url-schemes" aria-labelledby="url-schemes-title">
   <h2 id="url-schemes-title"><a class="self" href="#url-schemes">Other URL schemes</a></h2>
+  <p>Grinch can also route local HTML files and web activities that macOS delivers
+    to it. Delivery depends on your macOS file and link associations.</p>
   <p>Besides <code>http</code>, <code>https</code>, and <code>mailto</code>,
     Grinch registers <code>tel:</code>, <code>webcal:</code>, and
     <code>feed:</code>, so those links go through the same rules. Match them

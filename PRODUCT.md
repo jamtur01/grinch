@@ -81,8 +81,8 @@ a working first config, and to serve as the reference afterward.
 
 ## Evidence on Hand
 
-- Benchmarks: `bench/README.md`, `bench/configs/`, `bench/run.sh`; README
-  **Performance** tables (release builds, Apple Silicon, median of ten runs,
+- Benchmarks: `bench/README.md`, `bench/configs/`, `bench/run.sh`; the
+  performance page (release builds, Apple Silicon, median of ten runs,
   routing only, excluding browser launch).
 - Example config: `examples/grinch.example.js`.
 - Brand assets in `brand/` and copies in `docs/`.

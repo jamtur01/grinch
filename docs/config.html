@@ -146,7 +146,7 @@
       <tr><th scope="row"><code>finicky.matchHostnames("github.com")</code></th><td>The exact hostname only, not subdomains. Finicky-compatible. Use it when you need exact-hostname matching.</td></tr>
       <tr><th scope="row"><code>from("com.tinyspeck.slackmacgap")</code></th><td>URLs opened by this app. Matches the caller's bundle ID, <code>ctx.opener.bundleId</code>.</td></tr>
       <tr><th scope="row"><code>running("us.zoom.xos")</code></th><td>Any URL while this app is running. Computed once per URL, only when needed.</td></tr>
-      <tr><th scope="row"><code>/regex/</code></th><td>A regex against the full URL. Supports the <code>i</code> and <code>m</code> flags.</td></tr>
+      <tr><th scope="row"><code>/regex/</code></th><td>A regex against the full URL. Uses Rust regex syntax and supports the <code>i</code> and <code>m</code> flags; lookarounds are not supported and produce a config warning.</td></tr>
       <tr><th scope="row"><code>(url, ctx) =&gt; bool</code></th><td>Your own condition. See <a href="#ctx">the <code>ctx</code> object</a>.</td></tr>
     </tbody>
   </table>
@@ -218,12 +218,14 @@
       suppresses the launch, including for dynamic targets; Grinch does not try a
       later rule or the default. Use the profile directory when display names are duplicated.</p>
     <p>Firefox profiles use names from <code>profiles.ini</code> or the newer
-      profile groups. If Grinch can't read <code>profiles.ini</code> or the
+      profile groups. If <code>profiles.ini</code> exists but can't be read, or
+      Grinch can't read the
       profile groups, a name matches multiple profiles, or a profile directory
       is missing, Grinch stops the launch; use a full directory path to resolve
       duplicate names. Legacy profile names
       take precedence when both systems contain the same name. Unknown names are
-      passed to Firefox with a warning when an inventory is available. A profile
+      passed to Firefox with a warning when an inventory is available. If
+      <code>profiles.ini</code> is missing, the name is passed to Firefox. A profile
       on any other browser records
       a <code>profile_error</code> and suppresses the launch.</p>
     <p>If macOS denies access to a browser's profile files, the error says so:
@@ -316,10 +318,12 @@ module.exports = {
   <p>Its <code>url</code> parameter decodes to a relative path
     (<code>/_#/l/meetup-join/19:…</code>), so <code>safelinks()</code> can't use
     it. <code>teams_launcher()</code> removes the web-app prefix and rebuilds the
-    link as <code>msteams:/l/meetup-join/19:…</code>, which opens in the Teams
-    app. Other hosts and paths pass through. Use it alongside
+    link as <code>msteams:/l/meetup-join/19:…</code>. Add a rule that sends
+    <code>msteams:</code> links to Teams; otherwise the default target is used.
+    Other hosts and paths pass through. Use it alongside
     <code>safelinks()</code>:</p>
 <pre><code>rewrite: [ safelinks(), teams_launcher(), strip("utm_*") ]</code></pre>
+<pre><code>rules: [{ match: /^msteams:/, open: "com.microsoft.teams2" }]</code></pre>
 
   <h3 id="rewrite-functions"><a class="self" href="#rewrite-functions">Rewrite functions</a></h3>
   <p>A <code>url</code> rewrite function receives a URL instance as its first

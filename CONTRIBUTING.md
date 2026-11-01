@@ -37,7 +37,7 @@ first — every supported syntax form has at least one example there.
 
 ### Prerequisites
 
-- macOS (Apple Silicon or Intel; CI builds a universal binary)
+- macOS (Apple Silicon or Intel; releases use a universal binary)
 - Xcode command-line tools (`xcode-select --install`)
 - Rust stable via `rustup`, with the `clippy` and `rustfmt` components
 
@@ -113,8 +113,9 @@ MDM, checked last). To exercise a different config without touching your
 real one, stage it under a temp `HOME`:
 
 ```sh
-mkdir -p /tmp/scratch && cp examples/grinch.example.js /tmp/scratch/.grinch.js
-HOME=/tmp/scratch ./target/release/Grinch --test "https://x.example/"
+stage=$(mktemp -d)
+printf '%s\n' 'module.exports = { default: "com.apple.Safari" };' > "$stage/.grinch.js"
+HOME="$stage" ./target/release/Grinch --test "https://x.example/"
 ```
 
 ### Tests

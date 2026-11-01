@@ -856,7 +856,7 @@ fn log_writer_should_rotate_unit() {
     let mut w = LogWriter::new(
         std::path::PathBuf::from("/tmp/never-opened.log"),
         Some(1024),
-        Some(7),
+        Some(7 * 86_400),
     );
     // No file open yet → never rotates (rotation rebinds bytes_written
     // when the new file opens; nothing to rotate before that).

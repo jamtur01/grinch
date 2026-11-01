@@ -366,8 +366,7 @@ define_class!(
                 std::process::exit(code);
             }
 
-            // Normal app-mode startup: kill any stale duplicate instances
-            // first so we don't pile up menu bar icons (see Finicky #515),
+            // Normal app-mode startup: start duplicate cleanup in the background,
             // then load config, build the menu bar, wire SIGHUP, install the
             // running-apps cache observer, defeat AppNap so first-click-
             // after-idle stays fast, and ask for Accessibility once. The

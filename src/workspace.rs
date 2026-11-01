@@ -337,8 +337,7 @@ fn running_app_for_pid(pid: i32) -> Option<Retained<NSRunningApplication>> {
 }
 
 /// Terminate any other running instances of Grinch with the same bundle
-/// identifier so we're the only one left when the menu bar item gets
-/// installed. Macos `Launch Services` is *supposed* to route GetURL events
+/// identifier. Macos `Launch Services` is *supposed* to route GetURL events
 /// to an existing process rather than spawn a duplicate, but that routing
 /// can fail in real-world scenarios (stale `LSpref` registration after the
 /// app bundle moves, a developer build vs an installed build with the same
@@ -347,20 +346,19 @@ fn running_app_for_pid(pid: i32) -> Option<Retained<NSRunningApplication>> {
 /// icons that never get reaped — see Finicky issue #515 / PR #516, where
 /// users hit 16 status items on a single machine.
 ///
-/// Serialize duplicate cleanup so simultaneous launches cannot terminate one
-/// another. Then enumerate
+/// Run cleanup off the main thread so another instance can process its quit
+/// request while simultaneous launches are coordinated. Then enumerate
 /// `runningApplicationsWithBundleIdentifier:`, send `terminate` to every
 /// non-self instance, share a single deadline across the poll loop so N
 /// hung duplicates don't cost N× the wait budget, then `forceTerminate`
 /// anything still alive at the deadline.
-///
-/// Returns the number of duplicates that were asked to terminate (0 in the
-/// normal case) so the caller can log a one-liner when something was found.
-pub fn terminate_duplicate_instances() -> usize {
+pub fn terminate_duplicate_instances() {
     let lock_dir = std::path::PathBuf::from(format!("/tmp/grinch-startup-{}", unsafe {
         libc::geteuid()
     }));
-    terminate_duplicate_instances_at(&lock_dir)
+    std::thread::spawn(move || {
+        objc2::rc::autoreleasepool(|_| terminate_duplicate_instances_at(&lock_dir));
+    });
 }
 
 pub(crate) fn terminate_duplicate_instances_at(lock_dir: &std::path::Path) -> usize {
@@ -375,10 +373,6 @@ pub(crate) fn terminate_duplicate_instances_at(lock_dir: &std::path::Path) -> us
             return 0;
         }
     };
-    if waited {
-        // The preceding cleanup may already have requested this process to quit.
-        return 0;
-    }
     let self_pid = NSRunningApplication::currentApplication().processIdentifier();
     let instances = NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id);
 
@@ -395,6 +389,15 @@ pub(crate) fn terminate_duplicate_instances_at(lock_dir: &std::path::Path) -> us
     }
 
     if duplicates.is_empty() {
+        return 0;
+    }
+
+    if waited {
+        // The first cleanup may have run before this instance was registered.
+        // Yield to it instead of letting two routers survive the startup race.
+        if !NSRunningApplication::currentApplication().terminate() {
+            eprintln!("grinch: could not terminate this duplicate instance");
+        }
         return 0;
     }
 

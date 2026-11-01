@@ -781,6 +781,11 @@ fn verify_ordinary_startup_delivery(mtm: MainThreadMarker) {
     let body = std::fs::read_to_string(&entries[0]).unwrap();
     assert_eq!(body.lines().count(), 2, "{body}");
     assert!(body.contains("https://first.example/") && body.contains("https://second.example/"));
+    for line in body.lines() {
+        let event: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(event["opener"]["bundleId"], "");
+        assert_eq!(event["modifiers"]["shift"], false);
+    }
     unsafe {
         if let Some(home) = previous {
             std::env::set_var("HOME", home);

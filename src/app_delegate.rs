@@ -515,7 +515,8 @@ impl Delegate {
             return;
         };
         for pending in urls {
-            self.route_url(engine, &pending.url, &pending.opener, pending.modifiers);
+            let (opener, modifiers) = startup_context(engine, &pending);
+            self.route_url(engine, &pending.url, &opener, modifiers);
         }
     }
 
@@ -1219,6 +1220,25 @@ impl Delegate {
     }
 }
 
+fn startup_context(engine: &Engine, pending: &PendingUrl) -> (Opener, ModifierFlags) {
+    let opener = if engine.needs_opener_full() {
+        pending.opener.clone()
+    } else if engine.needs_opener() {
+        Opener {
+            bundle_id: pending.opener.bundle_id.clone(),
+            ..Opener::default()
+        }
+    } else {
+        Opener::default()
+    };
+    let modifiers = if engine.needs_modifiers() {
+        pending.modifiers
+    } else {
+        ModifierFlags::default()
+    };
+    (opener, modifiers)
+}
+
 fn load_status_image() -> Option<Retained<NSImage>> {
     let image = NSImage::imageNamed(&NSString::from_str("grinchTemplate"))?;
     image.setTemplate(true);
@@ -1562,6 +1582,46 @@ fn sm_open_login_items_settings() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_urls_only_replay_context_the_engine_needs() {
+        let pending = PendingUrl {
+            url: "https://example.com".to_string(),
+            opener: Opener {
+                bundle_id: "com.example.sender".to_string(),
+                name: "Sender".to_string(),
+                path: "/Sender".to_string(),
+                pid: 42,
+            },
+            modifiers: ModifierFlags {
+                shift: true,
+                ..ModifierFlags::default()
+            },
+        };
+        let engine = crate::engine::integration_tests::build_engine(
+            "module.exports = {default: 'com.apple.Safari'};",
+        );
+        let (opener, modifiers) = startup_context(&engine, &pending);
+        assert!(opener.bundle_id.is_empty());
+        assert!(!modifiers.shift);
+
+        let engine = crate::engine::integration_tests::build_engine(
+            "module.exports = {default: 'com.apple.Safari', rules: [{match: from('com.example.sender'), open: null}]};",
+        );
+        let (opener, modifiers) = startup_context(&engine, &pending);
+        assert_eq!(opener.bundle_id, "com.example.sender");
+        assert!(opener.name.is_empty());
+        assert_eq!(opener.pid, 0);
+        assert!(!modifiers.shift);
+
+        let engine = crate::engine::integration_tests::build_engine(
+            "module.exports = {default: (url, ctx) => 'com.apple.Safari'};",
+        );
+        let (opener, modifiers) = startup_context(&engine, &pending);
+        assert_eq!(opener.name, "Sender");
+        assert_eq!(opener.pid, 42);
+        assert!(modifiers.shift);
+    }
 
     /// Includes the real sender lookup and modifier capture omitted by --bench.
     /// Run alone in release mode on a logged-in Mac with Finder running.

@@ -129,7 +129,7 @@ pub(crate) fn parse_browser_jsval(
         // behaviour. Checked before the Name:Profile shorthand because
         // a path can't reasonably carry a profile suffix.
         if looks_like_app_path(&s) {
-            return BrowserSpec::from_app_path(expand_tilde(&s));
+            return BrowserSpec::from_app_path(expand_tilde(&s), diagnostics);
         }
         // Finicky's "Name:Profile" shorthand: a colon separates the app
         // name (or bundle ID) from a profile name. Bundle IDs use `.` not
@@ -195,8 +195,10 @@ pub(crate) fn parse_browser_jsval(
         .unwrap_or_default();
     let app_type = key(v, "appType").and_then(|x| js_to_string(&x));
     let spec = match app_type.as_deref() {
-        Some("path") => BrowserSpec::from_app_path(expand_tilde(&raw_id)),
-        None if looks_like_app_path(&raw_id) => BrowserSpec::from_app_path(expand_tilde(&raw_id)),
+        Some("path") => BrowserSpec::from_app_path(expand_tilde(&raw_id), diagnostics),
+        None if looks_like_app_path(&raw_id) => {
+            BrowserSpec::from_app_path(expand_tilde(&raw_id), diagnostics)
+        }
         Some("bundleId") => BrowserSpec::from_bundle_id(raw_id.clone()),
         // "appName" goes through the same code path as autodetect — both end
         // up at fullPathForApplication. The explicit appType lets the user

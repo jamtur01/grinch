@@ -3862,12 +3862,28 @@ fn browser_spec_paths_keep_the_selected_bundle_copy() {
 fn browser_spec_missing_path_suppresses_launch() {
     let path = unique_tmp("missing-browser").join("Missing.app");
     let quoted = serde_json::to_string(path.to_str().unwrap()).unwrap();
-    let e = build_engine(&format!("module.exports = {{ default: {quoted} }};"));
-    let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
-    assert_eq!(
-        LaunchPlan::from_spec(&result.browser, &result.url),
-        LaunchPlan::Suppress
-    );
+    for expression in [
+        quoted.clone(),
+        format!("{{ name: {quoted}, appType: 'path' }}"),
+        format!("() => {quoted}"),
+    ] {
+        let diagnostics = Rc::new(isolated_diagnostics());
+        let e = build_engine_with_diagnostics(
+            &format!("module.exports = {{ default: {expression} }};"),
+            Rc::clone(&diagnostics),
+        );
+        let result = e.resolve("https://x/", &Opener::default(), ModifierFlags::default());
+        assert_eq!(
+            LaunchPlan::from_spec(&result.browser, &result.url),
+            LaunchPlan::Suppress
+        );
+        assert!(
+            diagnostics
+                .config_warning()
+                .unwrap()
+                .contains(path.to_str().unwrap())
+        );
+    }
 }
 
 #[test]

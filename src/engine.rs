@@ -75,8 +75,11 @@ impl BrowserSpec {
         }
     }
 
-    fn from_app_path(path: String) -> Self {
+    fn from_app_path(path: String, diagnostics: &DiagnosticLog) -> Self {
         let Some(bundle_id) = crate::workspace::resolve_browser_path(&path) else {
+            diagnostics.record_suppressing_warning(&format!(
+                "browser app unavailable at {path}; check your config or reinstall the app"
+            ));
             return Self::empty();
         };
         Self {

@@ -399,6 +399,27 @@ fn config_warnings_include_options_and_prioritize_suppressed_rules() {
 }
 
 #[test]
+fn top_level_warning_scan_does_not_evaluate_properties() {
+    let diagnostics = Rc::new(isolated_diagnostics());
+    let engine = build_engine_with_diagnostics(
+        r#"
+        let reads = 0;
+        const config = { get default() {
+            return ++reads === 1 ? "com.apple.Safari" : "com.google.Chrome";
+        } };
+        Object.defineProperty(config, "typo", { enumerable: true, get() { throw Error("read"); } });
+        module.exports = config;
+    "#,
+        Rc::clone(&diagnostics),
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com").0,
+        "com.apple.Safari"
+    );
+    assert!(diagnostics.config_warning().unwrap().contains("typo"));
+}
+
+#[test]
 fn format_change_includes_profile_errors_from_config_load() {
     let home = unique_tmp("format-profile-error");
     with_home(&home, || {

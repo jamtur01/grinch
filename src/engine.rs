@@ -379,7 +379,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
 /// ignore without a trace. A misplaced option such as a root-level
 /// `hideIcon` gets pointed at `options.hideIcon`.
 fn warn_unknown_top_level_keys(exports: &JSValue, diagnostics: &DiagnosticLog) {
-    for (k, _) in iter_object(exports) {
+    for k in object_keys(exports) {
         if TOP_LEVEL_KEYS.contains(&k.as_str()) {
             continue;
         }

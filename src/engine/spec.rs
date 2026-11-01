@@ -148,7 +148,7 @@ pub(crate) fn parse_browser_jsval(v: &JSValue, diagnostics: &DiagnosticLog) -> B
         return BrowserSpec::empty();
     }
 
-    for field in object_keys(v) {
+    for field in unknown_config_keys(v, "__grinchUnknownBrowserKeys") {
         if ![
             "id",
             "bundleId",

@@ -603,7 +603,11 @@ pub(crate) fn object_keys(v: &JSValue) -> Vec<String> {
     let Some(keys_array) = (unsafe { keys_fn.callWithArguments(Some(&args)) }) else {
         return vec![];
     };
-    let Some(length_jsv) = key(&keys_array, "length") else {
+    string_keys(&keys_array)
+}
+
+fn string_keys(keys_array: &JSValue) -> Vec<String> {
+    let Some(length_jsv) = key(keys_array, "length") else {
         return vec![];
     };
     let length = unsafe { length_jsv.toUInt32() } as usize;
@@ -618,6 +622,30 @@ pub(crate) fn object_keys(v: &JSValue) -> Vec<String> {
         out.push(name_ns.to_string());
     }
     out
+}
+
+pub(crate) fn unknown_config_keys(v: &JSValue, helper: &str) -> Vec<String> {
+    if !unsafe { v.isObject() } {
+        return vec![];
+    }
+    let Some(ctx) = (unsafe { v.context() }) else {
+        return object_keys(v);
+    };
+    let Some(function) = (unsafe { eval_global(&ctx, helper) }) else {
+        return object_keys(v);
+    };
+    if !unsafe { function.isObject() } {
+        return object_keys(v);
+    }
+    let clone: Retained<AnyObject> = unsafe { Retained::cast_unchecked(v.retain()) };
+    let args = NSArray::from_retained_slice(&[clone]);
+    let Some(keys) = (unsafe { function.callWithArguments(Some(&args)) }) else {
+        return object_keys(v);
+    };
+    if !unsafe { keys.isArray() } {
+        return object_keys(v);
+    }
+    string_keys(&keys)
 }
 
 pub(crate) fn iter_object(v: &JSValue) -> Vec<(String, Retained<JSValue>)> {

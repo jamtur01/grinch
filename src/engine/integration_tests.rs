@@ -944,6 +944,57 @@ fn nested_configuration_warnings_show_and_misplaced_profiles_suppress() {
 }
 
 #[test]
+fn nested_warnings_ignore_inherited_keys_and_do_not_read_values() {
+    let diagnostics = Rc::new(isolated_diagnostics());
+    let engine = build_engine_with_diagnostics(
+        r#"var rule = Object.create({ profile: "inherited" });
+           rule.match = "example.com"; rule.open = "com.apple.Safari";
+           Object.defineProperty(rule, "hidden", { value: 1 });
+           Object.defineProperty(rule, "typo", { enumerable: true, get() { throw Error("read"); } });
+           module.exports = { default: null, rules: [new Proxy(rule, {})] };"#,
+        Rc::clone(&diagnostics),
+    );
+    assert_eq!(
+        resolve(&engine, "https://example.com/").0,
+        "com.apple.Safari"
+    );
+    assert!(diagnostics.config_warning().unwrap().contains("typo"));
+    for replacement in [
+        "undefined",
+        "3",
+        "({})",
+        "(() => { throw Error(\"bad\"); })",
+    ] {
+        let source = format!(
+            r#"__grinchUnknownRuleKeys = {replacement};
+            __grinchUnknownBrowserKeys = {replacement};
+            module.exports = {{ default: () => ({{ name: "com.apple.Safari", wrong: true }}),
+                rules: [{{match: "example.com", open: "com.apple.Safari", profile: "Work"}}] }};"#
+        );
+        let engine = build_engine_with_diagnostics(&source, Rc::clone(&diagnostics));
+        assert!(resolve(&engine, "https://example.com/").0.is_empty());
+        assert!(diagnostics.config_warning().unwrap().contains("profile"));
+        assert_eq!(
+            resolve(&engine, "https://other.test/").0,
+            "com.apple.Safari"
+        );
+        let events = std::fs::read_to_string(diagnostics.ensure_file().unwrap()).unwrap();
+        assert!(events.contains("wrong"));
+    }
+    let engine = build_engine_with_diagnostics(
+        r#"Object.defineProperty(Array.prototype, "0", {
+               set(v) {}, get() { return undefined; }, configurable: true
+           });
+           module.exports = { default: "com.apple.Safari", rules: [
+               {match: "example.com", open: "com.google.Chrome", profile: "Work"}
+           ] };"#,
+        Rc::clone(&diagnostics),
+    );
+    assert!(resolve(&engine, "https://example.com/").0.is_empty());
+    assert!(diagnostics.config_warning().unwrap().contains("profile"));
+}
+
+#[test]
 fn unknown_config_keys_do_not_error() {
     // Unknown option and top-level keys log a stderr warning but must not
     // break engine init. A root-level `hideIcon` is not honoured — it only

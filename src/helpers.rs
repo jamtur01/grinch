@@ -576,6 +576,33 @@ var finicky = {
   },
 };
 
+// ---------- Config field checks ----------
+// Keep these known keys in sync with the Rust fallback checks.
+var __grinchUnknownRuleKeys = (function(define) {
+  return function(v) {
+    var keys = Object.keys(v), out = [];
+    for (var i = 0, n = keys.length >>> 0; i < n; i++) {
+      var k = keys[i];
+      if (k !== "match" && k !== "open" && k !== "browser" && k !== "url" && k !== "name")
+        define(out, out.length, {value: k, writable: true, enumerable: true, configurable: true});
+    }
+    return out;
+  };
+})(Object.defineProperty);
+var __grinchUnknownBrowserKeys = (function(define) {
+  return function(v) {
+    var keys = Object.keys(v), out = [];
+    for (var i = 0, n = keys.length >>> 0; i < n; i++) {
+      var k = keys[i];
+      if (k !== "id" && k !== "bundleId" && k !== "name" && k !== "appType" &&
+          k !== "args" && k !== "profile" && k !== "incognito" &&
+          k !== "openInNewWindow" && k !== "openInBackground")
+        define(out, out.length, {value: k, writable: true, enumerable: true, configurable: true});
+    }
+    return out;
+  };
+})(Object.defineProperty);
+
 // ---------- CommonJS scaffolding ----------
 var __grinchModule = { exports: {} };
 "##;

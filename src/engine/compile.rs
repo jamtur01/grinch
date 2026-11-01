@@ -20,7 +20,7 @@ pub(crate) fn parse_rule_array(
             continue;
         };
         let mut misplaced = false;
-        for field in object_keys(&item) {
+        for field in unknown_config_keys(&item, "__grinchUnknownRuleKeys") {
             if ["match", "open", "browser", "url", "name"].contains(&field.as_str()) {
                 continue;
             }

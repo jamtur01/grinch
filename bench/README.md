@@ -37,6 +37,7 @@ count in header comments:
 | `08`–`13`, `16` | JavaScript matchers and rewrites, with and without context |
 | `17-dynamic-default` | A URL-only function used as the default browser target |
 | `18-rewrite-chain` | Mutable URL rewrites followed by a function matcher |
+| `19-dynamic-object` | A dynamic browser target returned as an object |
 | `20-from` | Matching a synthetic opener's bundle ID |
 | `21-logged` | Routing with JSONL serialization and file writes |
 
@@ -72,6 +73,7 @@ Representative release-build measurements on Apple Silicon:
 | slow-slack | 5839.3 |
 | slow-urlonly | 2669.3 |
 | dynamic-default | 2251 |
+| dynamic-object | 7554.2 |
 | rewrite-chain | 14615 |
 | from | 8.5 |
 | logged | 5066.7 |

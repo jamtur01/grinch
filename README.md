@@ -4,10 +4,9 @@
 
 # Grinch
 
-A tiny, fast native macOS browser router. Set it as your default browser
-and it routes each URL to the right one based on rules in
-`~/.grinch.js`, `~/.config/grinch.js`, or `~/.config/grinch/grinch.js`
-(checked in that order; first found wins).
+Grinch is a macOS app that chooses where links open. Set it as your default
+browser and use a JavaScript config to send, for example, work links to a
+Chrome profile, personal links to Safari, and meeting links to Zoom.
 
 Most Finicky **v4** configs work in Grinch unchanged. (Finicky v3 configs
 need updating — see the
@@ -21,6 +20,13 @@ and [Finch](https://github.com/expelledboy/finch).
 - Single DMG, universal binary (Apple Silicon + Intel)
 - Config is real JavaScript — simple cases look like data, full power available
 - Declarative routing in nanoseconds; JavaScript callbacks in microseconds
+
+Get started with [installation](#install) and
+[your first config](#set-up-your-first-config), then explore
+[rules](#rules), [browser targets](#browser-specs), and
+[rewrites](#url-rewrites). For troubleshooting, see the
+[menu bar](#menu-bar), [diagnostic log](#diagnostic-log), and
+[commands](#commands).
 
 ## Install
 
@@ -89,56 +95,390 @@ Pass `UNIVERSAL=1` to `make build` to produce a fat binary locally
 (needs both rustup targets: `rustup target add aarch64-apple-darwin
 x86_64-apple-darwin`).
 
-### After installing
+### Set up your first config
 
-Launch Grinch (look for its eyes in your menu bar), open **System Settings →
-Desktop & Dock → Default web browser** and select Grinch. Edit
-`~/.config/grinch.js` to define your rules — see
-[`examples/grinch.example.js`](examples/grinch.example.js) for the full feature
-surface.
-
-If your finicky.js works as a starting point, copy it across:
-
-```sh
-cp ~/.config/finicky.js ~/.config/grinch.js
-```
-
-`export default { ... }` works as-is (auto-rewritten to `module.exports`).
-You'll still need to convert `await fetch()` calls; see
-"Differences from Finicky" below.
-
-## Configuration
-
-Drop a JavaScript file at one of (checked in this order, first found wins):
-
-1. `~/.grinch.js` — legacy / dotfile
-2. `~/.config/grinch.js` — flat XDG
-3. `~/.config/grinch/grinch.js` — XDG subdir, mirrors Finicky's layout
-4. `/Library/Application Support/Grinch/grinch.js` — system-wide, last in
-   the search order so user paths always win. Intended for MDM-managed
-   Macs and shared workstations where a baseline config gets dropped
-   centrally without per-user provisioning.
-
-It must export a config object via CommonJS:
+1. If you already have a Grinch config, edit that file. Otherwise create
+   `~/.config/grinch.js` with the example below, creating `~/.config` first
+   if needed. Replace the browser targets if you use different apps.
+   Grinch uses the first file in its [config search order](#configuration-files).
+2. Launch Grinch from Applications. Its eyes appear in the menu bar.
+3. In **System Settings → Desktop & Dock → Default web browser**, select
+   **Grinch**. Links opened by other apps now go through your rules.
+4. After changing the config, choose **Reload Config** from the Grinch menu.
+   If a reload fails, Grinch keeps the last successfully loaded config.
 
 ```js
 module.exports = {
-  default: ...,           // required (browser spec, fn, or null for "do nothing")
-  browsers: { ... },      // optional: named-browser dictionary
-  rewrite: [ ... ],       // optional: URL rewriters, applied in order
-  rules: [ ... ],         // optional: routing rules, first match wins
-  options: { ... },       // optional: Finicky-compatible and Grinch-specific settings
+  default: "com.apple.Safari",
+  rules: [
+    { match: "github.com", open: "com.google.Chrome" },
+  ],
 };
 ```
 
-Finicky-style aliases are accepted everywhere: `defaultBrowser`, `handlers`,
-`browser` work identically to `default`, `rules`, `open`.
+This sends `github.com` and its subdomains to Chrome, and everything else to
+Safari. The apps you name must be installed. Grinch can open other apps too,
+such as Zoom or Slack; a “browser” target can be any installed app that can
+handle the URL.
 
-Any other top-level key logs a one-line warning at load time. An option
-placed at the top level (e.g. `hideIcon: true` instead of
-`options: { hideIcon: true }`) is not applied; the warning names the
-`options.<key>` it belongs under. Run `Grinch --validate` to see these
-warnings.
+To check a decision without opening a browser, run:
+
+```sh
+/Applications/Grinch.app/Contents/MacOS/Grinch --test "https://github.com/"
+```
+
+Other examples below use `Grinch` as shorthand for that binary. For an installed
+app, run this in your shell first, or use the full path in each command:
+
+```sh
+alias Grinch='/Applications/Grinch.app/Contents/MacOS/Grinch'
+```
+
+If you're moving from Finicky, copy your config to one of the paths below.
+Grinch accepts `export default { ... }` as well as `module.exports`; see
+[Differences from Finicky](#differences-from-finicky) for compatibility details.
+Only use configuration files you trust: Grinch evaluates them as JavaScript.
+
+## Configuration
+
+Grinch receives a URL, applies every matching [rewrite](#url-rewrites) in
+order, and then checks [rules](#rules) from top to bottom. The first matching
+rule selects a [browser or app](#browser-specs). If none matches, `default`
+selects the destination. A rule or default can also suppress a URL. A dynamic
+`open` function that returns `null` or `undefined` falls through to the next
+rule.
+
+Start with the example above. The full config can also define named browsers,
+rewrites, and options:
+
+```js
+module.exports = {
+  default: "com.apple.Safari", // required; use null to open nothing
+  browsers: {},               // optional named browser targets
+  rewrite: [],                // optional URL transformations
+  rules: [],                  // optional routing rules
+  options: {},                // optional app and logging settings
+};
+```
+
+[`examples/grinch.example.js`](examples/grinch.example.js) is a feature
+reference with more examples.
+
+### Configuration files
+
+Grinch checks these paths in order and uses the first file it finds:
+
+1. `~/.grinch.js`
+2. `~/.config/grinch.js`
+3. `~/.config/grinch/grinch.js`
+4. `/Library/Application Support/Grinch/grinch.js` — a system-wide fallback
+   for managed or shared Macs.
+
+The config exports one object using `module.exports` or `export default`.
+Finicky's `defaultBrowser`, `handlers`, and `browser` are aliases for
+`default`, `rules`, and a rule's `open`, respectively.
+
+Unknown top-level keys produce a warning; put settings such as `hideIcon`
+inside `options`, not at the top level. Run `Grinch --validate` to check the
+config and see warnings.
+
+### Rules
+
+`rules` (or `handlers`) is an array. Each rule has a `match` condition and an
+`open` destination. Grinch checks them in order and stops at the first match:
+
+```js
+rules: [
+  { match: "github.com", open: "com.google.Chrome", name: "work" },
+  { match: "example.com", open: null }, // suppress this URL
+],
+```
+
+`open` (Grinch) and `browser` (Finicky) are aliases.
+A rule can also specify `url` to rewrite a matching URL before opening it.
+See [URL rewrites](#url-rewrites) for the supported return values.
+Unlike a literal `open: null`, a function that returns `null` or `undefined`
+does not suppress the URL: Grinch continues to the next rule.
+
+Each rule entry accepts an optional **`name`** string. It doesn't affect
+routing — it labels the rule in `Grinch --list-rules` output and in the
+`matchedRule.name` field of diagnostic-log `resolve` events. Useful when chasing
+"why did this click go there?" through a config with a dozen fn matchers,
+since the auto-derived label for fn rules is just the first line of
+`f.toString()`.
+
+### Match types
+
+A `match:` field accepts one matcher or an array of them (OR semantics — any
+hit triggers).
+
+| Syntax | Matches | Notes |
+|---|---|---|
+| `"github.com"` | hostname, exactly or as subdomain | Bare strings without `*` or `/` are hostname patterns. Most common form. **Differs from Finicky**: see "Bare-string matcher semantics" below. |
+| `"*.slack.com/*"` | wildcard, full URL | Strings containing `*` or `/` compile to a Finicky-style anchored regex |
+| `"zoom.us/j/*"` | wildcard with implicit `https?://` prefix | |
+| `"slack:*"` | URLs with the slack scheme | |
+| `domain("a.com", "b.com")` | any of the listed hostnames or their subdomains | Compiled to a single byte-level check |
+| `finicky.matchHostnames("github.com")` | exact hostname only — does NOT match subdomains | Finicky-compatible matcher fn. Use this when you specifically need exact-hostname semantics. |
+| `from("com.tinyspeck.slackmacgap")` | URL was opened by this app | Caller bundle ID; matches `ctx.opener.bundleId` |
+| `running("us.zoom.xos")` | this app is currently running | Lazily computed once per resolve |
+| `/regex/` | regex against the full URL | Supports the `i` and `m` flags. |
+| `(url, ctx) => bool` | a user-defined condition | See [the context object](#the-ctx-object). |
+
+#### Bare-string matcher semantics
+
+Grinch's bare string `"github.com"` is a **hostname-and-subdomain shortcut**:
+it matches `https://github.com/`, `https://api.github.com/`, and
+`https://gist.github.com/` alike. This is the most common case for routing
+configs and is the friendliest default.
+
+Finicky v4's same syntax is different — a bare string with no `*` is matched
+as an `===` against `url.href` (the full URL). So `match: "github.com"`
+in Finicky would never fire on a real URL, and users reach for
+`finicky.matchHostnames("github.com")` (exact hostname) or `domain()`
+helpers instead.
+
+For an exact hostname, use `finicky.matchHostnames("github.com")` or a
+function such as `(url) => url.hostname === "github.com"`. A regular
+expression is tested against the full URL, not just the hostname.
+
+If you want subdomain matching across multiple hosts at once:
+
+- `domain("github.com", "gitlab.com")` — Grinch's helper, matches each host
+  AND its subdomains, compiled to a single byte-level check.
+
+Helper return values like `domain(...)`/`from(...)`/`running(...)`/`strip(...)`
+are *data*, not functions — Grinch recognises the marker shape at config-load
+and compiles to native Rust matchers/rewriters. The JS bridge is only crossed
+on the hot path for user-written `(url, ctx) => ...` predicates.
+
+### Browser specs
+
+A browser is one of:
+
+| Form | Means |
+|---|---|
+| `"Google Chrome"` | App display name; Grinch resolves to bundle ID at config-load |
+| `"com.google.Chrome"` | Bundle ID (any reverse-DNS string is treated as one) |
+| `"Google Chrome:Work"` | `Name:Profile` shorthand — splits on the first `:`, resolves the profile to Chromium's directory flag or Firefox's `-P Work`. Only applied to literal config strings; fn-returned strings are treated opaquely |
+| `"/Applications/Foo.app"` or `"~/Apps/Bar.app"` | Path autodetect (Finicky-compatible) — bare-string spec ending in `.app` is resolved via `NSBundle` directly, no `appType: "path"` required. Useful for browsers outside `/Applications` or not registered with LaunchServices |
+| `{ name: "..." }` | Same as a bare string |
+| `{ name: "Google Chrome", profile: "Work" }` | Profile shorthand — resolves the display name to `--profile-directory=<directory>` (Chromium-family) or `-P Work` (Firefox-family) |
+| `{ name: "...", args: ["--incognito"] }` | Bundle ID + extra launch args |
+| `{ name: "...", incognito: true }` | Family-aware private-mode shorthand — `--incognito` (Chromium) or `--private-window` (Firefox). Forces a new instance so the flag is honoured. Safari is not supported (no CLI flag exists) and logs a warning |
+| `{ name: "...", openInNewWindow: true }` | Open as a new top-level window instead of a tab. Chromium and Firefox both honour `--new-window`. Safari has no equivalent CLI flag and logs a warning |
+| `{ name: "...", openInBackground: true }` | Don't activate (keep focus where it is) |
+| `{ name: "/Applications/Foo.app", appType: "path" }` | Path to an `.app` bundle — Grinch opens that exact copy, even when another app has the same bundle ID. Supports `~/` and unregistered bundles |
+| `{ name: "...", appType: "bundleId" }` | Trust the value as a bundle ID, skip the LaunchServices display-name fallback |
+| `{ appType: "none" }` | Explicit no-op browser. Same effect as `open: null` |
+| `(url, ctx) => "..."` | Dynamic target; a function default runs when no rule selects a browser. A rule's function can return `null` or `undefined` to try the next rule. |
+| `null` | Suppress: do nothing. Works as a rule's `open: null` AND as `defaultBrowser: null` (Finicky-compat) — when no rule matches and the default is null, nothing opens |
+
+The `profile` shorthand is auto-expanded for the Chromium family (Chrome,
+Brave, Edge, Vivaldi, Arc, Opera, Opera GX, Chromium, Wavebox, Helium,
+Comet, Yandex) and the Firefox family (Firefox, Firefox Developer Edition,
+Firefox Nightly, Waterfox, LibreWolf, Zen). The exact bundle ID list mirrors
+Finicky's `browsers.json` — see `src/chromium.rs` and `src/firefox.rs` for
+the current set.
+Chromium profiles can be referenced by either their on-disk directory
+("Profile 10") or their display name ("Work") — Grinch resolves through
+Chrome's `Local State`. `Default` and `Profile N` (ASCII digits) are explicit
+directory names and need no profile-file access. Other values must match a
+display name or directory key in `Local State`. If the file is unreadable,
+invalid, or has no matching entry, Grinch logs a `profile_error` and suppresses
+that launch, including dynamic browser targets. It does not try a later rule
+or the default browser. This prevents a display name from accidentally
+selecting or creating a different profile directory.
+
+If profile resolution fails, first open the browser once so it creates its
+profile data, and check the current profile name (especially after a rename).
+Inspect the diagnostic log's file path and OS error to distinguish a missing
+`Local State` file from a read denial. Choose **Reload Config** after correcting
+the name, restoring the file, or changing browser profiles; this refreshes both
+browser families' profile caches.
+
+To route without reading `Local State`, use the final directory component shown
+in **Profile Path** at `chrome://version`, for example `profile: "Profile 1"`.
+Other directory names require a readable `Local State` entry so Grinch can verify
+the key. For an access-denied error, check file ownership and permissions first.
+If macOS privacy controls are blocking the read, **System Settings → Privacy &
+Security → Full Disk Access** may be relevant; this is a broader permission,
+reported as a workaround in [Finicky #556](https://github.com/johnste/finicky/issues/556),
+not a requirement for every profile-resolution failure. Reload Config after
+restoring access.
+
+Read failures are cached too: dynamic browser functions do not retry a failed
+read on the next click. Use **Reload Config** after a transient filesystem error.
+
+Firefox profiles use the name from `profiles.ini`. Unreadable files are logged;
+when a nonempty inventory is available, unknown names are logged too. Grinch
+still passes `-P <name>` to Firefox to resolve.
+Names from Firefox's newer profile-group store are not resolved by Grinch.
+Other browsers' `profile` is dropped with a load-time warning.
+
+You can predefine browsers in a top-level `browsers` map:
+
+```js
+const browsers = {
+  personal: "com.apple.Safari",
+  work:     { name: "com.google.Chrome", profile: "Default" },
+  zen:      "app.zen-browser.zen",
+};
+
+module.exports = {
+  default: "personal",
+  browsers,
+  rules: [{ match: "github.com", open: "work" }],
+};
+```
+
+Refer to entries by key (`open: "work"`) or by JavaScript reference
+(`open: browsers.work`). The map must be included in the exported config for
+string keys to resolve.
+
+### URL rewrites
+
+`rewrite` is an array of transformations applied before routing. Every
+matching rewriter applies, in order. For example, this removes common tracking
+parameters before the rules see the URL:
+
+```js
+rewrite: [strip("utm_*", "fbclid")],
+```
+
+The full set of forms is:
+
+| Form | Effect |
+|---|---|
+| `strip("utm_*", "fbclid")` | Strip these query params (trailing `*` is a prefix wildcard) |
+| `safelinks()` | Unwrap corporate SafeLinks / URL-defense wrappers — see below |
+| `teams_launcher()` | Unwrap MS Teams launcher URLs to `msteams:` — see below |
+| `{ match: ..., url: "https://..." }` | Replace URL when match hits |
+| `{ match: ..., url: (url, ctx) => ... }` | Transform URL via JS |
+| `{ match: ..., url: () => null }` | Drop the URL (suppress, open nothing) |
+
+`safelinks()` is a bare top-level entry (no `match:` field) that recognises
+the most common corporate URL wrappers and extracts the real destination:
+
+- **Microsoft 365 Defender SafeLinks** — `*.safelinks.protection.outlook.com/?url=…`
+- **Microsoft Teams external-link interstitial** — `statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…`
+- **Proofpoint URL Defense v2** — `urldefense.proofpoint.com/v2/url?u=…`
+- **Proofpoint URL Defense v3** — `urldefense.com/v3/__<encoded>__;<marker>!!…` (plus the FedRAMP `urldefense.us` tenant) — uses `*` placeholders with a base64-URL replacement stream and `**X` run-length markers for runs of 2–65
+
+Pass-through on every other host, so it's safe at the top of the rewrite
+chain. Composes cleanly with `strip()` — `[safelinks(), strip("utm_*")]`
+unwraps a Defender-tracked Outlook link, then strips `utm_*` off the
+inner URL. Double-wrapped chains (Defender → Proofpoint and similar) are
+unwrapped up to two levels deep.
+
+`teams_launcher()` is a separate bare top-level entry that handles a
+different Microsoft URL shape — the Teams launcher landing page that
+calendar invites and corporate share links commonly use:
+
+```
+https://teams.microsoft.com/dl/launcher/launcher.html?url=%2F_%23%2Fl%2Fmeetup-join%2F19%3A…
+```
+
+The decoded `url` param is a relative path (`/_#/l/meetup-join/19:…`)
+rather than an absolute URL, so it doesn't fit `safelinks()`'s
+"hidden absolute URL" model. `teams_launcher()` strips the web-app
+routing prefix and rebuilds the URL as `msteams:/l/meetup-join/19:…`,
+which opens in the native Teams app. Pass-through on every other host
+and path. Use it alongside `safelinks()`:
+
+```js
+rewrite: [ safelinks(), teams_launcher(), strip("utm_*") ]
+```
+
+A `url` rewrite function receives a URL instance as its first argument. If it
+declares a second argument, it also receives [context](#the-ctx-object). It
+can return:
+
+| Return | Effect |
+|---|---|
+| `string` | Use as the new URL |
+| `URL` instance (incl. mutated input) | Use `.href` |
+| `{protocol, host, pathname, search, hash, ...}` | Concatenate fields into a URL |
+| `null` | Drop the URL (suppress, open nothing) |
+| `undefined` (or `return;`) | Pass-through — leave the URL unchanged. Matches Finicky v4 |
+
+`new URL(href)` works in user code. The polyfill is mutable: `url.protocol = "https:"`,
+`url.hostname = "..."`, and `url.searchParams.set("k", "v")` are all reflected
+in subsequent reads of `.href`.
+
+### The `ctx` object
+
+User-written matcher, rewrite, and browser functions receive the current URL
+as their first argument. To receive `ctx` as the second argument, explicitly
+declare two parameters, such as `(url, ctx) => ...`. A default parameter such
+as `(url, ctx = {}) => ...` does not request context because JavaScript reports
+its function length as one.
+
+For example, this rule opens links from Mail in Safari:
+
+```js
+{ match: (url, ctx) => ctx.opener?.bundleId === "com.apple.mail",
+  open: "com.apple.Safari" },
+```
+
+`ctx` contains:
+
+```js
+{
+  url: "https://...",            // input URL passed to resolve (the "originalUrl")
+  originalUrl: "https://...",    // alias of ctx.url
+  opener: {                      // OR null — see below
+    bundleId: "com.microsoft.Outlook",
+    name: "Microsoft Outlook",
+    path: "/Applications/Microsoft Outlook.app/Contents/MacOS/Microsoft Outlook",
+    windowTitle: "...",          // lazy: requires Accessibility permission
+  },
+  modifiers: {
+    shift: false, option: false, command: false, control: false,
+  },
+}
+```
+
+`ctx.url` is pinned to the URL passed into `resolve()` — it doesn't reflect
+intermediate rewrites. The first argument (a URL instance) is the *current*
+URL and is rebuilt per fn call.
+
+Grinch uses the Apple Event's sender PID to identify `ctx.opener` when
+available. If the sender cannot be identified, it falls back to the frontmost
+app; if that also fails, `ctx.opener` is `null`. The fallback may not identify
+the original sender. Always guard with
+`if (ctx.opener) { ... }` or optional chaining (`ctx.opener?.bundleId`)
+in fns that read it. This matches Finicky v4's `options.opener` semantics.
+
+`opener.windowTitle` is a lazy getter. The first time a rule reads it,
+Grinch fetches the focused window title via the Accessibility API (~5 ms
+XPC call). Configs that never reference `windowTitle` pay nothing. On first
+launch, Grinch will prompt for Accessibility permission; until granted,
+`windowTitle` returns `""`.
+
+### Globals
+
+Grinch installs the marker helpers — `domain()`, `from()`, `running()`,
+`strip()` — the `URL` polyfill, and the Finicky-compatible `finicky.*`
+namespace (see [Differences from Finicky](#differences-from-finicky)
+for the full inventory). For most routing decisions you can pick either
+the Grinch-native or the Finicky-style form:
+
+| Want | Grinch-native | Finicky-style |
+|---|---|---|
+| Match hostname or subdomain | `domain("github.com", ...)` or `"github.com"` | n/a (use bare string) |
+| Match exact hostname only | `(url) => url.hostname === "github.com"` | `finicky.matchHostnames("github.com")` |
+| Match by opener bundle ID | `from("com.microsoft.Outlook")` | `(url, ctx) => ctx.opener?.bundleId === "..."` |
+| Match if app is running | `running("us.zoom.xos")` | `finicky.isAppRunning("Zoom")` |
+| Read modifier keys | `(url, ctx) => ctx.modifiers.shift` | `finicky.getModifierKeys()` |
+| Read opener metadata | `ctx.opener.{bundleId, name, path, windowTitle}` | (same — `ctx.opener` is shared) |
+
+`console.log/warn/error/info/debug` are wired to stderr with a
+`grinch [level]:` prefix — call them from anywhere in your config to
+trace why a rule did or didn't fire. Objects are JSON-stringified for
+inspection-style debugging.
+
+### Options
 
 The `options` block accepts Finicky v4's keys plus Grinch's log settings:
 
@@ -168,6 +508,46 @@ The `options` block accepts Finicky v4's keys plus Grinch's log settings:
   format in place, record a config error, and print a warning; routing continues.
   An omitted, `null`, or `undefined` value selects the default JSON format.
   `Grinch --validate` shows the warning but still exits 0 for a valid config.
+
+The compatibility options `urlShorteners` (expects
+[external expansion](#working-with-url-shorteners)) and `keepRunning`
+(Grinch is always resident) are accepted but have no effect.
+Unknown keys log a one-line warning.
+
+## Menu bar
+
+Click the Grinch eyes in the menu bar:
+
+| Item | Action |
+|---|---|
+| **Grinch X.Y.Z** | Disabled label at the top showing the running binary's version. Matches `Grinch --version`. |
+| **Open Config** (⌘O) | Opens the active config file in your default `.js` handler (VS Code / Cursor / etc.). |
+| **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
+| **Open Diagnostic Log** | Opens the current diagnostic log. |
+| **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
+| **Check for Updates…** | Checks the latest release now and shows the result. See [Updates](#updates). |
+| **Check for Updates Automatically** | Toggles the daily update check. Greyed out while `options.checkForUpdates` is set. |
+| **Quit Grinch** (⌘Q) | Exit. |
+
+At launch, Grinch terminates other running instances with the same bundle
+identifier before installing its menu bar item, preventing duplicate instances.
+
+When `hideIcon: true` hides the menu-bar icon, reopen the running Grinch app
+from Spotlight or Finder to access **Open Config**, **Reload Config**,
+**Open Diagnostic Log**, and **Check for Updates…**. The window also shows
+config and profile errors. The update button is disabled when the updater is
+unavailable or cannot currently check for updates. Closing the window leaves
+Grinch running in the background.
+
+If a reload fails (syntax error, unreadable file, missing `default`),
+the menu bar icon flips to **⚠️** and a non-clickable "Config error:
+…" item appears at the top of the menu with the first line of the
+failure. The previous engine stays in place so routing keeps working
+until the config is fixed; the next successful reload restores the Grinch
+icon. The full failure is also written as a `config_error` event in the
+diagnostic log.
+
+## Diagnostic log
 
 Grinch keeps a diagnostic log per app launch at
 `~/Library/Logs/Grinch/Grinch_<timestamp>.log`. Config-load errors,
@@ -289,313 +669,6 @@ dynamic browser targets on a click. Hover over the error for the full message
 or open the diagnostic log. A config-load error takes precedence in the menu;
 a successful reload clears the profile warning unless a profile error recurs.
 
-The other two are inert: `urlShorteners` (expects
-[external expansion](#working-with-url-shorteners)) and `keepRunning`
-(Grinch is always resident).
-Unknown keys log a one-line warning.
-
-### Browser specs
-
-A browser is one of:
-
-| Form | Means |
-|---|---|
-| `"Google Chrome"` | App display name; Grinch resolves to bundle ID at config-load |
-| `"com.google.Chrome"` | Bundle ID (any reverse-DNS string is treated as one) |
-| `"Google Chrome:Work"` | `Name:Profile` shorthand — splits on the first `:`, resolves the profile to Chromium's directory flag or Firefox's `-P Work`. Only applied to literal config strings; fn-returned strings are treated opaquely |
-| `"/Applications/Foo.app"` or `"~/Apps/Bar.app"` | Path autodetect (Finicky-compatible) — bare-string spec ending in `.app` is resolved via `NSBundle` directly, no `appType: "path"` required. Useful for browsers outside `/Applications` or not registered with LaunchServices |
-| `{ name: "..." }` | Same as a bare string |
-| `{ name: "Google Chrome", profile: "Work" }` | Profile shorthand — resolves the display name to `--profile-directory=<directory>` (Chromium-family) or `-P Work` (Firefox-family) |
-| `{ name: "...", args: ["--incognito"] }` | Bundle ID + extra launch args |
-| `{ name: "...", incognito: true }` | Family-aware private-mode shorthand — `--incognito` (Chromium) or `--private-window` (Firefox). Forces a new instance so the flag is honoured. Safari is not supported (no CLI flag exists) and logs a warning |
-| `{ name: "...", openInNewWindow: true }` | Open as a new top-level window instead of a tab. Chromium and Firefox both honour `--new-window`. Safari has no equivalent CLI flag and logs a warning |
-| `{ name: "...", openInBackground: true }` | Don't activate (keep focus where it is) |
-| `{ name: "/Applications/Foo.app", appType: "path" }` | Path to an `.app` bundle — Grinch opens that exact copy, even when another app has the same bundle ID. Supports `~/` and unregistered bundles |
-| `{ name: "...", appType: "bundleId" }` | Trust the value as a bundle ID, skip the LaunchServices display-name fallback |
-| `{ appType: "none" }` | Explicit no-op browser. Same effect as `open: null` |
-| `(url, ctx) => "..."` | Dynamic — return any of the above. Works for `defaultBrowser` too (Finicky-compatible): a fn default is invoked at resolve time when no rule matched |
-| `null` | Suppress: do nothing. Works as a rule's `open: null` AND as `defaultBrowser: null` (Finicky-compat) — when no rule matches and the default is null, nothing opens |
-
-The `profile` shorthand is auto-expanded for the Chromium family (Chrome,
-Brave, Edge, Vivaldi, Arc, Opera, Opera GX, Chromium, Wavebox, Helium,
-Comet, Yandex) and the Firefox family (Firefox, Firefox Developer Edition,
-Firefox Nightly, Waterfox, LibreWolf, Zen). The exact bundle ID list mirrors
-Finicky's `browsers.json` — see `src/chromium.rs` and `src/firefox.rs` for
-the current set.
-Chromium profiles can be referenced by either their on-disk directory
-("Profile 10") or their display name ("Work") — Grinch resolves through
-Chrome's `Local State`. `Default` and `Profile N` (ASCII digits) are explicit
-directory names and need no profile-file access. Other values must match a
-display name or directory key in `Local State`. If the file is unreadable,
-invalid, or has no matching entry, Grinch logs a `profile_error` and suppresses
-that launch, including dynamic browser targets. It does not try a later rule
-or the default browser. This prevents a display name from accidentally
-selecting or creating a different profile directory.
-
-If profile resolution fails, first open the browser once so it creates its
-profile data, and check the current profile name (especially after a rename).
-Inspect the diagnostic log's file path and OS error to distinguish a missing
-`Local State` file from a read denial. Choose **Reload Config** after correcting
-the name, restoring the file, or changing browser profiles; this refreshes both
-browser families' profile caches.
-
-To route without reading `Local State`, use the final directory component shown
-in **Profile Path** at `chrome://version`, for example `profile: "Profile 1"`.
-Other directory names require a readable `Local State` entry so Grinch can verify
-the key. For an access-denied error, check file ownership and permissions first.
-If macOS privacy controls are blocking the read, **System Settings → Privacy &
-Security → Full Disk Access** may be relevant; this is a broader permission,
-reported as a workaround in [Finicky #556](https://github.com/johnste/finicky/issues/556),
-not a requirement for every profile-resolution failure. Reload Config after
-restoring access.
-
-Read failures are cached too: dynamic browser functions do not retry a failed
-read on the next click. Use **Reload Config** after a transient filesystem error.
-
-Firefox profiles use the name from `profiles.ini`. Unreadable files are logged;
-when a nonempty inventory is available, unknown names are logged too. Grinch
-still passes `-P <name>` to Firefox to resolve.
-Names from Firefox's newer profile-group store are not resolved by Grinch.
-Other browsers' `profile` is dropped with a load-time warning.
-
-You can predefine browsers in a top-level `browsers` map:
-
-```js
-const browsers = {
-  personal: { name: "Google Chrome", profile: "Personal" },
-  work:     { name: "Google Chrome", profile: "Work" },
-  zen:      "app.zen-browser.zen",
-};
-```
-
-then refer to them by key (`open: "personal"`) or by reference
-(`open: browsers.personal`).
-
-### Match types
-
-A `match:` field accepts one matcher or an array of them (OR semantics — any
-hit triggers).
-
-| Syntax | Matches | Notes |
-|---|---|---|
-| `"github.com"` | hostname, exactly or as subdomain | Bare strings without `*` or `/` are hostname patterns. Most common form. **Differs from Finicky**: see "Bare-string matcher semantics" below. |
-| `"*.slack.com/*"` | wildcard, full URL | Strings containing `*` or `/` compile to a Finicky-style anchored regex |
-| `"zoom.us/j/*"` | wildcard with implicit `https?://` prefix | |
-| `"slack:*"` | URLs with the slack scheme | |
-| `domain("a.com", "b.com")` | any of the listed hostnames or their subdomains | Compiled to a single byte-level check |
-| `finicky.matchHostnames("github.com")` | exact hostname only — does NOT match subdomains | Finicky-compatible matcher fn. Use this when you specifically need exact-hostname semantics. |
-| `from("com.tinyspeck.slackmacgap")` | URL was opened by this app | Caller bundle ID; matches `ctx.opener.bundleId` |
-| `running("us.zoom.xos")` | this app is currently running | Lazily computed once per resolve |
-
-#### Bare-string matcher semantics
-
-Grinch's bare string `"github.com"` is a **hostname-and-subdomain shortcut**:
-it matches `https://github.com/`, `https://api.github.com/`, and
-`https://gist.github.com/` alike. This is the most common case for routing
-configs and is the friendliest default.
-
-Finicky v4's same syntax is different — a bare string with no `*` is matched
-as an `===` against `url.href` (the full URL). So `match: "github.com"`
-in Finicky would never fire on a real URL, and users reach for
-`finicky.matchHostnames("github.com")` (exact hostname) or `domain()`
-helpers instead.
-
-If you want the strict Finicky semantics on a port, use either:
-
-- `finicky.matchHostnames("github.com")` for exact hostname matching, **or**
-- `/^github\.com$/` (regex anchored to the full URL — no, wait: that's the
-  full URL not just hostname; use `(url) => url.hostname === "github.com"`
-  for the hostname-only check).
-
-If you want subdomain matching across multiple hosts at once:
-
-- `domain("github.com", "gitlab.com")` — Grinch's helper, matches each host
-  AND its subdomains, compiled to a single byte-level check.
-| `/regex/` | regex against full URL | Honours `i` and `m` flags from the JS literal (matches Finicky / native `RegExp.test`); without `i`, matching is case-sensitive |
-| `(url, ctx) => bool` | anything | Slow path (~10 µs extra) — full power |
-
-Helper return values like `domain(...)`/`from(...)`/`running(...)`/`strip(...)`
-are *data*, not functions — Grinch recognises the marker shape at config-load
-and compiles to native Rust matchers/rewriters. The JS bridge is only crossed
-on the hot path for user-written `(url, ctx) => ...` predicates.
-
-### URL rewrites
-
-`rewrite` is an array. Every matching rewriter applies, in order.
-
-| Form | Effect |
-|---|---|
-| `strip("utm_*", "fbclid")` | Strip these query params (trailing `*` is a prefix wildcard) |
-| `safelinks()` | Unwrap corporate SafeLinks / URL-defense wrappers — see below |
-| `teams_launcher()` | Unwrap MS Teams launcher URLs to `msteams:` — see below |
-| `{ match: ..., url: "https://..." }` | Replace URL when match hits |
-| `{ match: ..., url: (url, ctx) => ... }` | Transform URL via JS |
-| `{ match: ..., url: () => null }` | Drop the URL (suppress, open nothing) |
-
-`safelinks()` is a bare top-level entry (no `match:` field) that recognises
-the most common corporate URL wrappers and extracts the real destination:
-
-- **Microsoft 365 Defender SafeLinks** — `*.safelinks.protection.outlook.com/?url=…`
-- **Microsoft Teams external-link interstitial** — `statics.teams.cdn.office.net/evergreen-assets/safelinks/?url=…`
-- **Proofpoint URL Defense v2** — `urldefense.proofpoint.com/v2/url?u=…`
-- **Proofpoint URL Defense v3** — `urldefense.com/v3/__<encoded>__;<marker>!!…` (plus the FedRAMP `urldefense.us` tenant) — uses `*` placeholders with a base64-URL replacement stream and `**X` run-length markers for runs of 2–65
-
-Pass-through on every other host, so it's safe at the top of the rewrite
-chain. Composes cleanly with `strip()` — `[safelinks(), strip("utm_*")]`
-unwraps a Defender-tracked Outlook link, then strips `utm_*` off the
-inner URL. Double-wrapped chains (Defender → Proofpoint and similar) are
-unwrapped up to two levels deep.
-
-`teams_launcher()` is a separate bare top-level entry that handles a
-different Microsoft URL shape — the Teams launcher landing page that
-calendar invites and corporate share links commonly use:
-
-```
-https://teams.microsoft.com/dl/launcher/launcher.html?url=%2F_%23%2Fl%2Fmeetup-join%2F19%3A…
-```
-
-The decoded `url` param is a relative path (`/_#/l/meetup-join/19:…`)
-rather than an absolute URL, so it doesn't fit `safelinks()`'s
-"hidden absolute URL" model. `teams_launcher()` strips the web-app
-routing prefix and rebuilds the URL as `msteams:/l/meetup-join/19:…`,
-which opens in the native Teams app. Pass-through on every other host
-and path. Use it alongside `safelinks()`:
-
-```js
-rewrite: [ safelinks(), teams_launcher(), strip("utm_*") ]
-```
-
-A `url` rewrite function receives a URL instance as its first argument and
-the ctx as its second. It can return:
-
-| Return | Effect |
-|---|---|
-| `string` | Use as the new URL |
-| `URL` instance (incl. mutated input) | Use `.href` |
-| `{protocol, host, pathname, search, hash, ...}` | Concatenate fields into a URL |
-| `null` | Drop the URL (suppress, open nothing) |
-| `undefined` (or `return;`) | Pass-through — leave the URL unchanged. Matches Finicky v4 |
-
-`new URL(href)` works in user code. The polyfill is mutable: `url.protocol = "https:"`,
-`url.hostname = "..."`, and `url.searchParams.set("k", "v")` are all reflected
-in subsequent reads of `.href`.
-
-### Rules
-
-`rules` (or `handlers`) is an array. First match wins.
-
-```js
-rules: [
-  { match: ..., open: ... },                    // route to a browser
-  { match: ..., open: null },                   // suppress (open nothing)
-  { match: ..., url: ..., open: ... },          // rewrite on match, then route
-  { match: ..., open: ..., name: "label" },     // optional human label (see below)
-]
-```
-
-`open` (Grinch) and `browser` (Finicky) are aliases.
-
-Each rule entry accepts an optional **`name`** string. It doesn't affect
-routing — it labels the rule in `Grinch --list-rules` output and in the
-`matchedRule.name` field of diagnostic-log `resolve` events. Useful when chasing
-"why did this click go there?" through a config with a dozen fn matchers,
-since the auto-derived label for fn rules is just the first line of
-`f.toString()`.
-
-### The `ctx` object
-
-The second argument to every user fn is `ctx`:
-
-```js
-{
-  url: "https://...",            // input URL passed to resolve (the "originalUrl")
-  originalUrl: "https://...",    // alias of ctx.url
-  opener: {                      // OR null — see below
-    bundleId: "com.microsoft.Outlook",
-    name: "Microsoft Outlook",
-    path: "/Applications/Microsoft Outlook.app/Contents/MacOS/Microsoft Outlook",
-    windowTitle: "...",          // lazy: requires Accessibility permission
-  },
-  modifiers: {
-    shift: false, option: false, command: false, control: false,
-  },
-}
-```
-
-`ctx.url` is pinned to the URL passed into `resolve()` — it doesn't reflect
-intermediate rewrites. The first argument (a URL instance) is the *current*
-URL and is rebuilt per fn call.
-
-`ctx.opener` is identified via the GURL Apple Event's sender PID
-(`keySenderPIDAttr`), so it survives LaunchServices activating Grinch
-ahead of our open-URL callback — the frontmost-app heuristic would
-otherwise report Grinch itself once macOS shifted focus. `ctx.opener`
-is `null` only when the event lacks the sender attribute or the sending
-process exited between event delivery and lookup. Always guard with
-`if (ctx.opener) { ... }` or optional chaining (`ctx.opener?.bundleId`)
-in fns that read it. This matches Finicky v4's `options.opener` semantics.
-
-`opener.windowTitle` is a lazy getter. The first time a rule reads it,
-Grinch fetches the focused window title via the Accessibility API (~5 ms
-XPC call). Configs that never reference `windowTitle` pay nothing. On first
-launch, Grinch will prompt for Accessibility permission; until granted,
-`windowTitle` returns `""`.
-
-### Globals
-
-Grinch installs the marker helpers — `domain()`, `from()`, `running()`,
-`strip()` — the `URL` polyfill, and the Finicky-compatible `finicky.*`
-namespace (see [Differences from Finicky](#differences-from-finicky)
-for the full inventory). For most routing decisions you can pick either
-the Grinch-native or the Finicky-style form:
-
-| Want | Grinch-native | Finicky-style |
-|---|---|---|
-| Match hostname or subdomain | `domain("github.com", ...)` or `"github.com"` | n/a (use bare string) |
-| Match exact hostname only | n/a (use bare string with no `.`) | `finicky.matchHostnames("github.com")` |
-| Match by opener bundle ID | `from("com.microsoft.Outlook")` | `(url, ctx) => ctx.opener.bundleId === "..."` |
-| Match if app is running | `running("us.zoom.xos")` | `finicky.isAppRunning("Zoom")` |
-| Read modifier keys | `(url, ctx) => ctx.modifiers.shift` | `finicky.getModifierKeys()` |
-| Read opener metadata | `ctx.opener.{bundleId, name, path, windowTitle}` | (same — `ctx.opener` is shared) |
-
-`console.log/warn/error/info/debug` are wired to stderr with a
-`grinch [level]:` prefix — call them from anywhere in your config to
-trace why a rule did or didn't fire. Objects are JSON-stringified for
-inspection-style debugging.
-
-### Menu bar
-
-Click the Grinch eyes in the menu bar:
-
-| Item | Action |
-|---|---|
-| **Grinch X.Y.Z** | Disabled label at the top showing the running binary's version. Matches `Grinch --version`. |
-| **Open Config** (⌘O) | Opens the active config file in your default `.js` handler (VS Code / Cursor / etc.). |
-| **Reload Config** (⌘R) | Re-evaluates the config without relaunching. Equivalent to `kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)`. |
-| **Open Diagnostic Log** | Opens the current diagnostic log. |
-| **Start at Login** | Toggles `SMAppService.mainApp` registration. Off by default; the entry also appears in System Settings → General → Login Items so users can disable it from there. |
-| **Check for Updates…** | Checks the latest release now and shows the result. See [Updates](#updates). |
-| **Check for Updates Automatically** | Toggles the daily update check. Greyed out while `options.checkForUpdates` is set. |
-| **Quit Grinch** (⌘Q) | Exit. |
-
-At launch, Grinch terminates other running instances with the same bundle
-identifier before installing its menu bar item, preventing duplicate instances.
-
-When `hideIcon: true` hides the menu-bar icon, reopen the running Grinch app
-from Spotlight or Finder to access **Open Config**, **Reload Config**,
-**Open Diagnostic Log**, and **Check for Updates…**. The window also shows
-config and profile errors. The update button is disabled when the updater is
-unavailable or cannot currently check for updates. Closing the window leaves
-Grinch running in the background.
-
-If a reload fails (syntax error, unreadable file, missing `default`),
-the menu bar icon flips to **⚠️** and a non-clickable "Config error:
-…" item appears at the top of the menu with the first line of the
-failure. The previous engine stays in place so routing keeps working
-until the config is fixed; the next successful reload restores the Grinch
-icon. The full failure is also written as a `config_error` event in the
-diagnostic log.
-
 ## SSO / OAuth popups
 
 Apps that use `ASWebAuthenticationSession` for sign-in send their URLs through
@@ -637,70 +710,17 @@ state, so the isolation Apple promises for
 delivered. macOS may handle requests for ephemeral sessions in Safari instead;
 those requests bypass Grinch's routing rules.
 
-## Known Chrome behaviour: a link opens in a new window
+## Chrome opens a link in a new window
 
-Occasionally a routed link opens in a **new** Chrome window instead of an
-existing window of the target profile — and every link after that reuses the
-new window. This is upstream Chromium behaviour on macOS, not a Grinch bug;
-Finicky shows the same symptom
-([finicky#514](https://github.com/johnste/finicky/issues/514)).
+When a rule selects a Chrome profile, a link can open in a new window even if
+that profile already has a normal window. This can happen when the profile's
+most recently active Chrome window is a web app, popup, or DevTools window.
+Chrome chooses the window after Grinch passes it the URL and profile.
 
-Delivering a profile (`--profile-directory=…`) requires launching Chrome with
-command-line arguments, so the URL arrives through Chrome's startup path rather
-than its Apple Event URL handler. There `DetermineBrowserOpenBehavior` returns
-`USE_EXISTING` (Grinch never passes `--new-window`), and the window to reuse is
-chosen by `GetExistingBrowserForOpenBehavior` in
-`chrome/browser/ui/startup/startup_browser_creator_impl.cc`:
-
-```cpp
-BrowserWindowInterface* current_browser =
-    ProfileBrowserCollection::GetForProfile(profile)->GetLastActiveBrowser();
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)  // extra pass: prefer TYPE_NORMAL
-#if BUILDFLAG(IS_LINUX)                          // extra pass: prefer TYPE_NORMAL
-return workspace_browser;
-```
-
-There is no `IS_MAC` branch, so on macOS the choice is only "the profile's most
-recently *activated* browser, of any type". `OpenTabsInBrowser` then does:
-
-```cpp
-if (!browser || !browser->is_type_normal()) { browser = Browser::Create(params); }
-```
-
-So when the last-activated browser in that profile is **not an ordinary tabbed
-window** — a Chrome web-app/PWA window, a popup, DevTools — Chrome creates a new
-window even though ordinary windows of that profile are open. Windows, ChromeOS
-and Linux each have a fallback pass that looks for a `TYPE_NORMAL` window;
-macOS has none.
-
-This is a regression introduced in **Chrome 146** (bisect: good `145.0.7632.0`,
-bad `146.0.7633.0`) by [CL addcbeb3](https://crrev.com/c/7279203), which removed
-the `chrome::FindTabbedBrowser` call from the startup path. That
-function filtered to tabbed (`TYPE_NORMAL`) windows *and* preferred the current
-workspace; `GetLastActiveBrowser()` does neither.
-
-Only the workspace half was reported —
-[crbug 497494119](https://issues.chromium.org/issues/497494119), "External links
-open in last-focused Chrome window on another virtual desktop" — and fixed for
-Linux, then Windows and ChromeOS ([CL](https://crrev.com/c/7717627)).
-That report was explicitly *not reproducible on macOS* (it is about virtual
-desktops), so macOS never received a replacement pass and therefore still has no
-`TYPE_NORMAL` filter. The window-type half appears to be unreported upstream.
-
-It looks random because it depends on which window you last touched: with a few
-Chrome web apps installed (Gmail, Outlook, Teams, …), any of them being the last
-window you used in that profile is enough to trigger it.
-
-Affects Chrome 146 and later. Verified by reading Chrome 150
-(`refs/branch-heads/7871`) and reproduced deterministically — activating a Chrome
-web-app window and then routing a link to that profile creates a new window every
-time; activating an ordinary window first reuses it every time.
-
-**Workaround:** make sure an ordinary Chrome window was the last one you used in
-the target profile. Grinch can't influence the choice — it happens inside Chrome
-after the launch, and no command-line flag selects the window. To observe it,
-`scripts/click-watch.sh` prints the launch strategy and Chrome window-count
-delta for each routed click.
+As a workaround, activate an ordinary Chrome window for the target profile
+before opening the link. The behavior was reproduced with Chrome 150; see
+[Grinch issue #3](https://github.com/jamtur01/grinch/issues/3) and
+[Finicky issue #514](https://github.com/johnste/finicky/issues/514) for details.
 
 ## Working with URL shorteners
 
@@ -821,28 +841,14 @@ when it's already lowercase ASCII.
 | `domain()` match | 46.1 |
 | Regex match | 23.1 |
 | Wildcard match (`"zoom.us/j/*"`) | 31.6 |
-| 50 bare-hostname rules, last one wins | 268.1 |
+| 50 bare-hostname rules, last one matches | 268.1 |
 
 ### Slow path (configs with `(url, ctx) => …` fn matchers)
 
-User-written predicates and rewrites cross into JavaScriptCore. URL-only
-callbacks (`(url) => …`), including dynamic defaults, skip the `__grinchMakeCtx`
-build and the upstream LaunchServices opener lookup — only fns declaring
-a second formal arg pay for ctx. The first JS-bridge call in a resolve
-costs ~2.5 µs (URL polyfill + cached opener-field JSValues); subsequent
-matcher calls within the same resolve reuse the cached args. Rewrite callbacks
-invalidate their mutable URL arguments so later callbacks see the current URL.
-Ctx build itself reuses pre-built `true`/`false` JSValues for modifier flags.
-
-A few smaller wins compound on this path: `apply_rewrite` short-circuits
-in Rust for the common fn-return shapes (string, null, undefined, URL
-polyfill instance with non-empty `.href`) instead of always going
-through the `__grinchRewriteResult` JS helper — the LegacyURLObject
-case still does. Result-checks use `JSValueGetType` (one C call) in
-place of paired `isNull()` + `isUndefined()` Obj-C dispatches. Each fn
-matcher is one JS bridge crossing, so a config with N fn matchers that
-all fall through crosses N times — the *"4 fn matchers reading
-`ctx.opener`"* row below exercises that path.
+User-written predicates and rewrites run in JavaScriptCore. Functions that
+explicitly declare a second parameter also request the context object and its
+opener and modifier information. Use these functions when a declarative matcher
+or rewrite does not express the rule you need.
 
 | Workload | ns/op |
 |---|---:|
@@ -867,22 +873,6 @@ Memory use varies with configuration and workload.
 
 Finicky bundles a WebKit instance for its config UI, which accounts for
 the bulk of its memory footprint.
-
-### How it works
-
-`domain()`, `from()`, `strip()`, etc. return marker objects like
-`{__type: "domain", hosts: [...]}` that Rust recognises at config load
-and compiles to native `regex::Regex` / `HashSet<String>` / etc. The
-Rust↔JS bridge is only crossed for user-written `(url, ctx) => ...`
-predicates and rewrites. Within a single resolve, the URL instance,
-ctx object, parsed hostname, and `fn_args` NSArray are cached and
-reused across callbacks.
-
-LaunchServices lookups (`URLForApplicationWithBundleIdentifier`,
-`fullPathForApplication`) and Chromium `Local State` parsing are also
-cached — first call hits the system, subsequent calls are HashMap
-probes. `BrowserSpec`s are held as `Rc<…>` internally so a successful
-match is a refcount bump, not a `String + Vec<String>` deep clone.
 
 ## Differences from Finicky
 

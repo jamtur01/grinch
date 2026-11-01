@@ -31,8 +31,8 @@
     <img class="hero-logo" src="grinch-icon.svg" width="128" height="128" alt="">
     <h1>Grinch</h1>
     <p class="tagline">
-      A tiny, fast macOS browser router. Sends each URL to the right browser via
-      a JavaScript config — most Finicky v4 configs work unchanged.
+      Choose where links open on your Mac. Grinch uses your JavaScript rules to
+      send each link to a browser, profile, or app.
     </p>
     <div class="ctas">
       <a class="cta primary" href="https://github.com/jamtur01/grinch/releases/latest">Download&nbsp;DMG</a>
@@ -72,23 +72,13 @@
       from apps using <code>ASWebAuthenticationSession</code> use the same browser
       routing rules as other links.</li>
   </ul>
-  <p>Authentication requests received during startup wait for the initial configuration
-    load attempt. Grinch returns an error if configuration is unavailable, routing
-    suppresses the URL, or the browser cannot be opened. Requests canceled during
-    startup do not launch a browser.</p>
-  <p>Authentication callbacks must return to Grinch to complete the pending session.
-    Grinch forwards the initial URL as a normal browser tab and cannot observe later
-    navigation. Apps that rely solely on the authentication-session callback can
-    remain waiting after sign-in.
-    Custom-scheme callbacks work on macOS 13 and later; HTTPS host/path callbacks
-    require macOS 14.4 or later.</p>
-  <p>Grinch does not advertise ephemeral-session support. macOS may handle those
-    requests in Safari instead, bypassing Grinch's routing rules.</p>
 </section>
 
 <section id="install">
   <h2>Install</h2>
-  <p>Grab the DMG, drag <code>Grinch.app</code> to <code>/Applications</code>, then set Grinch as your default browser in System Settings.</p>
+  <p>Grab the DMG and drag <code>Grinch.app</code> to <code>/Applications</code>.
+    Create a config as shown below, launch Grinch, then select it under
+    <strong>System Settings → Desktop &amp; Dock → Default web browser</strong>.</p>
 <pre><code>DMG=$(curl -fsSL https://api.github.com/repos/jamtur01/grinch/releases/latest \
   | grep -oE '"browser_download_url": "[^"]*\.dmg"' | cut -d'"' -f4)
 curl -fsSL "$DMG" -o /tmp/grinch.dmg
@@ -111,34 +101,30 @@ make run</code></pre>
 
 <section id="config">
   <h2>Configure</h2>
-  <p>Drop a JavaScript file at <code>~/.grinch.js</code>, <code>~/.config/grinch.js</code>, or <code>~/.config/grinch/grinch.js</code> (Grinch checks each in that order; first found wins). First matching rule wins.</p>
+  <p>Edit your existing Grinch config, or create <code>~/.config/grinch.js</code>
+    with the example below. Create <code>~/.config</code> first if needed, and
+    replace the browser targets if you use different apps. Grinch uses the first
+    file in its <a href="https://github.com/jamtur01/grinch#configuration-files">config search order</a>.</p>
 <pre><code>module.exports = {
-  default: "org.mozilla.firefox",
-
+  default: "com.apple.Safari",
   rules: [
-    // Slack invitations open in Chrome. `name:` is optional — it labels
-    // the rule in --list-rules and resolve log events; doesn't affect routing.
-    { match: from("com.tinyspeck.slackmacgap"),
-      open: "Google Chrome",
-      name: "slack-to-chrome" },
-
-    // GitHub goes to a work Chrome profile. Bare-string match covers
-    // `github.com` and all subdomains (api., gist., raw., …).
-    { match: "github.com",
-      open: { name: "Google Chrome", profile: "Work" } },
-
-    // Zoom links open the native client.
-    { match: /^https:\/\/[a-z0-9-]+\.zoom\.us\/j\//,
-      open: "us.zoom.xos" },
-  ],
-
-  rewrite: [
-    // Force HTTPS on a few hosts.
-    { match: /^http:\/\/(developer\.apple\.com|news\.ycombinator\.com)/,
-      url: ({ url }) =&gt; ({ ...url, protocol: "https" }) },
+    { match: "github.com", open: "com.google.Chrome" },
   ],
 };</code></pre>
-  <p>Reload after editing: <code>kill -HUP $(pgrep -f Grinch.app/Contents/MacOS/Grinch)</code> — or click <em>Reload Config</em> in the menu.</p>
+  <p>Links to GitHub or its subdomains open in Chrome; other links open in Safari.
+    A target can also be another app, such as Zoom. Choose <em>Reload Config</em>
+    in the menu after editing.</p>
+  <p>Grinch applies matching URL rewrites in order, then checks rules from top to
+    bottom. The first match chooses the app; <code>default</code> handles the rest.
+    An <code>open</code> function returning <code>null</code> or <code>undefined</code>
+    continues to the next rule.
+    See the <a href="https://github.com/jamtur01/grinch#configuration">configuration guide</a>
+    for browser profiles, match types, rewrites, and options.</p>
+  <p>For the terminal commands below, use the installed binary or define this
+    alias in your shell:</p>
+<pre><code>alias Grinch='/Applications/Grinch.app/Contents/MacOS/Grinch'
+Grinch --test "https://github.com/"</code></pre>
+  <p>The test prints the routing decision without opening a browser.</p>
 </section>
 
 <section id="diagnostics">
@@ -148,10 +134,7 @@ make run</code></pre>
 
   <h3>List the loaded rules</h3>
   <p><code>Grinch --list-rules</code> prints every rule with its index, label, and target — pair with the diagnostic log to map a <code>matchedRule.index</code> back to the actual entry in your config.</p>
-<pre><code>0: zoom.us/j/* | *.zoom.us/j/* → us.zoom.xos
-1: [slack-to-chrome] from:com.tinyspeck.slackmacgap → com.google.Chrome
-2: github.com → com.google.Chrome --profile-directory=Profile 1
-3: fn: (url, ctx) =&gt; ctx.modifiers.shift → com.google.Chrome --profile-directory=Profile 1</code></pre>
+<pre><code>0: github.com → com.google.Chrome</code></pre>
 
   <h3>Open the diagnostic log</h3>
   <p>Grinch records config-load, runtime JavaScript, profile, and browser launch errors
@@ -176,7 +159,7 @@ make run</code></pre>
 <pre><code>2026-05-11T12:57:25-0400  config_error
   message: SyntaxError (line 4)
   path: /Users/alex/.grinch.js</code></pre>
-  <p>A resolve event contains routing details:</p>
+  <p>For a different configuration, a resolve event might contain these routing details:</p>
 <pre><code>{
   "date": "2026-05-11T12:57:25-0400",
   "event": "resolve",
@@ -221,7 +204,9 @@ make run</code></pre>
     Chromium error shows a warning icon and a <strong>Profile error:</strong> menu item,
     with the full message in its tooltip. This includes errors discovered on a
     click; a successful reload clears the warning unless the error recurs.</p>
-  <p class="note">The opener is identified via the GURL Apple Event's <code>keySenderPIDAttr</code>, so it's the app that actually sent the URL — not whichever app happens to be frontmost when Grinch's callback fires.</p>
+  <p class="note">Grinch identifies the opener from the Apple Event's sender when
+    available. Otherwise it falls back to the frontmost app, which may not be the
+    original sender.</p>
 
   <h3>Headless checks</h3>
   <p><code>Grinch --validate</code> loads the config and exits 0 (with the resolved path and rule count) or 1 (with the captured load error). Designed for editor save-hooks and CI:</p>
@@ -249,6 +234,24 @@ app.zen-browser.zen            Zen
 <pre><code>open grinch:https://example.com/path
 open 'grinch:tel:+15551234567'        # tel: / webcal: / feed: are claimed too</code></pre>
   <p>A third shape, <code>grinch://open/&lt;base64-url&gt;</code>, accepts a <code>btoa()</code>-encoded inner URL. This is the envelope shape Finicky's published Chrome and Firefox addons emit, so pointing those addons at <code>grinch://open/…</code> instead of <code>finicky://open/…</code> makes "Open with Finicky" route through Grinch.</p>
+</section>
+
+<section id="authentication">
+  <h2>Sign-in links</h2>
+  <p>Apps using <code>ASWebAuthenticationSession</code> send sign-in links through
+    Grinch's normal routing rules.</p>
+  <p>Authentication requests received during startup wait for the initial configuration
+    load attempt. Grinch returns an error if configuration is unavailable, routing
+    suppresses the URL, or the browser cannot be opened. Requests canceled during
+    startup do not launch a browser.</p>
+  <p>Authentication callbacks must return to Grinch to complete the pending session.
+    Grinch forwards the initial URL as a normal browser tab and cannot observe later
+    navigation. Apps that rely solely on the authentication-session callback can
+    remain waiting after sign-in.
+    Custom-scheme callbacks work on macOS 13 and later; HTTPS host/path callbacks
+    require macOS 14.4 or later.</p>
+  <p>Grinch does not advertise ephemeral-session support. macOS may handle those
+    requests in Safari instead, bypassing Grinch's routing rules.</p>
 </section>
 
 <section id="performance">

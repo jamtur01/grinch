@@ -30,7 +30,7 @@ use objc2_foundation::{
 };
 
 use crate::engine::{DiagnosticLog, Engine, ModifierFlags};
-use crate::loader::{find_config_path, load_config};
+use crate::loader::{CONFIG_PATH_HINT, find_config_path, load_config};
 use crate::updater::Updater;
 use crate::workspace::{
     Opener, current_modifier_flags, ensure_accessibility_permission, frontmost_opener,
@@ -792,11 +792,7 @@ impl Delegate {
     fn open_config(&self) {
         let path_ref = self.ivars().config_path.borrow();
         let Some(path) = path_ref.as_ref() else {
-            eprintln!(
-                "grinch: no config to open — create one at ~/.grinch.js, \
-                 ~/.config/grinch.js, ~/.config/grinch/grinch.js, or \
-                 /Library/Application Support/Grinch/grinch.js (system-wide)"
-            );
+            eprintln!("grinch: no config to open — create one at {CONFIG_PATH_HINT}");
             return;
         };
         let path_ns = NSString::from_str(&path.to_string_lossy());

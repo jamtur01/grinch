@@ -25,6 +25,9 @@ use objc2_javascript_core::{JSContext, JSValue};
 use crate::engine::{DiagnosticLog, js_exception_detail};
 use crate::helpers::{JS_PRELUDE, preprocess_es_module_syntax, wrap_user_config};
 
+pub(crate) const CONFIG_PATH_HINT: &str = "~/.grinch.js, ~/.config/grinch.js, \
+    ~/.config/grinch/grinch.js, or /Library/Application Support/Grinch/grinch.js (system-wide)";
+
 pub struct LoadedConfig {
     pub exports: Retained<JSValue>,
     // Context owns all JSValues; must outlive the engine.
@@ -78,10 +81,7 @@ pub fn load_config(diagnostics: Rc<DiagnosticLog>) -> Result<LoadedConfig, Strin
             return Err(record_config_error(&diagnostics, Some(&path), msg));
         }
         ReadOutcome::Missing => {
-            let msg = "no config at any of: ~/.grinch.js, ~/.config/grinch.js, \
-                       ~/.config/grinch/grinch.js, \
-                       /Library/Application Support/Grinch/grinch.js — create one"
-                .to_string();
+            let msg = format!("no config at any of: {CONFIG_PATH_HINT} — create one");
             eprintln!("grinch: {msg}");
             return Err(record_config_error(&diagnostics, None, msg));
         }

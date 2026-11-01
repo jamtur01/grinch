@@ -116,8 +116,8 @@
     appears in <code>Grinch --list-rules</code> and in the
     <code>matchedRule.name</code> field of diagnostic-log <code>resolve</code>
     events, which helps when a config has several function matchers: their
-    automatic label joins the function's source onto one line and truncates it
-    after 80 characters.</p>
+    automatic label joins the function's source onto one line. The full label
+    is truncated after 80 characters.</p>
   <p>A rule's own fields are <code>match</code>, <code>open</code> (or
     Finicky's <code>browser</code>), <code>url</code>, and <code>name</code>.
     Launch options belong inside the <a href="#browser-targets">browser
@@ -357,7 +357,7 @@ module.exports = {
   <p><code>new URL(href)</code> works in your code. The URL object is mutable:
     <code>url.protocol = "https:"</code>, <code>url.hostname = "…"</code>, and
     <code>url.searchParams.set("k", "v")</code> are all reflected in later reads
-    of <code>.href</code>.</p>
+    of <code>.href</code>. Protocols are lowercased when parsed or assigned.</p>
   <p>Shortened links such as <code>bit.ly</code> can't be expanded inside a
     rewrite; see <a href="integrations.html#url-shorteners">URL shorteners</a>.</p>
 </section>

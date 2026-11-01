@@ -557,6 +557,26 @@ fn url_protocol_normalizes_schemes_for_functions() {
         let engine = build_engine(&source);
         assert_eq!(resolve(&engine, url).0, "com.google.Chrome", "URL {url:?}");
     }
+    let engine = build_engine(
+        r#"module.exports = { default: "com.apple.Safari", rules: [{
+            match: url => {
+                url.protocol = "HTTPS";
+                if (url.protocol !== "https:" || !Object.keys(url).includes("protocol") ||
+                    Object.getOwnPropertySymbols(url).length !== 0 ||
+                    Object.assign({}, url).protocol !== "https:") return false;
+                url.protocol = "1invalid";
+                if (url.protocol !== "https:") return false;
+                url.protocol = "HTTP:ignored";
+                if (url.protocol !== "http:") return false;
+                url.href = "HtTpS://example.com/x";
+                return url.protocol === "https:";
+            }, open: "com.google.Chrome"
+        }] };"#,
+    );
+    assert_eq!(
+        resolve(&engine, "http://example.com/").0,
+        "com.google.Chrome"
+    );
 }
 
 #[test]

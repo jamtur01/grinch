@@ -87,16 +87,16 @@ Representative release-build measurements on an Apple M4 Max with Rust 1.95.0 (N
 | wildcard | 40.5 |
 | many-rules | 253.7 |
 | rewrite-then-domain | 247.1 |
-| slow-native | 4585.2 |
-| slow-dynopen | 3982.8 |
-| slow-early | 39.3 |
-| slow-drop | 2431.1 |
-| slow-proto | 4097.9 |
-| slow-slack | 4799.8 |
-| slow-urlonly | 2768.4 |
-| dynamic-default | 2838.0 |
-| dynamic-object | 8788.1 |
-| rewrite-chain | 12227.3 |
+| slow-native | 5032.2 |
+| slow-dynopen | 4328.7 |
+| slow-early | 40.5 |
+| slow-drop | 2674.5 |
+| slow-proto | 4423.7 |
+| slow-slack | 4919.3 |
+| slow-urlonly | 2892.2 |
+| dynamic-default | 2953.2 |
+| dynamic-object | 9251.0 |
+| rewrite-chain | 12594.4 |
 | from | 9.9 |
 | logged | 6721.9 |
 

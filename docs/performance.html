@@ -108,12 +108,12 @@
   <table>
     <thead><tr><th scope="col">Workload</th><th scope="col" class="num">ns per URL</th></tr></thead>
     <tbody>
-      <tr><th scope="row">A native rule matches first; no function runs</th><td class="num">39.3</td></tr>
-      <tr><th scope="row">Drop the URL with <code>() =&gt; null</code> (URL only)</th><td class="num">2,431.1</td></tr>
-      <tr><th scope="row">HTTP to HTTPS by changing the URL (URL only)</th><td class="num">4,097.9</td></tr>
-      <tr><th scope="row"><code>?browser=</code> dynamic <code>open</code> function (URL-only matcher)</th><td class="num">3,982.8</td></tr>
-      <tr><th scope="row">4 function matchers reading <code>ctx.opener</code></th><td class="num">4,585.2</td></tr>
-      <tr><th scope="row">Full Slack web to <code>slack://</code> rewrite</th><td class="num">4,799.8</td></tr>
+      <tr><th scope="row">A native rule matches first; no function runs</th><td class="num">40.5</td></tr>
+      <tr><th scope="row">Drop the URL with <code>() =&gt; null</code> (URL only)</th><td class="num">2,674.5</td></tr>
+      <tr><th scope="row">HTTP to HTTPS by changing the URL (URL only)</th><td class="num">4,423.7</td></tr>
+      <tr><th scope="row"><code>?browser=</code> dynamic <code>open</code> function (URL-only matcher)</th><td class="num">4,328.7</td></tr>
+      <tr><th scope="row">4 function matchers reading <code>ctx.opener</code></th><td class="num">5,032.2</td></tr>
+      <tr><th scope="row">Full Slack web to <code>slack://</code> rewrite</th><td class="num">4,919.3</td></tr>
     </tbody>
   </table>
   </div>

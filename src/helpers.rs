@@ -18,8 +18,8 @@ pub const JS_PRELUDE: &str = r##"
 //
 // **Note** for users iterating URL fields: prototype-defined accessors don't
 // show up in `Object.keys(url)` or get copied by `Object.assign({}, url)`.
-// The data fields (protocol, username, password, hostname, port, pathname,
-// hash) are still own-enumerable. Use `url.href` to serialise.
+// The fields (protocol, username, password, hostname, port, pathname, hash)
+// remain own-enumerable. Use `url.href` to serialise.
 (function(g) {
   if (g.URL && g.URL.__grinchPolyfill) return;
 
@@ -34,7 +34,10 @@ pub const JS_PRELUDE: &str = r##"
     return /^(?:ftp|file|http|https|ws|wss):$/i.test(protocol);
   }
 
-  function parseInto(self, href) {
+  var defineProperty = Object.defineProperty;
+  var createObject = Object.create;
+
+  function parseInto(self, href, initialProtocol) {
     href = String(href);
     if (href.indexOf("\\") >= 0 && /^(?:ftp|file|http|https|ws|wss):/i.test(href)) {
       var boundary = href.search(/[?#]/);
@@ -43,11 +46,16 @@ pub const JS_PRELUDE: &str = r##"
     }
     var m = URL_RE.exec(href);
     if (!m) throw new TypeError("Invalid URL: " + href);
-    self.protocol = m[1].toLowerCase();
+    var protocol = m[1].toLowerCase();
+    if (initialProtocol) initialProtocol(protocol);
+    else {
+      self.protocol = protocol;
+      protocol = self.protocol;
+    }
     self.username = m[2] || "";
     self.password = m[3] || "";
     self.hostname = m[4] || "";
-    if (isSpecialScheme(self.protocol)) {
+    if (isSpecialScheme(protocol)) {
       self.hostname = self.hostname.toLowerCase();
     }
     self.port     = m[5] || "";
@@ -191,10 +199,20 @@ pub const JS_PRELUDE: &str = r##"
 
   function URL(href, resetOpener) {
     if (resetOpener === true) __grinchActiveOpener = null;
-    parseInto(this, href);
+    var protocol = "";
+    var descriptor = createObject(null);
+    descriptor.enumerable = true;
+    descriptor.configurable = true;
+    descriptor.get = function() { return protocol; };
+    descriptor.set = function(value) {
+      var scheme = /^([a-z][a-z0-9+.-]*)(?::|$)/i.exec(String(value));
+      if (scheme) protocol = scheme[1].toLowerCase() + ":";
+    };
+    defineProperty(this, "protocol", descriptor);
+    parseInto(this, href, function(value) { protocol = value; });
   }
 
-  // Accessors live on the prototype. Each is defined once at engine init
+  // Other accessors live on the prototype. Each is defined once at engine init
   // rather than four times per `new URL()` call.
   Object.defineProperty(URL.prototype, "search", {
     get: function() { return this._search; },
